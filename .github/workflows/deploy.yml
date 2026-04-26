@@ -1,0 +1,21 @@
+name: Deploy to Mac Mini
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v4
+
+      - name: Inject .env from host
+        run: cp /DATA/AppData/SmartFin/.env .env
+
+      - name: Deploy stack
+        run: docker compose up --build -d
+
+      - name: Remove unused images
+        run: docker image prune -f
