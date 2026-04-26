@@ -1,3 +1,0 @@
-services:
-  frontend:
-    profiles: [prod]   # exclude from default dev stack
