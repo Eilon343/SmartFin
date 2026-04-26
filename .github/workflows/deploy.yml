@@ -2,7 +2,7 @@ name: Deploy to Mac Mini
 
 on:
   push:
-    branches: [master]   # only production deploys
+    branches: [master]
 
 jobs:
   deploy:
