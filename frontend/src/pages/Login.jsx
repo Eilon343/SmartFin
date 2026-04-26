@@ -26,8 +26,11 @@ export default function Login() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
+        <div style={styles.logoWrap}>
+          <div style={styles.logoIcon}>S</div>
+        </div>
         <h1 style={styles.title}>SmartFin</h1>
-        <p style={styles.subtitle}>Personal Finance Tracker</p>
+        <p style={styles.subtitle}>Personal Finance OS</p>
 
         <div style={styles.googleWrapper}>
           <GoogleLogin
@@ -55,13 +58,90 @@ export default function Login() {
 }
 
 const styles = {
-  container: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a' },
-  card: { background: '#1e293b', borderRadius: 16, padding: '40px 48px', width: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.4)', textAlign: 'center' },
-  title: { color: '#38bdf8', margin: 0, fontSize: 28, fontWeight: 700 },
-  subtitle: { color: '#94a3b8', marginTop: 4, marginBottom: 36, fontSize: 14 },
-  googleWrapper: { display: 'flex', justifyContent: 'center', marginBottom: 20 },
-  errorBox: { background: '#450a0a', border: '1px solid #7f1d1d', borderRadius: 8, padding: '10px 14px', marginBottom: 16 },
-  errorText: { color: '#fca5a5', fontSize: 13, margin: 0, textAlign: 'left' },
-  hint: { color: '#475569', fontSize: 12, marginTop: 24 },
-  code: { background: '#0f172a', padding: '2px 6px', borderRadius: 4, color: '#94a3b8', fontSize: 11 },
+  container: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#07090d',
+  },
+  card: {
+    background: '#181b24',
+    border: '1px solid #242836',
+    borderRadius: 20,
+    padding: '40px 48px',
+    width: 360,
+    boxShadow: '0 30px 80px rgba(0,0,0,.6)',
+    textAlign: 'center',
+  },
+  logoWrap: {
+    display: 'flex',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  logoIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    background: 'linear-gradient(135deg, #10b981, #059669)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#ffffff',
+    fontWeight: 800,
+    fontSize: 22,
+    fontFamily: 'Inter, sans-serif',
+  },
+  title: {
+    color: '#f4f5f8',
+    margin: 0,
+    fontSize: 26,
+    fontWeight: 700,
+    letterSpacing: '-0.01em',
+    fontFamily: 'Inter, sans-serif',
+  },
+  subtitle: {
+    color: '#5b6171',
+    marginTop: 4,
+    marginBottom: 32,
+    fontSize: 13,
+    fontFamily: 'Inter, sans-serif',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    fontWeight: 600,
+  },
+  googleWrapper: {
+    display: 'flex',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  errorBox: {
+    background: '#450a0a',
+    border: '1px solid #7f1d1d',
+    borderRadius: 10,
+    padding: '10px 14px',
+    marginBottom: 16,
+  },
+  errorText: {
+    color: '#fca5a5',
+    fontSize: 13,
+    margin: 0,
+    textAlign: 'left',
+    fontFamily: 'Inter, sans-serif',
+  },
+  hint: {
+    color: '#5b6171',
+    fontSize: 12,
+    marginTop: 24,
+    fontFamily: 'Inter, sans-serif',
+    lineHeight: 1.5,
+  },
+  code: {
+    background: '#11141d',
+    padding: '2px 6px',
+    borderRadius: 6,
+    color: '#8a8f9d',
+    fontSize: 11,
+    fontFamily: 'JetBrains Mono, monospace',
+  },
 };
