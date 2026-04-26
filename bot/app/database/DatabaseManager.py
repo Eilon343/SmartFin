@@ -96,6 +96,20 @@ class DatabaseManager:
                 row = await cur.fetchone()
         return row[0] if row else None
 
+    async def link_google_account(self, user_id: int, email: str) -> bool:
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE users SET google_email = %s WHERE user_id = %s",
+                        (email.lower().strip(), user_id),
+                    )
+            return True
+        except Exception as e:
+            logging.error(f"link_google_account error: {e}")
+            return False
+
     async def add_user_category(self, user_id: int, name: str) -> bool:
         try:
             pool = await self.get_pool()

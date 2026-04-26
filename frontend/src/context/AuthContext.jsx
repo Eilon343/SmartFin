@@ -6,8 +6,8 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem('sf_token'));
 
-  async function login(userId, pin) {
-    const { data } = await api.post('/auth/login', { user_id: userId, pin });
+  async function googleLogin(idToken) {
+    const { data } = await api.post('/auth/google', { id_token: idToken });
     localStorage.setItem('sf_token', data.token);
     setToken(data.token);
   }
@@ -18,7 +18,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ token, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ token, googleLogin, logout, isAuthenticated: !!token }}>
       {children}
     </AuthContext.Provider>
   );

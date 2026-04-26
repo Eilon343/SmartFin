@@ -2,9 +2,9 @@ import asyncio
 import logging
 import os
 from aiogram import Bot, Dispatcher
-from bot.app.database.DatabaseManager import DatabaseManager
-from bot.app.bot.handlers import register_handlers
-from bot.app.scheduler import setup_scheduler
+from app.database.DatabaseManager import DatabaseManager
+from app.bot.handlers import register_handlers
+from app.scheduler import setup_scheduler
 
 
 logging.basicConfig(

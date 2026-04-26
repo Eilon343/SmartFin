@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED 1
 # התקנת תלויות מערכת
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    libmariadb-dev \
+    libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # העתקה והתקנה של דרישות

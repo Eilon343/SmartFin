@@ -1,8 +1,9 @@
 CREATE TABLE IF NOT EXISTS users (
-    user_id   BIGINT PRIMARY KEY,
-    username  VARCHAR(100),
-    pin_hash  VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    user_id      BIGINT PRIMARY KEY,
+    username     VARCHAR(100),
+    pin_hash     VARCHAR(255),
+    google_email VARCHAR(255) UNIQUE,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS categories (

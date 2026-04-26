@@ -2,6 +2,7 @@ import json
 import os
 import asyncio
 from google import genai
+from google.genai import types
 
 _client = None
 
@@ -31,9 +32,11 @@ async def parse_input(user_input: str, categories: list[str]) -> dict:
 
     def _call():
         return _get_client().models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=prompt,
-            config={"response_mime_type": "application/json"},
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            ),
         )
 
     response = await loop.run_in_executor(None, _call)

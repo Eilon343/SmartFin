@@ -3,12 +3,12 @@ import time
 import logging
 import bcrypt
 from aiogram import Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from bot.app.ai.ai_engine import parse_input
-from bot.app.bot.states import ExpenseFlow, PinFlow
+from app.ai.ai_engine import parse_input
+from app.bot.states import ExpenseFlow, PinFlow
 
 PIN_TIMEOUT_SECONDS = 300  # 5 minutes
 
@@ -69,7 +69,7 @@ def _format_confirmation(data: dict) -> str:
 def register_handlers(dp: Dispatcher, db_manager):
 
     # --- Any non-command text → treat as expense input ---
-    @dp.message(F.text & ~F.text.startswith("/"))
+    @dp.message(F.text & ~F.text.startswith("/"), StateFilter(None))
     async def handle_expense_text(message: types.Message, state: FSMContext):
         if not _auth(message.from_user.id):
             return
@@ -85,7 +85,7 @@ def register_handlers(dp: Dispatcher, db_manager):
         try:
             parsed = await parse_input(message.text, categories)
         except Exception as e:
-            logging.error(f"AI parse error: {e}")
+            logging.error(f"AI parse error: {e}", exc_info=True)
             await message.reply("Sorry, I couldn't understand that. Try: '55 NIS for Shawarma'")
             return
 
@@ -206,7 +206,8 @@ def register_handlers(dp: Dispatcher, db_manager):
         await state.update_data(parsed=parsed)
         await state.set_state(ExpenseFlow.pending_confirmation)
 
-        await callback.message.edit_text(
+        await callback.message.delete()
+        await callback.message.answer(
             _format_confirmation(parsed),
             parse_mode="Markdown",
             reply_markup=_confirmation_keyboard(),
@@ -282,6 +283,27 @@ def register_handlers(dp: Dispatcher, db_manager):
         await state.clear()
         await message.reply("✅ PIN set successfully. You'll be asked for it after 5 minutes of inactivity.")
 
+    # --- /link_google ---
+    @dp.message(Command("link_google"))
+    async def handle_link_google(message: types.Message):
+        if not _auth(message.from_user.id):
+            return
+        email = message.text.replace("/link_google", "").strip()
+        if not email or "@" not in email:
+            await message.reply("Usage: `/link_google your@email.com`", parse_mode="Markdown")
+            return
+
+        await db_manager.ensure_user(message.from_user.id, message.from_user.username)
+        success = await db_manager.link_google_account(message.from_user.id, email)
+        if success:
+            await message.reply(
+                f"✅ Google account `{email}` linked to your Telegram.\n"
+                f"You can now sign in at the dashboard with that Google account.",
+                parse_mode="Markdown",
+            )
+        else:
+            await message.reply("❌ Failed to link account. Try again.")
+
     # --- /start ---
     @dp.message(Command("start"))
     async def handle_start(message: types.Message):
@@ -294,6 +316,7 @@ def register_handlers(dp: Dispatcher, db_manager):
             "`200 groceries`\n\n"
             "Commands:\n"
             "/add\\_category `<name>` — add a custom category\n"
-            "/set\\_pin — set a session PIN lock",
+            "/set\\_pin — set a session PIN lock\n"
+            "/link\\_google `<email>` — link your Google account to the dashboard",
             parse_mode="Markdown",
         )

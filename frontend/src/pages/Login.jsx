@@ -1,26 +1,25 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { googleLogin } = useAuth();
   const navigate = useNavigate();
-  const [userId, setUserId] = useState('');
-  const [pin, setPin] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
+  async function handleGoogleSuccess(credentialResponse) {
     setError('');
-    setLoading(true);
     try {
-      await login(userId, pin);
+      await googleLogin(credentialResponse.credential);
       navigate('/');
-    } catch {
-      setError('Invalid credentials. Check your Telegram user ID and PIN.');
-    } finally {
-      setLoading(false);
+    } catch (err) {
+      const msg = err.response?.data?.message || err.response?.data?.error;
+      if (err.response?.status === 404) {
+        setError(msg || 'Account not linked. Send /link_google your@email.com to the bot first.');
+      } else {
+        setError('Sign in failed. Please try again.');
+      }
     }
   }
 
@@ -29,30 +28,27 @@ export default function Login() {
       <div style={styles.card}>
         <h1 style={styles.title}>SmartFin</h1>
         <p style={styles.subtitle}>Personal Finance Tracker</p>
-        <form onSubmit={handleSubmit} style={styles.form}>
-          <label style={styles.label}>Telegram User ID</label>
-          <input
-            style={styles.input}
-            type="number"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            placeholder="938418219"
-            required
+
+        <div style={styles.googleWrapper}>
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={() => setError('Google sign-in failed. Try again.')}
+            theme="filled_black"
+            shape="pill"
+            size="large"
+            text="signin_with"
           />
-          <label style={styles.label}>PIN</label>
-          <input
-            style={styles.input}
-            type="password"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            placeholder="••••"
-            required
-          />
-          {error && <p style={styles.error}>{error}</p>}
-          <button style={styles.button} type="submit" disabled={loading}>
-            {loading ? 'Signing in…' : 'Sign In'}
-          </button>
-        </form>
+        </div>
+
+        {error && (
+          <div style={styles.errorBox}>
+            <p style={styles.errorText}>{error}</p>
+          </div>
+        )}
+
+        <p style={styles.hint}>
+          First time? Send <code style={styles.code}>/link_google your@email.com</code> to the bot.
+        </p>
       </div>
     </div>
   );
@@ -60,12 +56,12 @@ export default function Login() {
 
 const styles = {
   container: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a' },
-  card: { background: '#1e293b', borderRadius: 16, padding: '40px 48px', width: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' },
+  card: { background: '#1e293b', borderRadius: 16, padding: '40px 48px', width: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.4)', textAlign: 'center' },
   title: { color: '#38bdf8', margin: 0, fontSize: 28, fontWeight: 700 },
-  subtitle: { color: '#94a3b8', marginTop: 4, marginBottom: 32, fontSize: 14 },
-  form: { display: 'flex', flexDirection: 'column', gap: 8 },
-  label: { color: '#cbd5e1', fontSize: 13, fontWeight: 500 },
-  input: { padding: '10px 14px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 15, outline: 'none' },
-  error: { color: '#f87171', fontSize: 13, margin: 0 },
-  button: { marginTop: 16, padding: '12px', borderRadius: 8, border: 'none', background: '#38bdf8', color: '#0f172a', fontWeight: 700, fontSize: 15, cursor: 'pointer' },
+  subtitle: { color: '#94a3b8', marginTop: 4, marginBottom: 36, fontSize: 14 },
+  googleWrapper: { display: 'flex', justifyContent: 'center', marginBottom: 20 },
+  errorBox: { background: '#450a0a', border: '1px solid #7f1d1d', borderRadius: 8, padding: '10px 14px', marginBottom: 16 },
+  errorText: { color: '#fca5a5', fontSize: 13, margin: 0, textAlign: 'left' },
+  hint: { color: '#475569', fontSize: 12, marginTop: 24 },
+  code: { background: '#0f172a', padding: '2px 6px', borderRadius: 4, color: '#94a3b8', fontSize: 11 },
 };
