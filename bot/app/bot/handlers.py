@@ -1,18 +1,40 @@
 import os
+import time
 import logging
+import bcrypt
 from aiogram import Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.app.ai.ai_engine import parse_input
-from bot.app.bot.states import ExpenseFlow
+from bot.app.bot.states import ExpenseFlow, PinFlow
+
+PIN_TIMEOUT_SECONDS = 300  # 5 minutes
 
 ALLOWED_USER_IDS: set[int] = {int(uid) for uid in os.getenv("TELEGRAM_CHAT_ID", "").split(",") if uid.strip()}
 
 
 def _auth(user_id: int) -> bool:
     return user_id in ALLOWED_USER_IDS
+
+
+async def _pin_required(message: types.Message, state: FSMContext, db_manager) -> bool:
+    """Returns True if the user must enter their PIN before proceeding."""
+    pin_hash = await db_manager.get_user_pin_hash(message.from_user.id)
+    if not pin_hash:
+        return False  # PIN not set → no lock
+
+    data = await state.get_data()
+    last_activity = data.get("last_activity", 0)
+    if time.time() - last_activity < PIN_TIMEOUT_SECONDS:
+        return False  # still within session window
+
+    # Store context so we can resume after PIN entry
+    await state.update_data(pending_message=message.text)
+    await state.set_state(PinFlow.waiting_pin)
+    await message.reply("🔒 Session locked. Enter your PIN to continue:")
+    return True
 
 
 def _confirmation_keyboard() -> InlineKeyboardMarkup:
@@ -53,6 +75,11 @@ def register_handlers(dp: Dispatcher, db_manager):
             return
 
         await db_manager.ensure_user(message.from_user.id, message.from_user.username)
+
+        if await _pin_required(message, state, db_manager):
+            return
+
+        await state.update_data(last_activity=time.time())
         categories = await db_manager.get_user_categories(message.from_user.id)
 
         try:
@@ -202,6 +229,59 @@ def register_handlers(dp: Dispatcher, db_manager):
         else:
             await message.reply("Failed to add category (it may already exist).")
 
+    # --- PIN unlock ---
+    @dp.message(PinFlow.waiting_pin)
+    async def handle_pin_entry(message: types.Message, state: FSMContext):
+        if not _auth(message.from_user.id):
+            return
+        pin_hash = await db_manager.get_user_pin_hash(message.from_user.id)
+        entered = message.text.strip().encode()
+        if pin_hash and bcrypt.checkpw(entered, pin_hash.encode()):
+            await state.update_data(last_activity=time.time())
+            data = await state.get_data()
+            pending = data.get("pending_message")
+            await state.set_state(None)
+            await message.reply("🔓 Unlocked!")
+            if pending:
+                message.text = pending
+                await handle_expense_text(message, state)
+        else:
+            await message.reply("❌ Wrong PIN. Try again:")
+
+    # --- /set_pin ---
+    @dp.message(Command("set_pin"))
+    async def handle_set_pin(message: types.Message, state: FSMContext):
+        if not _auth(message.from_user.id):
+            return
+        await state.set_state(PinFlow.setting_pin)
+        await message.reply("Enter your new 4-digit PIN:")
+
+    @dp.message(PinFlow.setting_pin)
+    async def handle_pin_input(message: types.Message, state: FSMContext):
+        if not _auth(message.from_user.id):
+            return
+        pin = message.text.strip()
+        if not pin.isdigit() or len(pin) < 4:
+            await message.reply("PIN must be at least 4 digits. Try again:")
+            return
+        await state.update_data(new_pin=pin)
+        await state.set_state(PinFlow.confirming_pin)
+        await message.reply("Confirm your PIN (enter it again):")
+
+    @dp.message(PinFlow.confirming_pin)
+    async def handle_pin_confirm(message: types.Message, state: FSMContext):
+        if not _auth(message.from_user.id):
+            return
+        data = await state.get_data()
+        if message.text.strip() != data.get("new_pin"):
+            await state.set_state(PinFlow.setting_pin)
+            await message.reply("PINs don't match. Enter your new PIN again:")
+            return
+        pin_hash = bcrypt.hashpw(message.text.strip().encode(), bcrypt.gensalt()).decode()
+        await db_manager.set_user_pin(message.from_user.id, pin_hash)
+        await state.clear()
+        await message.reply("✅ PIN set successfully. You'll be asked for it after 5 minutes of inactivity.")
+
     # --- /start ---
     @dp.message(Command("start"))
     async def handle_start(message: types.Message):
@@ -213,6 +293,7 @@ def register_handlers(dp: Dispatcher, db_manager):
             "`55 NIS shawarma`\n"
             "`200 groceries`\n\n"
             "Commands:\n"
-            "/add\\_category `<name>` — add a custom category",
+            "/add\\_category `<name>` — add a custom category\n"
+            "/set\\_pin — set a session PIN lock",
             parse_mode="Markdown",
         )

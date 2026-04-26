@@ -74,6 +74,28 @@ class DatabaseManager:
                 )
                 return cur.lastrowid
 
+    async def set_user_pin(self, user_id: int, pin_hash: str) -> bool:
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE users SET pin_hash = %s WHERE user_id = %s",
+                        (pin_hash, user_id),
+                    )
+            return True
+        except Exception as e:
+            logging.error(f"set_user_pin error: {e}")
+            return False
+
+    async def get_user_pin_hash(self, user_id: int) -> str | None:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT pin_hash FROM users WHERE user_id = %s", (user_id,))
+                row = await cur.fetchone()
+        return row[0] if row else None
+
     async def add_user_category(self, user_id: int, name: str) -> bool:
         try:
             pool = await self.get_pool()

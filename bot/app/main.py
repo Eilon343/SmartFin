@@ -4,6 +4,7 @@ import os
 from aiogram import Bot, Dispatcher
 from bot.app.database.DatabaseManager import DatabaseManager
 from bot.app.bot.handlers import register_handlers
+from bot.app.scheduler import setup_scheduler
 
 
 logging.basicConfig(
@@ -11,24 +12,29 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
+
 async def main():
-    # Load environment variables
     db_manager = DatabaseManager(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASSWORD"),
-        db=os.getenv("DB_NAME")
+        db=os.getenv("DB_NAME"),
     )
-    
-    # Initialize bot and dispatcher
+
     bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
     dp = Dispatcher()
-    
-    # Register handlers
+
     register_handlers(dp, db_manager)
-    
+
+    scheduler = setup_scheduler(bot, db_manager)
+    scheduler.start()
+
     logging.info("SmartFin Bot is starting...")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        scheduler.shutdown()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

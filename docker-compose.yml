@@ -62,6 +62,20 @@ services:
       - 8.8.8.8
       - 1.1.1.1
 
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: smartfin_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:8080"
+    networks:
+      - smartfin-network
+    mem_limit: 64m
+
 networks:
   smartfin-network:
     driver: bridge
