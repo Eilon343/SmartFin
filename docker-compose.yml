@@ -66,6 +66,8 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
     container_name: smartfin_frontend
     restart: unless-stopped
     depends_on:
