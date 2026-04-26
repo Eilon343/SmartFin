@@ -1,0 +1,120 @@
+PRD: SmartFin – AI-Powered Expense Tracker (Self-Hosted)
+1. Project Overview
+SmartFin is a personal finance ecosystem designed to remove the friction of manual data entry. By leveraging a Telegram Bot for natural language processing (NLP) and a Web Dashboard for deep-dive analytics, it provides a seamless way to track spending. The entire stack is optimized for self-hosting on a Mac Mini (Home Server) using Docker and Tailscale.
+
+2. Core Objectives
+Zero-Friction Entry: Log expenses via simple text (e.g., "55 NIS for Shawarma") using Gemini AI to parse data.
+
+Resource Efficiency: High performance with a low memory footprint to coexist with other services on the Mac Mini.
+
+Privacy-First: Secure, local data storage in MySQL with no public ports exposed to the internet.
+
+Automated Insights: Proactive tracking of subscriptions and weekly "Spending Scores."
+
+3. Technical Stack (Optimized)
+Telegram Bot: Python 3.11+ (aiogram 3.x) for asynchronous handling.
+
+NLP Engine: Google Gemini 1.5 Flash API (Selected for speed and high rate limits on the free/low tier).
+
+Database: MySQL 8.0 (Deployed on NVMe storage for fast I/O).
+
+Backend API: Node.js (Express) to serve the dashboard data.
+
+Frontend: React.js (Built and served via Nginx).
+
+Connectivity: Tailscale for secure remote access from anywhere (e.g., Haifa or Ramat Gan).
+
+4. System Architecture
+The system utilizes a Docker Bridge Network to allow internal communication between the API, Bot, and Database, while exposing only the necessary ports to the host (and thus Tailscale).
+
+Docker Infrastructure Note:
+To prevent system crashes on older hardware, each container will have hard Resource Limits defined in the orchestration layer.
+
+5. Functional Requirements
+A. The Telegram Interface (Input)
+NLP Parsing & Dynamic Categories:
+
+The system starts with a set of Base Categories: Food, Transport, Housing, Entertainment, Shopping, Utilities.
+
+Custom Categories: Users can add new categories via a command (e.g., /add_category Health).
+
+Prompt Engineering: Every request sent to Gemini will dynamically include the current list of categories (Base + User-defined) to ensure the AI maps the expense to an existing valid category.
+
+Correction Loop (Error Handling):
+
+After parsing an expense, the bot sends a confirmation message with Inline Buttons:
+
+✅ Confirm: Saves to DB.
+
+✏️ Edit: Allows manual override of amount/description.
+
+📂 Change Category: Opens a menu with all available categories for quick re-classification.
+
+🗑️ Delete: Cancels the entry.
+
+PIN Security: Session-based lock (5 minutes of inactivity).
+
+Subscription Manager: Commands for recurring expenses.
+PIN Security: A session-based PIN lock. Users must authenticate every 5 minutes of inactivity.
+
+Spending Score (Gamification): Every Saturday, the bot sends a summary comparing this week's spending to the monthly average.
+
+B. The Web Dashboard (Analytics)
+Auth Layer: Secure login integrated with the MySQL user table.
+
+Category Distribution: Interactive Pie Charts (Chart.js/Recharts).
+
+Spending Trends: Line graphs showing daily burn rate vs. monthly goals.
+
+Rolling Budgets: Surplus from "Savings Goals" in one month can be configured to carry over to the next.
+
+6. Database Schema (MySQL)
+SQL
+-- Core Tables optimized for relations
+CREATE TABLE categories (
+    category_id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT,
+    name VARCHAR(100) NOT NULL,
+    is_base BOOLEAN DEFAULT FALSE,
+    UNIQUE(user_id, name)
+);
+
+CREATE TABLE expenses (
+    expense_id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT,
+    amount DECIMAL(10, 2) NOT NULL,
+    description VARCHAR(255),
+    category_id INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    FOREIGN KEY (category_id) REFERENCES categories(category_id)
+);
+
+
+7. System Logic & Deployment
+Gemini Workflow: 1. User sends message.
+2. Bot fetches all categories for user_id.
+3. Bot sends prompt: "Extract JSON from '[Message]'. Use these categories: [List]. Return: {amount, currency, item, category}".
+4. Bot presents the "Correction Loop" UI to the user.
+
+Docker & Resource Limits: * MySQL: Max 512MB RAM.
+
+Node.js/Python: Max 256MB RAM each.
+
+DNS & Networking: Fixed DNS (Google/Cloudflare) within Docker to prevent API timeouts on the home server.
+8. Deployment Strategy (Mac Mini Optimization)
+Docker Compose Configuration
+To ensure stability, the docker-compose.yml must include memory constraints and automated restarts.
+
+Internal Networking: Services will communicate via smartfin-network.
+
+DNS Stability: Following previous connectivity issues, containers will be assigned fixed DNS (Google/Cloudflare) to ensure the Gemini and Telegram APIs are always reachable.
+
+Remote Access: The Dashboard will be exposed on port 8080. Access will be granted via http://<Tailscale-IP>:8080, removing the need for complex SSL certificates or open router ports.
+
+Resource Allocation:
+MySQL: Max 512MB RAM.
+
+Node.js/Python: Max 256MB RAM each.
+
+Volume Mapping: All data stored in /DATA/AppData/SmartFin for easy backups.

@@ -1,0 +1,67 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: smartfin_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: smartfin
+    ports:
+      - "3307:3306"
+    volumes:
+      - /DATA/AppData/SmartFin/mysql:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - smartfin-network
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  bot:
+    build:
+      context: ./bot
+    container_name: smartfin_bot
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=db
+    networks:
+      - smartfin-network
+    mem_limit: 256m
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+  backend:
+    build:
+      context: ./backend
+    container_name: smartfin_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=db
+      - PORT=3000
+    ports:
+      - "3000:3000"
+    networks:
+      - smartfin-network
+    mem_limit: 256m
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+networks:
+  smartfin-network:
+    driver: bridge
