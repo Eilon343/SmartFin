@@ -287,7 +287,7 @@ exports.getPnL = async (req, res) => {
         const subscription_total = Number(subRows[0].total);
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total);
-        const variable_avg = Number(varRows[0].total) / Math.max(Number(varRows[0].cnt), 1);
+        const variable_avg = Number(varRows[0].total) / 3;
 
         const total_income = fixed_income + variable_avg;
         const net_pnl = total_income - total_expenses - subscription_total - savings_allocation;
