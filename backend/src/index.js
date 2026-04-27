@@ -1,5 +1,5 @@
-require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
-require('dotenv').config({ override: false }); // fallback to backend/.env for local dev overrides
+require('dotenv').config(); // backend/.env first (local DB overrides)
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env'), override: false }); // root .env fills gaps (GEMINI, TELEGRAM, JWT)
 const express = require('express');
 const cors = require('cors');
 const expenseRoutes = require('./routes/expenseRoutes');
