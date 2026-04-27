@@ -10,6 +10,8 @@ router.post('/auth/login', authController.login);
 router.post('/auth/google', authController.googleLogin);
 
 router.get('/expenses', auth, expenseController.getAllExpenses);
+router.post('/expenses', auth, expenseController.addExpense);
+router.delete('/expenses/:id', auth, expenseController.deleteExpense);
 router.get('/expenses/summary', auth, expenseController.getSummary);
 router.get('/categories', auth, expenseController.getCategories);
 router.get('/budgets', auth, expenseController.getBudgets);

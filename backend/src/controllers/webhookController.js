@@ -55,7 +55,7 @@ async function callGemini(text) {
                 await new Promise(r => setTimeout(r, 2000 * attempt));
                 continue;
             }
-            if (err.name === 'TypeError' || err.name === 'SyntaxError') err.unavailable = true;
+            if (err.name === 'TypeError') err.unavailable = true;
             throw err;
         }
     }

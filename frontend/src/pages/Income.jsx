@@ -5,44 +5,31 @@ import Modal from '../components/ui/Modal';
 import PageHeader from '../components/ui/PageHeader';
 
 const EMPTY_FORM = {
-  description: '',
+  source: '',
   amount: '',
   currency: 'ILS',
-  category_id: '',
+  type: 'fixed',
+  month: new Date().toISOString().slice(0, 7),
+  description: '',
 };
 
 function fmt(n) {
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function SourceBadge({ source }) {
-  if (source === 'apple_pay') {
-    return (
-      <span style={{
-        background: '#1a1a1a', color: '#f5f5f7',
-        padding: '3px 10px', borderRadius: 20,
-        fontSize: 11, fontWeight: 600, letterSpacing: '-0.01em',
-        whiteSpace: 'nowrap',
-      }}>
-        &#x1F4F1; Apple Pay
-      </span>
-    );
-  }
+function TypeBadge({ type }) {
   return (
-    <span style={{
-      background: '#1e2230', color: '#5b6171',
-      padding: '3px 10px', borderRadius: 20, fontSize: 11,
-    }}>
-      Bot
+    <span className={`chip ${type === 'fixed' ? 'up' : 'idg'}`} style={{ fontSize: 10 }}>
+      {type}
     </span>
   );
 }
 
-export default function Expenses() {
+export default function Income() {
   const now = new Date().toISOString().slice(0, 7);
   const [month, setMonth] = useState(now);
-  const [expenses, setExpenses] = useState([]);
-  const [cats, setCats] = useState([]);
+  const [entries, setEntries] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -53,18 +40,21 @@ export default function Expenses() {
 
   const reload = useCallback(() => {
     setLoading(true);
-    api.get(`/expenses?month=${month}`)
-      .then(r => setExpenses(r.data))
+    Promise.all([
+      api.get(`/income?month=${month}`),
+      api.get(`/income/summary?month=${month}`),
+    ])
+      .then(([r1, r2]) => {
+        setEntries(r1.data);
+        setSummary(r2.data);
+      })
       .finally(() => setLoading(false));
   }, [month]);
 
-  useEffect(() => {
-    reload();
-    api.get('/categories').then(r => setCats(r.data));
-  }, [reload]);
+  useEffect(() => { reload(); }, [reload]);
 
   function openAdd() {
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, month });
     setError('');
     setModalOpen(true);
   }
@@ -78,18 +68,20 @@ export default function Expenses() {
     e.preventDefault();
     setError('');
     const payload = {
+      source: form.source.trim(),
       amount: parseFloat(form.amount),
       currency: form.currency,
+      type: form.type,
+      month: form.month,
       description: form.description.trim() || undefined,
-      category_id: form.category_id ? parseInt(form.category_id, 10) : null,
     };
-    if (isNaN(payload.amount) || payload.amount <= 0) {
-      setError('A valid amount is required.');
+    if (!payload.source || isNaN(payload.amount) || !payload.month) {
+      setError('Source, amount and month are required.');
       return;
     }
     setSaving(true);
     try {
-      await api.post('/expenses', payload);
+      await api.post('/income', payload);
       closeModal();
       reload();
     } catch (err) {
@@ -103,7 +95,7 @@ export default function Expenses() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await api.delete(`/expenses/${deleteTarget.expense_id}`);
+      await api.delete(`/income/${deleteTarget.income_id}`);
       setDeleteTarget(null);
       reload();
     } catch {
@@ -113,12 +105,11 @@ export default function Expenses() {
     }
   }
 
-  const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
-
   return (
     <div className="view-enter">
-      <PageHeader title="Expenses" sub="All transactions for the selected month" />
+      <PageHeader title="Income" sub="Fixed salary and variable income by month" />
 
+      {/* Month picker */}
       <div className="row" style={{ marginBottom: 20, gap: 10 }}>
         <input
           type="month"
@@ -129,36 +120,38 @@ export default function Expenses() {
         />
       </div>
 
-      {/* Summary strip */}
+      {/* Summary cards */}
       <div className="grid grid-3" style={{ marginBottom: 20 }}>
         <div className="card card-pad-lg">
-          <span className="meta-label">Total spent</span>
-          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
-            <span className="ccy" style={{ fontSize: 20 }}>₪</span>{fmt(total)}
-          </div>
-          <span className="muted" style={{ fontSize: 12 }}>{expenses.length} transactions</span>
-        </div>
-        <div className="card card-pad-lg">
-          <span className="meta-label">Avg per transaction</span>
+          <span className="meta-label">Fixed income</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>
-            {expenses.length > 0 ? fmt(total / expenses.length) : '0.00'}
+            {fmt(summary?.fixed_total ?? 0)}
           </div>
           <span className="muted" style={{ fontSize: 12 }}>this month</span>
         </div>
         <div className="card card-pad-lg">
-          <span className="meta-label">Apple Pay</span>
+          <span className="meta-label">Variable (3-mo avg)</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
-            {expenses.filter(e => e.source === 'apple_pay').length}
+            <span className="ccy" style={{ fontSize: 20 }}>₪</span>
+            {fmt(summary?.variable_total ?? 0)}
           </div>
-          <span className="muted" style={{ fontSize: 12 }}>tap-to-pay transactions</span>
+          <span className="chip idg" style={{ marginTop: 6, fontSize: 10 }}>averaged</span>
+        </div>
+        <div className="card card-pad-lg">
+          <span className="meta-label">Total income</span>
+          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
+            <span className="ccy" style={{ fontSize: 20 }}>₪</span>
+            {fmt(summary?.total ?? 0)}
+          </div>
+          <span className="muted" style={{ fontSize: 12 }}>fixed + variable avg</span>
         </div>
       </div>
 
-      {/* Table */}
+      {/* Entries table */}
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="between" style={{ padding: '18px 22px' }}>
-          <h3 className="h2">Transactions — {month}</h3>
+          <h3 className="h2">Income entries — {month}</h3>
           <button className="btn primary" onClick={openAdd}>
             <Icon name="plus" size={14} /> Add
           </button>
@@ -166,67 +159,53 @@ export default function Expenses() {
 
         {loading ? (
           <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
-        ) : expenses.length === 0 ? (
+        ) : entries.length === 0 ? (
           <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>
-            No expenses for {month}.
+            No income entries for {month}. Click Add to record one.
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr>
-                  {['Date', 'Description', 'Category', 'Amount', 'Source', ''].map((h, i) => (
-                    <th key={i} style={{
-                      textAlign: i >= 3 ? 'right' : 'left',
-                      padding: '10px 16px',
-                      color: 'var(--text-3)',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid var(--line)',
-                      whiteSpace: 'nowrap',
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {expenses.map(e => (
-                  <tr
-                    key={e.expense_id}
-                    style={{ borderBottom: '1px solid var(--line)' }}
-                  >
-                    <td style={{ padding: '11px 16px', color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
-                      {e.created_at?.slice(0, 10)}
-                    </td>
-                    <td style={{ padding: '11px 16px', color: 'var(--text-1)', maxWidth: 220 }}>
-                      {e.description || <span style={{ color: 'var(--text-3)' }}>—</span>}
-                    </td>
-                    <td style={{ padding: '11px 16px' }}>
-                      <span className="chip idg" style={{ fontSize: 11 }}>
-                        {e.category_name || 'Uncategorized'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-                      {e.currency !== 'ILS' ? `${e.currency} ` : '₪'}{fmt(e.amount)}
-                    </td>
-                    <td style={{ padding: '11px 16px', textAlign: 'right' }}>
-                      <SourceBadge source={e.source} />
-                    </td>
-                    <td style={{ padding: '11px 16px', textAlign: 'right' }}>
-                      <button
-                        className="btn ghost icon"
-                        style={{ width: 30, height: 30, color: 'var(--rose)' }}
-                        onClick={() => setDeleteTarget(e)}
-                        title="Delete"
-                      >
-                        <Icon name="trash-2" size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ padding: '0 22px 14px' }}>
+            {entries.map(entry => (
+              <div
+                key={entry.income_id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '36px 1fr auto auto 32px',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '10px 0',
+                  borderBottom: '1px solid var(--line)',
+                }}
+              >
+                <div style={{
+                  width: 36, height: 36, borderRadius: 9,
+                  background: 'var(--hover-bg-2)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: 'var(--emerald)', flexShrink: 0,
+                }}>
+                  <Icon name="trending-up" size={16} />
+                </div>
+                <div className="stack" style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: 500, fontSize: 13.5 }}>{entry.source}</span>
+                  <span className="muted-2" style={{ fontSize: 11 }}>
+                    {entry.month}
+                    {entry.description ? ` · ${entry.description}` : ''}
+                  </span>
+                </div>
+                <span className="mono tnum" style={{ fontSize: 13 }}>
+                  {entry.currency !== 'ILS' ? `${entry.currency} ` : '₪'}{fmt(entry.amount)}
+                </span>
+                <TypeBadge type={entry.type} />
+                <button
+                  className="btn ghost icon"
+                  style={{ width: 32, height: 32, color: 'var(--rose)' }}
+                  onClick={() => setDeleteTarget(entry)}
+                  title="Delete"
+                >
+                  <Icon name="trash-2" size={13} />
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -234,15 +213,15 @@ export default function Expenses() {
       {/* Add Modal */}
       <Modal open={modalOpen} onClose={closeModal}>
         <div style={{ padding: '24px 28px', minWidth: 360 }}>
-          <h3 className="h2" style={{ marginBottom: 20 }}>New expense</h3>
+          <h3 className="h2" style={{ marginBottom: 20 }}>New income entry</h3>
           <form onSubmit={handleSave} className="stack" style={{ gap: 14 }}>
             <div className="field">
-              <label>Description (optional)</label>
+              <label>Source</label>
               <input
                 className="input"
-                placeholder="e.g. Coffee, Groceries"
-                value={form.description}
-                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="e.g. Salary, Freelance"
+                value={form.source}
+                onChange={e => setForm(f => ({ ...f, source: e.target.value }))}
                 autoFocus
               />
             </div>
@@ -272,18 +251,36 @@ export default function Expenses() {
                 </select>
               </div>
             </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="field">
+                <label>Type</label>
+                <select
+                  className="select"
+                  value={form.type}
+                  onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+                >
+                  <option value="fixed">Fixed</option>
+                  <option value="variable">Variable</option>
+                </select>
+              </div>
+              <div className="field">
+                <label>Month</label>
+                <input
+                  type="month"
+                  className="input"
+                  value={form.month}
+                  onChange={e => setForm(f => ({ ...f, month: e.target.value }))}
+                />
+              </div>
+            </div>
             <div className="field">
-              <label>Category</label>
-              <select
-                className="select"
-                value={form.category_id}
-                onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
-              >
-                <option value="">Uncategorized</option>
-                {cats.map(c => (
-                  <option key={c.category_id} value={c.category_id}>{c.name}</option>
-                ))}
-              </select>
+              <label>Description (optional)</label>
+              <input
+                className="input"
+                placeholder="e.g. Bonus, Q1 invoice"
+                value={form.description}
+                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              />
             </div>
             {error && (
               <div style={{
@@ -295,7 +292,7 @@ export default function Expenses() {
             <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
               <button type="button" className="btn" onClick={closeModal}>Cancel</button>
               <button type="submit" className="btn primary" disabled={saving}>
-                {saving ? 'Saving…' : 'Add expense'}
+                {saving ? 'Saving…' : 'Add income'}
               </button>
             </div>
           </form>
@@ -305,13 +302,9 @@ export default function Expenses() {
       {/* Delete confirmation */}
       <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)}>
         <div style={{ padding: '24px 28px', minWidth: 320 }}>
-          <h3 className="h2" style={{ marginBottom: 10 }}>Delete expense</h3>
+          <h3 className="h2" style={{ marginBottom: 10 }}>Delete income entry</h3>
           <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 20 }}>
-            Remove{' '}
-            <strong style={{ color: 'var(--text-0)' }}>
-              {deleteTarget?.description || `₪${fmt(deleteTarget?.amount ?? 0)}`}
-            </strong>{' '}
-            from {deleteTarget?.created_at?.slice(0, 10)}?
+            Remove <strong style={{ color: 'var(--text-0)' }}>{deleteTarget?.source}</strong> ({deleteTarget?.month})?
           </p>
           <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
             <button className="btn" onClick={() => setDeleteTarget(null)}>Cancel</button>

@@ -287,7 +287,7 @@ exports.getPnL = async (req, res) => {
         const subscription_total = Number(subRows[0].total);
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total);
-        const variable_avg = Number(varRows[0].total) / 3;
+        const variable_avg = Number(varRows[0].total) / past3.length;
 
         const total_income = fixed_income + variable_avg;
         const net_pnl = total_income - total_expenses - subscription_total - savings_allocation;
@@ -337,6 +337,38 @@ exports.upsertBudget = async (req, res) => {
     } catch (err) {
         console.error('upsertBudget error:', err);
         res.status(500).json({ error: 'Failed to save budget' });
+    }
+};
+
+exports.addExpense = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { amount, currency = 'ILS', description, category_id } = req.body;
+    if (amount == null) return res.status(400).json({ error: 'amount required' });
+    try {
+        const [result] = await db.query(
+            'INSERT INTO expenses (user_id, amount, currency, description, category_id, source) VALUES (?, ?, ?, ?, ?, ?)',
+            [user_id, Number(amount), currency, description?.trim() || null, category_id || null, 'bot']
+        );
+        res.json({ expense_id: result.insertId });
+    } catch (err) {
+        console.error('addExpense error:', err);
+        res.status(500).json({ error: 'Failed to add expense' });
+    }
+};
+
+exports.deleteExpense = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { id } = req.params;
+    try {
+        const [result] = await db.query(
+            'DELETE FROM expenses WHERE expense_id = ? AND user_id = ?',
+            [id, user_id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('deleteExpense error:', err);
+        res.status(500).json({ error: 'Failed to delete expense' });
     }
 };
 

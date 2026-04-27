@@ -226,7 +226,7 @@ export default function Categories() {
       api.get(`/budgets?month=${month}`),
       api.get(`/expenses?month=${month}`),
     ]).then(([b, e]) => {
-      if (b.status === 'fulfilled') setBudgets(b.value.data.budgets || []);
+      if (b.status === 'fulfilled') setBudgets((b.value.data.budgets || []).slice().sort((a, z) => a.category.localeCompare(z.category)));
       if (e.status === 'fulfilled') setExpenses(Array.isArray(e.value.data) ? e.value.data : []);
     }).finally(() => setLoading(false));
   }, [month]);

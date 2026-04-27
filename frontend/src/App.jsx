@@ -7,6 +7,8 @@ import Dashboard from './pages/Dashboard';
 import Categories from './pages/Categories';
 import Subscriptions from './pages/Subscriptions';
 import Savings from './pages/Savings';
+import Income from './pages/Income';
+import Expenses from './pages/Expenses';
 import Settings from './pages/Settings';
 import Layout from './components/Layout';
 
@@ -28,6 +30,8 @@ export default function App() {
                 <Route path="categories" element={<Categories />} />
                 <Route path="subscriptions" element={<Subscriptions />} />
                 <Route path="savings" element={<Savings />} />
+                <Route path="income" element={<Income />} />
+                <Route path="expenses" element={<Expenses />} />
                 <Route path="settings" element={<Settings />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
