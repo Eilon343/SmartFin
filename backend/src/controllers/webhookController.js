@@ -21,33 +21,40 @@ function buildPrompt(text) {
     );
 }
 
-// Returns parsed object, or throws { unavailable: true } if Gemini is down
+// Returns parsed object, or throws with .unavailable = true if Gemini is down
 async function callGemini(text) {
     for (let attempt = 1; attempt <= 3; attempt++) {
-        const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: buildPrompt(text) }] }],
-                    generationConfig: { responseMimeType: 'application/json' },
-                }),
+        try {
+            const res = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: buildPrompt(text) }] }],
+                        generationConfig: { responseMimeType: 'application/json' },
+                    }),
+                }
+            );
+            const data = await res.json();
+            if (data.error?.code === 503 || data.error?.status === 'UNAVAILABLE') {
+                const e = new Error('Gemini unavailable'); e.unavailable = true; throw e;
             }
-        );
-        const data = await res.json();
-        if (data.error?.code === 503 || data.error?.status === 'UNAVAILABLE') {
-            if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
-            continue;
+            if (data.error) throw new Error(`Gemini error: ${data.error.message}`);
+            const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (!raw) throw new Error('Empty Gemini response');
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error('No JSON found in Gemini response');
+            return JSON.parse(jsonMatch[0]);
+        } catch (err) {
+            if (attempt < 3 && (err.unavailable || err.name === 'TypeError')) {
+                await new Promise(r => setTimeout(r, 2000 * attempt));
+                continue;
+            }
+            if (err.name === 'TypeError') err.unavailable = true; // network failure = treat as unavailable
+            throw err;
         }
-        if (data.error) throw new Error(`Gemini error: ${data.error.message}`);
-        const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!raw) throw new Error('Empty Gemini response');
-        return JSON.parse(raw.replace(/```json|```/g, '').trim());
     }
-    const err = new Error('Gemini unavailable');
-    err.unavailable = true;
-    throw err;
 }
 
 async function sendTelegramMessage(chatId, text) {
@@ -117,7 +124,10 @@ async function processQueue() {
 }
 
 exports.startQueueProcessor = () => {
-    setInterval(processQueue, 5 * 60 * 1000);
+    const run = async () => {
+        try { await processQueue(); } finally { setTimeout(run, 5 * 60 * 1000); }
+    };
+    run();
 };
 
 exports.handleApplePay = async (req, res) => {
