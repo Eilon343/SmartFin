@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS expenses (
     currency    VARCHAR(10) DEFAULT 'ILS',
     description VARCHAR(255),
     category_id INT,
+    source      ENUM('bot', 'apple_pay') DEFAULT 'bot',
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     FOREIGN KEY (category_id) REFERENCES categories(category_id)

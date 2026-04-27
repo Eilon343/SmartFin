@@ -5,7 +5,7 @@ exports.getAllExpenses = async (req, res) => {
     const { month } = req.query; // optional: "2025-04"
 
     try {
-        let query = 'SELECT e.*, c.name AS category_name FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id WHERE e.user_id = ?';
+        let query = 'SELECT e.*, c.name AS category_name, e.source FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id WHERE e.user_id = ?';
         const params = [user_id];
 
         if (month) {

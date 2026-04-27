@@ -191,6 +191,7 @@ def register_handlers(dp: Dispatcher, db_manager):
             description=parsed.get("item") or parsed.get("description"),
             category_name=parsed.get("category"),
             currency=parsed.get("currency", "ILS"),
+            source=parsed.get("source", "bot"),
         )
 
         await state.clear()

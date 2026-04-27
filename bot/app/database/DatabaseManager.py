@@ -323,6 +323,7 @@ class DatabaseManager:
         description: str | None,
         category_name: str | None,
         currency: str = "ILS",
+        source: str = "bot",
     ) -> bool:
         try:
             category_id = None
@@ -333,9 +334,9 @@ class DatabaseManager:
             async with pool.acquire() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "INSERT INTO expenses (user_id, amount, currency, description, category_id) "
-                        "VALUES (%s, %s, %s, %s, %s)",
-                        (user_id, amount, currency, description, category_id),
+                        "INSERT INTO expenses (user_id, amount, currency, description, category_id, source) "
+                        "VALUES (%s, %s, %s, %s, %s, %s)",
+                        (user_id, amount, currency, description, category_id, source),
                     )
             return True
         except Exception as e:

@@ -37,7 +37,7 @@ export default function Expenses() {
         <table style={styles.table}>
           <thead>
             <tr>
-              {['Date', 'Description', 'Category', 'Amount'].map((h) => (
+              {['Date', 'Description', 'Category', 'Amount', 'Source'].map((h) => (
                 <th key={h} style={styles.th}>{h}</th>
               ))}
             </tr>
@@ -52,6 +52,11 @@ export default function Expenses() {
                 </td>
                 <td style={{ ...styles.td, fontWeight: 600, color: '#38bdf8' }}>
                   {e.currency} {Number(e.amount).toFixed(2)}
+                </td>
+                <td style={styles.td}>
+                  {e.source === 'apple_pay'
+                    ? <span style={styles.applePayBadge}>􀣺 Apple Pay</span>
+                    : <span style={styles.botBadge}>Bot</span>}
                 </td>
               </tr>
             ))}
@@ -73,4 +78,6 @@ const styles = {
   tr: { borderBottom: '1px solid #1e293b' },
   td: { padding: '12px 14px', fontSize: 14, color: '#e2e8f0' },
   badge: { background: '#1e3a5f', color: '#93c5fd', padding: '3px 10px', borderRadius: 20, fontSize: 12 },
+  applePayBadge: { background: '#1a1a1a', color: '#f5f5f7', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, letterSpacing: '-0.01em' },
+  botBadge: { background: '#1e2230', color: '#5b6171', padding: '3px 10px', borderRadius: 20, fontSize: 11 },
 };

@@ -385,7 +385,9 @@ function TransactionsTable({ expenses }) {
             −{fmt(e.amount)}
           </div>
           <div className="desktop-only" style={{ textAlign: 'right' }}>
-            <span className="vr real">real</span>
+            {e.source === 'apple_pay'
+              ? <span className="vr" style={{ background: '#1a1a1a', color: '#f5f5f7', fontSize: 10, fontWeight: 600 }}>Apple Pay</span>
+              : <span className="vr real">real</span>}
           </div>
         </div>
       ))}
