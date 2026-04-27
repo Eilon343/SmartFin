@@ -102,10 +102,41 @@ function CategoryCard({ budget, color, icon, onOpen }) {
 }
 
 /* -------- Category drawer -------- */
-function CategoryDrawer({ budget, color, icon, expenses, onClose }) {
+function CategoryDrawer({ budget, color, icon, expenses, onClose, onReload }) {
+  const [editing, setEditing] = useState(false);
+  const [limitVal, setLimitVal] = useState('');
+  const [carryOver, setCarryOver] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (budget) {
+      setLimitVal(budget.monthly_limit != null ? String(budget.monthly_limit) : '');
+      setCarryOver(!!budget.carry_over);
+      setEditing(false);
+    }
+  }, [budget]);
+
   if (!budget) return null;
   const catExpenses = expenses.filter(e => e.category_name === budget.category);
   const p = pct(budget.spent, budget.effective_limit);
+  const hasLimit = !budget.no_budget && budget.effective_limit != null;
+
+  async function saveBudget(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await api.post('/budgets', {
+        category_id: budget.category_id,
+        monthly_limit: Number(limitVal),
+        carry_over: carryOver,
+      });
+      setEditing(false);
+      onReload();
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Drawer open={!!budget} onClose={onClose}>
       <div className="between" style={{ padding: '18px 20px', borderBottom: '1px solid var(--line)' }}>
@@ -122,19 +153,66 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose }) {
       </div>
       <div style={{ padding: 20, overflow: 'auto', flex: 1 }}>
         <div className="card card-pad" style={{ marginBottom: 16 }}>
-          <div className="between" style={{ marginBottom: 10 }}>
-            <span className="mono tnum" style={{ fontWeight: 700, fontSize: 22 }}>{fmt(budget.spent)}</span>
-            <span className="mono muted">/ {fmt(budget.effective_limit)}</span>
-          </div>
-          <ProgressBar value={budget.spent} max={budget.effective_limit} height={8} />
-          <div className="between" style={{ marginTop: 10 }}>
-            <span className="muted" style={{ fontSize: 12 }}>{Math.round(p)}% of budget used</span>
-            <span className="mono" style={{ fontSize: 12, color: budget.spent > budget.effective_limit ? 'var(--rose)' : 'var(--emerald)' }}>
-              {budget.spent > budget.effective_limit
-                ? 'over by ' + fmt(budget.spent - budget.effective_limit)
-                : fmt(budget.remaining) + ' left'}
-            </span>
-          </div>
+          {editing ? (
+            <form onSubmit={saveBudget} className="stack" style={{ gap: 12 }}>
+              <div className="between">
+                <span style={{ fontWeight: 600, fontSize: 14 }}>Set monthly budget</span>
+                <button type="button" className="btn ghost icon" onClick={() => setEditing(false)}><Icon name="x" size={14} /></button>
+              </div>
+              <div className="field">
+                <label>Monthly limit (₪)</label>
+                <input className="input mono" type="number" step="1" min="1" autoFocus
+                  value={limitVal} onChange={e => setLimitVal(e.target.value)} placeholder="e.g. 2000" />
+              </div>
+              <label className="row" style={{ gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={carryOver} onChange={e => setCarryOver(e.target.checked)} />
+                <span className="muted">Roll unspent balance to next month</span>
+              </label>
+              <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+                <button type="button" className="btn" onClick={() => setEditing(false)}>Cancel</button>
+                <button type="submit" className="btn primary" disabled={saving}>
+                  <Icon name="check" size={13} /> {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <div className="between" style={{ marginBottom: hasLimit ? 10 : 0 }}>
+                <span className="mono tnum" style={{ fontWeight: 700, fontSize: 22 }}>{fmt(budget.spent)}</span>
+                <div className="row" style={{ gap: 8 }}>
+                  {hasLimit && <span className="mono muted">/ {fmt(budget.effective_limit)}</span>}
+                  <button className="btn ghost icon" style={{ width: 28, height: 28 }} onClick={() => setEditing(true)}>
+                    <Icon name="pencil" size={13} color="var(--text-3)" />
+                  </button>
+                </div>
+              </div>
+              {hasLimit && (
+                <>
+                  <ProgressBar value={budget.spent} max={budget.effective_limit} height={8} />
+                  <div className="between" style={{ marginTop: 10 }}>
+                    <span className="muted" style={{ fontSize: 12 }}>{Math.round(p)}% of budget used</span>
+                    <span className="mono" style={{ fontSize: 12, color: budget.spent > budget.effective_limit ? 'var(--rose)' : 'var(--emerald)' }}>
+                      {budget.spent > budget.effective_limit
+                        ? 'over by ' + fmt(budget.spent - budget.effective_limit)
+                        : fmt(budget.remaining) + ' left'}
+                    </span>
+                  </div>
+                  {budget.carry_over && (
+                    <div className="row" style={{ marginTop: 10, gap: 8 }}>
+                      <span className="chip amb"><Icon name="arrow-right" size={10} /> Carry-over</span>
+                      {budget.carried_in > 0 && <span className="muted" style={{ fontSize: 12 }}>+{fmt(budget.carried_in)} rolled in</span>}
+                    </div>
+                  )}
+                </>
+              )}
+              {!hasLimit && (
+                <button className="btn ghost" style={{ marginTop: 8, width: '100%', justifyContent: 'center', gap: 6 }}
+                  onClick={() => setEditing(true)}>
+                  <Icon name="plus" size={13} /> Set a budget limit
+                </button>
+              )}
+            </>
+          )}
         </div>
         <div className="meta-label" style={{ marginBottom: 10 }}>Transactions</div>
         {catExpenses.length === 0
@@ -538,6 +616,7 @@ export default function Dashboard() {
           icon={openBudget.icon}
           expenses={expenses}
           onClose={() => setOpenBudget(null)}
+          onReload={load}
         />
       )}
 

@@ -15,6 +15,9 @@ router.get('/categories', auth, expenseController.getCategories);
 router.get('/budgets', auth, expenseController.getBudgets);
 router.post('/budgets', auth, expenseController.upsertBudget);
 router.get('/subscriptions', auth, expenseController.getSubscriptions);
+router.post('/subscriptions', auth, expenseController.addSubscription);
+router.put('/subscriptions/:id', auth, expenseController.updateSubscription);
+router.delete('/subscriptions/:id', auth, expenseController.deleteSubscription);
 router.get('/pnl', auth, expenseController.getPnL);
 
 router.get('/income', auth, incomeController.getIncome);

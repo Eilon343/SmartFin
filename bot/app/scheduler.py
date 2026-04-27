@@ -68,6 +68,38 @@ def _format_score_message(data: dict) -> str:
     )
 
 
+async def _charge_due_subscriptions(bot: Bot, db_manager):
+    """Daily: charge any subscription whose day_of_month has arrived this month."""
+    today = datetime.now()
+    today_day = today.day
+    current_month = today.strftime("%Y-%m")
+
+    due = await db_manager.get_due_subscriptions(today_day, current_month)
+    pool = await db_manager.get_pool()
+
+    for sub in due:
+        try:
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "INSERT INTO expenses (user_id, amount, currency, description, category_id) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (sub["user_id"], sub["amount"], sub["currency"],
+                         f"[Subscription] {sub['name']}", sub["category_id"]),
+                    )
+            await db_manager.mark_subscription_charged(sub["subscription_id"], current_month)
+            try:
+                await bot.send_message(
+                    sub["user_id"],
+                    f"💳 Auto-charged: *{sub['name']}* — ₪{float(sub['amount']):.2f}",
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logging.error(f"Subscription notify error: {e}")
+        except Exception as e:
+            logging.error(f"Subscription charge error for sub_id={sub['subscription_id']}: {e}")
+
+
 def setup_scheduler(bot: Bot, db_manager) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
 
@@ -91,6 +123,14 @@ def setup_scheduler(bot: Bot, db_manager) -> AsyncIOScheduler:
         send_spending_scores,
         CronTrigger(day_of_week="sat", hour=9, minute=0),
         id="weekly_spending_score",
+        replace_existing=True,
+    )
+
+    # Every day at 09:00 — bill due subscriptions (idempotent per month)
+    scheduler.add_job(
+        lambda: _charge_due_subscriptions(bot, db_manager),
+        CronTrigger(hour=9, minute=0),
+        id="daily_subscription_billing",
         replace_existing=True,
     )
 

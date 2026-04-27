@@ -160,7 +160,7 @@ exports.getSubscriptions = async (req, res) => {
         const [rows] = await db.query(
             `SELECT s.subscription_id, s.name, s.amount, s.currency,
                     s.day_of_month, s.active, s.last_charged_month,
-                    c.name AS category
+                    s.category_id, c.name AS category
              FROM subscriptions s
              LEFT JOIN categories c ON s.category_id = c.category_id
              WHERE s.user_id = ? AND s.active = TRUE
@@ -171,6 +171,66 @@ exports.getSubscriptions = async (req, res) => {
     } catch (err) {
         console.error('getSubscriptions error:', err);
         res.status(500).json({ error: 'Failed to fetch subscriptions' });
+    }
+};
+
+exports.addSubscription = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { name, amount, currency = 'ILS', category_id, day_of_month } = req.body;
+    if (!name || amount == null || !day_of_month) {
+        return res.status(400).json({ error: 'name, amount, day_of_month required' });
+    }
+    const day = parseInt(day_of_month, 10);
+    if (day < 1 || day > 28) return res.status(400).json({ error: 'day_of_month must be 1–28' });
+    try {
+        const [result] = await db.query(
+            `INSERT INTO subscriptions (user_id, name, amount, currency, category_id, day_of_month)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [user_id, name.trim(), Number(amount), currency, category_id || null, day]
+        );
+        res.json({ subscription_id: result.insertId });
+    } catch (err) {
+        console.error('addSubscription error:', err);
+        res.status(500).json({ error: 'Failed to add subscription' });
+    }
+};
+
+exports.updateSubscription = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { id } = req.params;
+    const { name, amount, currency, category_id, day_of_month } = req.body;
+    if (!name || amount == null || !day_of_month) {
+        return res.status(400).json({ error: 'name, amount, day_of_month required' });
+    }
+    const day = parseInt(day_of_month, 10);
+    if (day < 1 || day > 28) return res.status(400).json({ error: 'day_of_month must be 1–28' });
+    try {
+        const [result] = await db.query(
+            `UPDATE subscriptions SET name=?, amount=?, currency=?, category_id=?, day_of_month=?
+             WHERE subscription_id=? AND user_id=?`,
+            [name.trim(), Number(amount), currency || 'ILS', category_id || null, day, id, user_id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('updateSubscription error:', err);
+        res.status(500).json({ error: 'Failed to update subscription' });
+    }
+};
+
+exports.deleteSubscription = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { id } = req.params;
+    try {
+        const [result] = await db.query(
+            `UPDATE subscriptions SET active=FALSE WHERE subscription_id=? AND user_id=?`,
+            [id, user_id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('deleteSubscription error:', err);
+        res.status(500).json({ error: 'Failed to delete subscription' });
     }
 };
 

@@ -74,28 +74,6 @@ class DatabaseManager:
                 )
                 return cur.lastrowid
 
-    async def set_user_pin(self, user_id: int, pin_hash: str) -> bool:
-        try:
-            pool = await self.get_pool()
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "UPDATE users SET pin_hash = %s WHERE user_id = %s",
-                        (pin_hash, user_id),
-                    )
-            return True
-        except Exception as e:
-            logging.error(f"set_user_pin error: {e}")
-            return False
-
-    async def get_user_pin_hash(self, user_id: int) -> str | None:
-        pool = await self.get_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("SELECT pin_hash FROM users WHERE user_id = %s", (user_id,))
-                row = await cur.fetchone()
-        return row[0] if row else None
-
     async def link_google_account(self, user_id: int, email: str) -> bool:
         try:
             pool = await self.get_pool()
@@ -122,6 +100,220 @@ class DatabaseManager:
             return True
         except Exception as e:
             logging.error(f"add_user_category error: {e}")
+            return False
+
+    # --- Subscriptions ---
+
+    async def add_subscription(
+        self, user_id: int, name: str, amount: float,
+        category_name: str | None, day_of_month: int, currency: str = "ILS"
+    ) -> int | None:
+        try:
+            category_id = await self.get_or_create_category_id(user_id, category_name) if category_name else None
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "INSERT INTO subscriptions "
+                        "(user_id, name, amount, currency, category_id, day_of_month) "
+                        "VALUES (%s, %s, %s, %s, %s, %s)",
+                        (user_id, name, amount, currency, category_id, day_of_month),
+                    )
+                    return cur.lastrowid
+        except Exception as e:
+            logging.error(f"add_subscription error: {e}")
+            return None
+
+    async def list_subscriptions(self, user_id: int) -> list[dict]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT s.subscription_id, s.name, s.amount, s.currency, "
+                    "       c.name AS category, s.day_of_month, s.active, s.last_charged_month "
+                    "FROM subscriptions s LEFT JOIN categories c ON s.category_id = c.category_id "
+                    "WHERE s.user_id = %s ORDER BY s.day_of_month",
+                    (user_id,),
+                )
+                rows = await cur.fetchall()
+        keys = ["subscription_id", "name", "amount", "currency", "category", "day_of_month", "active", "last_charged_month"]
+        return [dict(zip(keys, r)) for r in rows]
+
+    async def delete_subscription(self, user_id: int, subscription_id: int) -> bool:
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "DELETE FROM subscriptions WHERE subscription_id = %s AND user_id = %s",
+                        (subscription_id, user_id),
+                    )
+                    return cur.rowcount > 0
+        except Exception as e:
+            logging.error(f"delete_subscription error: {e}")
+            return False
+
+    async def get_due_subscriptions(self, today_day: int, current_month: str) -> list[dict]:
+        """Active subs whose day_of_month <= today and not yet charged for current_month."""
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT subscription_id, user_id, name, amount, currency, category_id "
+                    "FROM subscriptions "
+                    "WHERE active = TRUE AND day_of_month <= %s "
+                    "  AND (last_charged_month IS NULL OR last_charged_month < %s)",
+                    (today_day, current_month),
+                )
+                rows = await cur.fetchall()
+        keys = ["subscription_id", "user_id", "name", "amount", "currency", "category_id"]
+        return [dict(zip(keys, r)) for r in rows]
+
+    async def mark_subscription_charged(self, subscription_id: int, month: str):
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "UPDATE subscriptions SET last_charged_month = %s WHERE subscription_id = %s",
+                    (month, subscription_id),
+                )
+
+    # --- Budgets ---
+
+    async def set_budget(self, user_id: int, category_name: str, monthly_limit: float, carry_over: bool = True) -> bool:
+        try:
+            category_id = await self.get_or_create_category_id(user_id, category_name)
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "INSERT INTO budgets (user_id, category_id, monthly_limit, carry_over) "
+                        "VALUES (%s, %s, %s, %s) "
+                        "ON DUPLICATE KEY UPDATE monthly_limit = VALUES(monthly_limit), carry_over = VALUES(carry_over)",
+                        (user_id, category_id, monthly_limit, carry_over),
+                    )
+            return True
+        except Exception as e:
+            logging.error(f"set_budget error: {e}")
+            return False
+
+    async def list_budgets(self, user_id: int) -> list[dict]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT b.budget_id, c.name AS category, b.monthly_limit, b.carry_over "
+                    "FROM budgets b JOIN categories c ON b.category_id = c.category_id "
+                    "WHERE b.user_id = %s ORDER BY c.name",
+                    (user_id,),
+                )
+                rows = await cur.fetchall()
+        keys = ["budget_id", "category", "monthly_limit", "carry_over"]
+        return [dict(zip(keys, r)) for r in rows]
+
+    async def add_income(
+        self,
+        user_id: int,
+        source: str,
+        amount: float,
+        income_type: str,
+        month: str,
+        currency: str = "ILS",
+        description: str | None = None,
+    ) -> bool:
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "INSERT INTO income (user_id, source, amount, currency, type, month, description) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (user_id, source, amount, currency, income_type, month, description),
+                    )
+            return True
+        except Exception as e:
+            logging.error(f"add_income error: {e}")
+            return False
+
+    async def get_category_spending(self, user_id: int, category_name: str, month: str) -> float:
+        """Returns total spent in a category for the given month."""
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT COALESCE(SUM(e.amount), 0) FROM expenses e "
+                    "JOIN categories c ON e.category_id = c.category_id "
+                    "WHERE e.user_id = %s AND c.name = %s "
+                    "  AND DATE_FORMAT(e.created_at, '%%Y-%%m') = %s",
+                    (user_id, category_name, month),
+                )
+                (total,) = await cur.fetchone()
+        return float(total)
+
+    async def get_category_budget(self, user_id: int, category_name: str) -> dict | None:
+        """Returns budget row for a category, or None if no budget is set."""
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT b.monthly_limit FROM budgets b "
+                    "JOIN categories c ON b.category_id = c.category_id "
+                    "WHERE b.user_id = %s AND c.name = %s",
+                    (user_id, category_name),
+                )
+                row = await cur.fetchone()
+        return {"monthly_limit": float(row[0])} if row else None
+
+    # --- Savings Goals ---
+
+    async def add_savings_goal(
+        self,
+        user_id: int,
+        name: str,
+        target_amount: float,
+        monthly_allocation: float = 0.0,
+        currency: str = "ILS",
+    ) -> int | None:
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "INSERT INTO savings_goals (user_id, name, target_amount, monthly_allocation, currency) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (user_id, name, target_amount, monthly_allocation, currency),
+                    )
+                    return cur.lastrowid
+        except Exception as e:
+            logging.error(f"add_savings_goal error: {e}")
+            return None
+
+    async def list_savings_goals(self, user_id: int) -> list[dict]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT goal_id, name, target_amount, saved_amount, monthly_allocation, currency "
+                    "FROM savings_goals WHERE user_id = %s AND active = TRUE ORDER BY created_at",
+                    (user_id,),
+                )
+                rows = await cur.fetchall()
+        keys = ["goal_id", "name", "target_amount", "saved_amount", "monthly_allocation", "currency"]
+        return [dict(zip(keys, r)) for r in rows]
+
+    async def deposit_to_savings_goal(self, user_id: int, goal_id: int, amount: float) -> bool:
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE savings_goals SET saved_amount = saved_amount + %s "
+                        "WHERE goal_id = %s AND user_id = %s",
+                        (amount, goal_id, user_id),
+                    )
+                    return cur.rowcount > 0
+        except Exception as e:
+            logging.error(f"deposit_to_savings_goal error: {e}")
             return False
 
     async def add_expense(

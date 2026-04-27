@@ -96,6 +96,10 @@ body {
 .main { flex: 1; min-width: 0; }
 .container { max-width: 1320px; margin: 0 auto; padding: 28px 32px 120px; }
 
+/* login google button */
+.google-btn:hover { background: #252839 !important; border-color: #3a3f55 !important; }
+.google-btn:active { background: #1a1d2a !important; }
+
 /* nav */
 .nav-item {
   display: flex; align-items: center; gap: 12px;
@@ -152,6 +156,8 @@ body {
 .btn.icon { width: 36px; padding: 0; justify-content: center; }
 .btn.ghost { background: transparent; border-color: transparent; }
 .btn.ghost:hover { background: var(--hover-bg); }
+.btn.danger { background: #450a0a; color: #fca5a5; border-color: #7f1d1d; }
+.btn.danger:hover { background: #7f1d1d; color: #fff; }
 
 /* big number */
 .big-num { font-weight: 700; font-size: 56px; letter-spacing: -0.03em; line-height: 1; font-feature-settings: "tnum"; }
@@ -241,7 +247,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 
 /* sub row */
 .sub-row {
-  display: grid; grid-template-columns: 36px 1fr auto auto; gap: 12px; align-items: center;
+  display: grid; grid-template-columns: 36px 1fr auto auto 32px 32px; gap: 10px; align-items: center;
   padding: 12px 4px; border-bottom: 1px solid var(--row-divider);
 }
 .sub-row:last-child { border-bottom: none; }
