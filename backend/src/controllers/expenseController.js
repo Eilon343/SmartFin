@@ -58,6 +58,27 @@ exports.getBudgets = async (req, res) => {
             [user_id]
         );
 
+        // Fetch all expense totals per category per month in one query
+        const earliestStart = budgetRows.reduce((min, b) => {
+            const s = b.start_month <= month ? b.start_month : month;
+            return s < min ? s : min;
+        }, month);
+        const [expenseRows] = await db.query(
+            `SELECT category_id, DATE_FORMAT(created_at, '%Y-%m') AS mo, COALESCE(SUM(amount), 0) AS total
+             FROM expenses
+             WHERE user_id = ?
+               AND created_at >= CONCAT(?, '-01')
+               AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
+             GROUP BY category_id, mo`,
+            [user_id, earliestStart, month]
+        );
+        const spentMap = {};
+        for (const r of expenseRows) {
+            if (!spentMap[r.category_id]) spentMap[r.category_id] = {};
+            spentMap[r.category_id][r.mo] = Number(r.total);
+        }
+        const getSpent = (catId, mo) => (spentMap[catId]?.[mo] || 0);
+
         const result = [];
         const budgetedCategoryIds = new Set();
 
@@ -70,13 +91,12 @@ exports.getBudgets = async (req, res) => {
             if (b.carry_over) {
                 const months = monthsBetween(startMonth, month);
                 for (const m of months.slice(0, -1)) {
-                    const spent = await sumSpent(user_id, b.category_id, m);
-                    const leftover = (limit + carry) - spent;
+                    const leftover = (limit + carry) - getSpent(b.category_id, m);
                     carry = leftover > 0 ? leftover : 0;
                 }
             }
 
-            const spent_this_month = await sumSpent(user_id, b.category_id, month);
+            const spent_this_month = getSpent(b.category_id, month);
             const effective_limit = limit + carry;
             const remaining = effective_limit - spent_this_month;
 
@@ -106,7 +126,6 @@ exports.getBudgets = async (req, res) => {
 
         for (const c of allCatRows) {
             if (!budgetedCategoryIds.has(c.category_id)) {
-                const spent = await sumSpent(user_id, c.category_id, month);
                 result.push({
                     budget_id: null,
                     category_id: c.category_id,
@@ -114,7 +133,7 @@ exports.getBudgets = async (req, res) => {
                     monthly_limit: null,
                     carry_over: false,
                     carried_in: 0,
-                    spent,
+                    spent: getSpent(c.category_id, month),
                     effective_limit: null,
                     remaining: null,
                     pct_used: null,
@@ -134,8 +153,9 @@ async function sumSpent(user_id, category_id, month) {
     const [rows] = await db.query(
         `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
          WHERE user_id = ? AND category_id = ?
-           AND DATE_FORMAT(created_at, '%Y-%m') = ?`,
-        [user_id, category_id, month]
+           AND created_at >= CONCAT(?, '-01')
+           AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)`,
+        [user_id, category_id, month, month]
     );
     return Number(rows[0].total);
 }
@@ -240,37 +260,34 @@ exports.getPnL = async (req, res) => {
     const month = req.query.month || new Date().toISOString().slice(0, 7);
 
     try {
-        const [expRows] = await db.query(
-            "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND DATE_FORMAT(created_at, '%Y-%m') = ?",
-            [user_id, month]
-        );
-        const total_expenses = Number(expRows[0].total);
-
-        const [subRows] = await db.query(
-            "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE",
-            [user_id]
-        );
-        const subscription_total = Number(subRows[0].total);
-
-        const [savRows] = await db.query(
-            "SELECT COALESCE(SUM(monthly_allocation), 0) AS total FROM savings_goals WHERE user_id = ? AND active = TRUE",
-            [user_id]
-        );
-        const savings_allocation = Number(savRows[0].total);
-
-        const [fixedRows] = await db.query(
-            "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'fixed' AND month = ?",
-            [user_id, month]
-        );
-        const fixed_income = Number(fixedRows[0].total);
-
         const past3 = getPast3MonthsStr(month);
-        const [varRows] = await db.query(
-            "SELECT COALESCE(SUM(amount), 0) AS total, COUNT(DISTINCT month) AS cnt " +
-            "FROM income WHERE user_id = ? AND type = 'variable' AND month IN (?, ?, ?)",
-            [user_id, ...past3]
-        );
-        const variable_avg = Number(varRows[0].total) / Math.max(Number(varRows[0].cnt), 1);
+        const [[expRows], [subRows], [savRows], [fixedRows], [varRows]] = await Promise.all([
+            db.query(
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND created_at >= CONCAT(?, '-01') AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
+                [user_id, month, month]
+            ),
+            db.query(
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE",
+                [user_id]
+            ),
+            db.query(
+                "SELECT COALESCE(SUM(monthly_allocation), 0) AS total FROM savings_goals WHERE user_id = ? AND active = TRUE",
+                [user_id]
+            ),
+            db.query(
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'fixed' AND month = ?",
+                [user_id, month]
+            ),
+            db.query(
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month IN (?, ?, ?)",
+                [user_id, ...past3]
+            ),
+        ]);
+        const total_expenses = Number(expRows[0].total);
+        const subscription_total = Number(subRows[0].total);
+        const savings_allocation = Number(savRows[0].total);
+        const fixed_income = Number(fixedRows[0].total);
+        const variable_avg = Number(varRows[0].total) / 3;
 
         const total_income = fixed_income + variable_avg;
         const net_pnl = total_income - total_expenses - subscription_total - savings_allocation;

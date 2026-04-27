@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const expenseRoutes = require('./routes/expenseRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
+const { startQueueProcessor } = require('./controllers/webhookController');
 
 if (!process.env.JWT_SECRET) {
     console.error('FATAL: JWT_SECRET environment variable is not set');
@@ -26,5 +27,6 @@ app.get('/health', (_req, res) => {
 
 app.listen(PORT, () => {
     console.log(`SmartFin API listening on port ${PORT}`);
+    startQueueProcessor();
 });
 //testss

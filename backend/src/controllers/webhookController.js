@@ -3,10 +3,10 @@ const db = require('../config/db');
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
-const TELEGRAM_USER_ID = process.env.TELEGRAM_CHAT_ID; // doubles as user_id in DB
+const TELEGRAM_USER_ID = process.env.TELEGRAM_CHAT_ID;
 
-async function callGemini(text) {
-    const prompt =
+function buildPrompt(text) {
+    return (
         `Parse this Apple Pay transaction message and return ONLY valid JSON.\n` +
         `Message: "${text}"\n\n` +
         `Return this exact shape:\n` +
@@ -17,25 +17,37 @@ async function callGemini(text) {
         `- merchant: the store/place name\n` +
         `- category: best match from [Food, Transport, Housing, Entertainment, Shopping, Utilities, Health, Other]\n` +
         `- source: always "apple_pay"\n` +
-        `Use null for fields that cannot be determined.`;
-
-    const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { responseMimeType: 'application/json' },
-            }),
-        }
+        `Use null for fields that cannot be determined.`
     );
+}
 
-    const data = await res.json();
-    console.log('Gemini raw response:', JSON.stringify(data).slice(0, 500));
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!raw) throw new Error('Empty Gemini response');
-    return JSON.parse(raw);
+// Returns parsed object, or throws { unavailable: true } if Gemini is down
+async function callGemini(text) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: buildPrompt(text) }] }],
+                    generationConfig: { responseMimeType: 'application/json' },
+                }),
+            }
+        );
+        const data = await res.json();
+        if (data.error?.code === 503 || data.error?.status === 'UNAVAILABLE') {
+            if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
+            continue;
+        }
+        if (data.error) throw new Error(`Gemini error: ${data.error.message}`);
+        const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!raw) throw new Error('Empty Gemini response');
+        return JSON.parse(raw.replace(/```json|```/g, '').trim());
+    }
+    const err = new Error('Gemini unavailable');
+    err.unavailable = true;
+    throw err;
 }
 
 async function sendTelegramMessage(chatId, text) {
@@ -57,21 +69,58 @@ async function insertExpense(userId, parsed) {
             categoryId = rows[0].category_id;
         } else {
             const [ins] = await db.query(
-                'INSERT INTO categories (user_id, name, is_base) VALUES (?, ?, FALSE)',
+                'INSERT INTO categories (user_id, name, is_base) VALUES (?, ?, FALSE) ON DUPLICATE KEY UPDATE category_id=LAST_INSERT_ID(category_id)',
                 [userId, parsed.category]
             );
             categoryId = ins.insertId;
         }
     }
-
     await db.query(
         'INSERT INTO expenses (user_id, amount, currency, description, category_id, source) VALUES (?, ?, ?, ?, ?, ?)',
         [userId, parsed.amount, parsed.currency || 'ILS', parsed.merchant, categoryId, 'apple_pay']
     );
 }
 
+async function processAndSave(userId, text) {
+    const parsed = await callGemini(text);
+    if (!parsed.amount) throw new Error('Could not parse amount');
+    await insertExpense(userId, parsed);
+    const amt = Number(parsed.amount).toFixed(2);
+    const merchant = parsed.merchant || 'Unknown merchant';
+    await sendTelegramMessage(
+        userId,
+        `✅ Apple Pay transaction confirmed: Logged *${parsed.currency || 'ILS'} ${amt}* at *${merchant}*`
+    );
+    return parsed;
+}
+
+// Background queue processor — runs every 5 minutes
+async function processQueue() {
+    try {
+        const [rows] = await db.query(
+            "SELECT * FROM webhook_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 10"
+        );
+        for (const row of rows) {
+            try {
+                await processAndSave(row.user_id, row.text);
+                await db.query("UPDATE webhook_queue SET status = 'processed' WHERE id = ?", [row.id]);
+                console.log(`Queue item ${row.id} processed`);
+            } catch (err) {
+                if (err.unavailable) break; // still down, stop trying
+                await db.query("UPDATE webhook_queue SET status = 'failed' WHERE id = ?", [row.id]);
+                console.error(`Queue item ${row.id} failed:`, err.message);
+            }
+        }
+    } catch (err) {
+        console.error('Queue processor error:', err.message);
+    }
+}
+
+exports.startQueueProcessor = () => {
+    setInterval(processQueue, 5 * 60 * 1000);
+};
+
 exports.handleApplePay = async (req, res) => {
-    // Validate secret
     const secret = req.headers['x-webhook-secret'];
     if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) {
         return res.status(401).json({ error: 'Unauthorized' });
@@ -81,26 +130,21 @@ exports.handleApplePay = async (req, res) => {
     if (!text) return res.status(400).json({ error: 'text required' });
 
     try {
-        // Parse with Gemini
-        const parsed = await callGemini(text);
-
-        if (!parsed.amount) {
-            return res.status(422).json({ error: 'Could not parse amount from message' });
-        }
-
-        // Insert expense
-        await insertExpense(TELEGRAM_USER_ID, parsed);
-
-        // Notify via Telegram
-        const amt = Number(parsed.amount).toFixed(2);
-        const merchant = parsed.merchant || 'Unknown merchant';
-        await sendTelegramMessage(
-            TELEGRAM_USER_ID,
-            `✅ Apple Pay transaction confirmed: Logged *${parsed.currency || 'ILS'} ${amt}* at *${merchant}*`
-        );
-
+        const parsed = await processAndSave(TELEGRAM_USER_ID, text);
         res.json({ success: true, parsed });
     } catch (err) {
+        if (err.unavailable) {
+            // Queue for later
+            await db.query(
+                "INSERT INTO webhook_queue (user_id, text, status) VALUES (?, ?, 'pending')",
+                [TELEGRAM_USER_ID, text]
+            );
+            await sendTelegramMessage(
+                TELEGRAM_USER_ID,
+                `⏳ AI is temporarily unavailable. Your transaction has been queued and will be logged automatically when it recovers.`
+            );
+            return res.json({ success: false, queued: true });
+        }
         console.error('Apple Pay webhook error:', err);
         res.status(500).json({ error: 'Failed to process transaction' });
     }
