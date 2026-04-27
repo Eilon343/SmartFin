@@ -32,6 +32,7 @@ async function callGemini(text) {
     );
 
     const data = await res.json();
+    console.log('Gemini raw response:', JSON.stringify(data).slice(0, 500));
     const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!raw) throw new Error('Empty Gemini response');
     return JSON.parse(raw);
