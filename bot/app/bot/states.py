@@ -8,7 +8,11 @@ class ExpenseFlow(StatesGroup):
     selecting_category = State()
 
 
-class PinFlow(StatesGroup):
-    waiting_pin = State()       # user must enter PIN to unlock
-    setting_pin = State()       # user is creating/changing their PIN
-    confirming_pin = State()    # user re-enters PIN to confirm
+class IncomeFlow(StatesGroup):
+    pending_confirmation = State()
+
+
+class SubscriptionFlow(StatesGroup):
+    pending_confirmation = State()
+
+
