@@ -43,7 +43,7 @@ async function callGemini(text) {
         if (data.error) throw new Error(`Gemini error: ${data.error.message}`);
         const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!raw) throw new Error('Empty Gemini response');
-        return JSON.parse(raw);
+        return JSON.parse(raw.replace(/```json|```/g, '').trim());
     }
     const err = new Error('Gemini unavailable');
     err.unavailable = true;
@@ -69,7 +69,7 @@ async function insertExpense(userId, parsed) {
             categoryId = rows[0].category_id;
         } else {
             const [ins] = await db.query(
-                'INSERT INTO categories (user_id, name, is_base) VALUES (?, ?, FALSE)',
+                'INSERT INTO categories (user_id, name, is_base) VALUES (?, ?, FALSE) ON DUPLICATE KEY UPDATE category_id=LAST_INSERT_ID(category_id)',
                 [userId, parsed.category]
             );
             categoryId = ins.insertId;
