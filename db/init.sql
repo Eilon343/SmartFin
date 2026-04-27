@@ -80,6 +80,14 @@ CREATE TABLE IF NOT EXISTS savings_goals (
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
+CREATE TABLE IF NOT EXISTS webhook_queue (
+    id         INT PRIMARY KEY AUTO_INCREMENT,
+    user_id    BIGINT NOT NULL,
+    text       TEXT NOT NULL,
+    status     ENUM('pending', 'processed', 'failed') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Base categories (user_id NULL = shared across all users)
 INSERT INTO categories (user_id, name, is_base)
 SELECT NULL, name, TRUE FROM (
