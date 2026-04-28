@@ -196,7 +196,7 @@ export default function Subscriptions() {
                 <div className="stack" style={{ flex: 1, minWidth: 0, opacity: s.paused ? 0.6 : 1 }}>
                   <div className="row" style={{ gap: 8 }}>
                     <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
-                    {s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
+                    {!!s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
                   </div>
                   <span className="muted-2" style={{ fontSize: 11 }}>
                     Monthly · next on the {ordinal(s.day_of_month)}
@@ -212,7 +212,7 @@ export default function Subscriptions() {
                   onClick={() => handleTogglePause(s)}
                   title={s.paused ? "Resume" : "Pause"}
                 >
-                  <Icon name={s.paused ? "play" : "pause"} size={13} />
+                  <Icon name={s.paused ? "play" : "pause"} size={16} style={{ fill: 'currentColor' }} />
                 </button>
                 <button
                   className="btn ghost icon"

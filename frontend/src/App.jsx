@@ -11,6 +11,7 @@ import Income from './pages/Income';
 import Expenses from './pages/Expenses';
 import Settings from './pages/Settings';
 import Layout from './components/Layout';
+import { I18nProvider } from './context/I18nContext';
 
 function PrivateRoute({ children }) {
   const { isAuthenticated } = useAuth();
@@ -22,8 +23,9 @@ export default function App() {
     <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ''}>
       <AuthProvider>
         <ThemeProvider>
-          <BrowserRouter>
-            <Routes>
+          <I18nProvider>
+            <BrowserRouter>
+              <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
                 <Route index element={<Dashboard />} />
@@ -36,7 +38,8 @@ export default function App() {
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
-          </BrowserRouter>
+            </BrowserRouter>
+          </I18nProvider>
         </ThemeProvider>
       </AuthProvider>
     </GoogleOAuthProvider>

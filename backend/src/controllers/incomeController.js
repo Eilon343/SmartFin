@@ -91,27 +91,26 @@ exports.getIncomeSummary = async (req, res) => {
             [user_id, month]
         );
 
-        const past3 = getPast3Months(month);
         const [varRows] = await db.query(
-            "SELECT source, SUM(amount) AS total, COUNT(DISTINCT month) AS months_count " +
-            "FROM income WHERE user_id = ? AND type = 'variable' AND month IN (?, ?, ?) GROUP BY source",
-            [user_id, ...past3]
+            "SELECT source, SUM(amount) AS amount " +
+            "FROM income WHERE user_id = ? AND type = 'variable' AND month = ? GROUP BY source",
+            [user_id, month]
         );
 
-        const variableAveraged = varRows.map(r => ({
+        const variableActual = varRows.map(r => ({
             source: r.source,
-            amount: Math.round((Number(r.total) / Math.max(Number(r.months_count), 1)) * 100) / 100,
+            amount: Number(r.amount),
             type: 'variable',
-            averaged: true,
+            averaged: false,
         }));
 
         const fixedTotal = fixedRows.reduce((s, r) => s + Number(r.amount), 0);
-        const variableTotal = variableAveraged.reduce((s, r) => s + r.amount, 0);
+        const variableTotal = variableActual.reduce((s, r) => s + r.amount, 0);
 
         res.json({
             month,
             fixed: fixedRows.map(r => ({ source: r.source, amount: Number(r.amount), type: 'fixed' })),
-            variable: variableAveraged,
+            variable: variableActual,
             fixed_total: Math.round(fixedTotal * 100) / 100,
             variable_total: Math.round(variableTotal * 100) / 100,
             total: Math.round((fixedTotal + variableTotal) * 100) / 100,

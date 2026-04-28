@@ -271,7 +271,6 @@ exports.getPnL = async (req, res) => {
     if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
-        const past3 = getPast3MonthsStr(month);
         const [[expRows], [subRows], [savRows], [fixedRows], [varRows]] = await Promise.all([
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND created_at >= CONCAT(?, '-01') AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
@@ -290,15 +289,15 @@ exports.getPnL = async (req, res) => {
                 [user_id, month]
             ),
             db.query(
-                "SELECT COALESCE(SUM(amount), 0) AS total, COUNT(DISTINCT month) AS cnt FROM income WHERE user_id = ? AND type = 'variable' AND month IN (?, ?, ?)",
-                [user_id, ...past3]
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month = ?",
+                [user_id, month]
             ),
         ]);
         const total_expenses = Number(expRows[0].total);
         const subscription_total = Number(subRows[0].total);
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total);
-        const variable_avg = Number(varRows[0].total) / Math.max(Number(varRows[0].cnt), 1);
+        const variable_avg = Number(varRows[0].total);
 
         const total_income = fixed_income + variable_avg;
         const net_pnl = total_income - total_expenses - subscription_total - savings_allocation;

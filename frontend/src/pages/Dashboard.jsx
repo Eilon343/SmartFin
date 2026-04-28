@@ -8,6 +8,7 @@ import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
 import Drawer from '../components/ui/Drawer';
 import Toast from '../components/ui/Toast';
+import { useI18n } from '../context/I18nContext';
 
 const CAT_COLORS = [
   '#f59e0b','#60a5fa','#a78bfa','#f472b6','#34d399','#fb7185',
@@ -74,9 +75,10 @@ function getRecentMonths(num = 3) {
 
 /* -------- Category card -------- */
 function CategoryCard({ budget, color, icon, onOpen }) {
+  const { t } = useI18n();
   const hasLimit = !budget.no_budget && budget.effective_limit != null;
   const p = hasLimit ? pct(budget.spent, budget.effective_limit) : 0;
-  const t = tone(p);
+  const toneMap = tone(p);
   const colorMap = { ok: 'var(--emerald)', warn: 'var(--amber)', over: 'var(--rose)' };
   const over = hasLimit && budget.spent > budget.effective_limit;
   return (
@@ -90,7 +92,7 @@ function CategoryCard({ budget, color, icon, onOpen }) {
           <div className="stack">
             <div style={{ fontWeight: 600, fontSize: 14 }}>{budget.category}</div>
             <div className="muted-2" style={{ fontSize: 11 }}>
-              {hasLimit ? `${Math.round(p)}% used${over ? ' · over budget' : ''}` : 'no budget set'}
+              {hasLimit ? `${Math.round(p)}% ${t('dash_used')}${over ? ' · ' + t('dash_over_budget') : ''}` : t('dash_no_budget')}
             </div>
           </div>
         </div>
@@ -110,8 +112,8 @@ function CategoryCard({ budget, color, icon, onOpen }) {
         {hasLimit && <ProgressBar value={budget.spent} max={budget.effective_limit} />}
         {hasLimit && (
           <div className="between" style={{ marginTop: 8 }}>
-            <span className="meta-label" style={{ color: colorMap[t] }}>
-              {over ? 'over by ' + fmt(budget.spent - budget.effective_limit) : fmt(budget.remaining) + ' left'}
+            <span className="meta-label" style={{ color: colorMap[toneMap] }}>
+              {over ? t('dash_over_by') + ' ' + fmt(budget.spent - budget.effective_limit) : fmt(budget.remaining) + ' ' + t('dash_left')}
             </span>
           </div>
         )}
@@ -122,6 +124,7 @@ function CategoryCard({ budget, color, icon, onOpen }) {
 
 /* -------- Category drawer -------- */
 function CategoryDrawer({ budget, color, icon, expenses, onClose, onReload }) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [limitVal, setLimitVal] = useState('');
   const [carryOver, setCarryOver] = useState(false);
@@ -165,7 +168,7 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onReload }) {
           </div>
           <div className="stack">
             <span style={{ fontWeight: 700, fontSize: 16 }}>{budget.category}</span>
-            <span className="muted" style={{ fontSize: 12 }}>{catExpenses.length} transactions this month</span>
+            <span className="muted" style={{ fontSize: 12 }}>{catExpenses.length} {t('dash_tx_month')}</span>
           </div>
         </div>
         <button className="btn ghost icon" onClick={onClose}><Icon name="x" size={16} /></button>
@@ -394,7 +397,7 @@ function SubscriptionsMini({ subs, onTogglePause }) {
             <div className="stack" style={{ opacity: s.paused ? 0.6 : 1, flex: 1, minWidth: 0 }}>
               <div className="row" style={{ gap: 8 }}>
                 <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
-                {s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
+                {!!s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
               </div>
               <span className="muted-2" style={{ fontSize: 11 }}>Monthly · next on the {ordinal(s.day_of_month)}</span>
             </div>
@@ -403,8 +406,9 @@ function SubscriptionsMini({ subs, onTogglePause }) {
                className="btn ghost icon"
                style={{ width: 32, height: 32, color: 'var(--text-1)' }}
                onClick={() => onTogglePause(s)}
+               title={s.paused ? "Resume" : "Pause"}
             >
-               <Icon name={s.paused ? "play" : "pause"} size={13} />
+               <Icon name={s.paused ? "play" : "pause"} size={16} style={{ fill: 'currentColor' }} />
             </button>
           </div>
         ))}
@@ -426,7 +430,7 @@ function TransactionsTable({ expenses }) {
         <span className="chip"><Icon name="message-circle" size={11} /> tg-bot</span>
       </div>
       <div className="tx-row head">
-        <div>Date</div><div>Description</div><div>Category</div><div style={{ textAlign: 'right' }}>Amount</div><div style={{ textAlign: 'right' }}>Type</div>
+        <div>Date</div><div>Description</div><div>Category</div><div style={{ textAlign: 'right' }}>Amount</div><div style={{ textAlign: 'right' }}>Source</div>
       </div>
       {expenses.slice(0, 12).map(e => (
         <div key={e.expense_id} className="tx-row">
@@ -447,9 +451,15 @@ function TransactionsTable({ expenses }) {
             −{fmt(e.amount)}
           </div>
           <div className="desktop-only" style={{ textAlign: 'right' }}>
-            {e.source === 'apple_pay'
-              ? <span className="vr" style={{ background: '#1a1a1a', color: '#f5f5f7', fontSize: 10, fontWeight: 600 }}>Apple Pay</span>
-              : <span className="vr real">real</span>}
+            {e.source === 'apple_pay' ? (
+              <span className="vr" style={{ background: '#1a1a1a', color: '#f5f5f7', fontSize: 10, fontWeight: 600 }}>Apple Pay</span>
+            ) : e.source === 'bot' ? (
+              <span className="vr" style={{ background: 'var(--indigo-soft)', color: 'var(--indigo)' }}>Bot</span>
+            ) : e.source === 'web' ? (
+              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)' }}>Web</span>
+            ) : (
+              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)' }}>{e.source || 'Manual'}</span>
+            )}
           </div>
         </div>
       ))}
@@ -503,7 +513,7 @@ function NetPosition({ pnl }) {
             <span className="chip idg" style={{ textTransform: 'none', fontWeight: 600 }}><Icon name="sparkles" size={11} /> projected</span>
           </div>
           <div className="row" style={{ alignItems: 'flex-start', gap: 6 }}>
-            <span style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-2)', marginTop: 8 }}>₪</span>
+            <span style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-2)', marginTop: 8 }}>{net < 0 ? '−' : ''}₪</span>
             <span style={{ fontSize: 46, fontWeight: 700, letterSpacing: -1, lineHeight: 1 }}>
               {Math.abs(net).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
             </span>
@@ -579,7 +589,7 @@ function IncomeCard({ income }) {
               <div className="row" style={{ gap: 8 }}>
                 <span className="dot" style={{ background: 'var(--indigo)' }} />
                 <span style={{ fontWeight: 500 }}>Variable</span>
-                <span className="muted" style={{ fontSize: 12 }}>· 3-mo avg</span>
+                <span className="muted" style={{ fontSize: 12 }}>· {income.variable.length} sources</span>
               </div>
               <span className="mono tnum" style={{ fontWeight: 600 }}>{fmt(income.variable_total)}</span>
             </div>

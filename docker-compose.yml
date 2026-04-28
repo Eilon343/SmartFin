@@ -9,7 +9,7 @@ services:
     ports:
       - "3307:3306"
     volumes:
-      - /DATA/AppData/SmartFin/mysql:/var/lib/mysql
+      - mysql_data:/var/lib/mysql
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - smartfin-network
@@ -81,3 +81,6 @@ services:
 networks:
   smartfin-network:
     driver: bridge
+
+volumes:
+  mysql_data:

@@ -79,6 +79,9 @@ body {
   font-feature-settings: "ss01", "cv11";
   letter-spacing: -0.005em;
   transition: background .25s ease, color .25s ease;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-feature-settings: "tnum"; }
 .tnum { font-variant-numeric: tabular-nums; }
@@ -114,7 +117,7 @@ body {
 .nav-item:hover { background: var(--hover-bg); color: var(--text-1); }
 .nav-item.active { background: var(--hover-bg-2); color: var(--text-0); }
 .nav-item.active .nav-dot { opacity: 1; }
-.nav-dot { width: 4px; height: 16px; border-radius: 4px; background: var(--emerald); margin-left: auto; opacity: 0; transition: opacity .15s; }
+.nav-dot { width: 4px; height: 16px; border-radius: 4px; background: var(--emerald); margin-inline-start: auto; opacity: 0; transition: opacity .15s; }
 
 /* cards */
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-card); }
@@ -226,6 +229,9 @@ body {
   border: 1px solid var(--line-2);
   font: 500 14px 'Inter', sans-serif;
   outline: none; transition: border-color .15s;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .input:focus, .select:focus { border-color: var(--emerald); }
 textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height: 60px; }
