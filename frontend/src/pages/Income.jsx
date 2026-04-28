@@ -47,7 +47,9 @@ export default function Income() {
       .then(([r1, r2]) => {
         setEntries(r1.data);
         setSummary(r2.data);
+        setError('');
       })
+      .catch(() => setError('Failed to load income data.'))
       .finally(() => setLoading(false));
   }, [month]);
 
@@ -98,8 +100,8 @@ export default function Income() {
       await api.delete(`/income/${deleteTarget.income_id}`);
       setDeleteTarget(null);
       reload();
-    } catch {
-      // ignore
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete.');
     } finally {
       setDeleting(false);
     }
@@ -108,6 +110,9 @@ export default function Income() {
   return (
     <div className="view-enter">
       <PageHeader title="Income" sub="Fixed salary and variable income by month" />
+      {error && !modalOpen && !deleteTarget && (
+        <div style={{ color: 'var(--rose)', padding: '10px 16px', background: 'var(--hover-bg-2)', borderRadius: 8, marginBottom: 20, fontSize: 13 }}>{error}</div>
+      )}
 
       {/* Month picker */}
       <div className="row" style={{ marginBottom: 20, gap: 10 }}>
@@ -284,9 +289,7 @@ export default function Income() {
             </div>
             {error && (
               <div style={{
-                background: '#450a0a', border: '1px solid #7f1d1d',
-                borderRadius: 8, padding: '8px 12px',
-                color: '#fca5a5', fontSize: 12,
+                color: 'var(--rose)', fontSize: 13, marginTop: 4
               }}>{error}</div>
             )}
             <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
@@ -306,6 +309,7 @@ export default function Income() {
           <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 20 }}>
             Remove <strong style={{ color: 'var(--text-0)' }}>{deleteTarget?.source}</strong> ({deleteTarget?.month})?
           </p>
+          {error && <div style={{ color: 'var(--rose)', fontSize: 13, marginBottom: 15 }}>{error}</div>}
           <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
             <button className="btn" onClick={() => setDeleteTarget(null)}>Cancel</button>
             <button className="btn danger" onClick={handleDelete} disabled={deleting}>

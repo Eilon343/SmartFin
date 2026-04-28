@@ -3,6 +3,7 @@ const db = require('../config/db');
 exports.getAllExpenses = async (req, res) => {
     const user_id = req.user.user_id;
     const { month } = req.query; // optional: "2025-04"
+    if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
         let query = 'SELECT e.*, c.name AS category_name, e.source FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id WHERE e.user_id = ?';
@@ -25,6 +26,7 @@ exports.getAllExpenses = async (req, res) => {
 exports.getSummary = async (req, res) => {
     const user_id = req.user.user_id;
     const month = req.query.month || new Date().toISOString().slice(0, 7); // default current month
+    if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
         const [rows] = await db.query(
@@ -47,6 +49,7 @@ exports.getSummary = async (req, res) => {
 exports.getBudgets = async (req, res) => {
     const user_id = req.user.user_id;
     const month = req.query.month || new Date().toISOString().slice(0, 7); // 'YYYY-MM'
+    if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
         const [budgetRows] = await db.query(
@@ -149,16 +152,6 @@ exports.getBudgets = async (req, res) => {
     }
 };
 
-async function sumSpent(user_id, category_id, month) {
-    const [rows] = await db.query(
-        `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
-         WHERE user_id = ? AND category_id = ?
-           AND created_at >= CONCAT(?, '-01')
-           AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)`,
-        [user_id, category_id, month, month]
-    );
-    return Number(rows[0].total);
-}
 
 function monthsBetween(start, end) {
     // start, end as 'YYYY-MM'; returns inclusive list
@@ -258,6 +251,7 @@ exports.deleteSubscription = async (req, res) => {
 exports.getPnL = async (req, res) => {
     const user_id = req.user.user_id;
     const month = req.query.month || new Date().toISOString().slice(0, 7);
+    if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
         const past3 = getPast3MonthsStr(month);
@@ -267,8 +261,8 @@ exports.getPnL = async (req, res) => {
                 [user_id, month, month]
             ),
             db.query(
-                "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE",
-                [user_id]
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE AND DATE_FORMAT(created_at, '%Y-%m') <= ?",
+                [user_id, month]
             ),
             db.query(
                 "SELECT COALESCE(SUM(monthly_allocation), 0) AS total FROM savings_goals WHERE user_id = ? AND active = TRUE",
@@ -287,7 +281,7 @@ exports.getPnL = async (req, res) => {
         const subscription_total = Number(subRows[0].total);
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total);
-        const variable_avg = Number(varRows[0].total) / past3.length;
+        const variable_avg = Number(varRows[0].total) / Math.max(Number(varRows[0].cnt), 1);
 
         const total_income = fixed_income + variable_avg;
         const net_pnl = total_income - total_expenses - subscription_total - savings_allocation;
@@ -343,11 +337,11 @@ exports.upsertBudget = async (req, res) => {
 exports.addExpense = async (req, res) => {
     const user_id = req.user.user_id;
     const { amount, currency = 'ILS', description, category_id } = req.body;
-    if (amount == null) return res.status(400).json({ error: 'amount required' });
+    if (amount == null || isNaN(Number(amount)) || Number(amount) <= 0) return res.status(400).json({ error: 'Valid amount required' });
     try {
         const [result] = await db.query(
             'INSERT INTO expenses (user_id, amount, currency, description, category_id, source) VALUES (?, ?, ?, ?, ?, ?)',
-            [user_id, Number(amount), currency, description?.trim() || null, category_id || null, 'bot']
+            [user_id, Number(amount), currency, description?.trim() || null, category_id || null, 'web']
         );
         res.json({ expense_id: result.insertId });
     } catch (err) {

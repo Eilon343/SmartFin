@@ -19,7 +19,7 @@ function SourceBadge({ source }) {
   if (source === 'apple_pay') {
     return (
       <span style={{
-        background: '#1a1a1a', color: '#f5f5f7',
+        background: 'var(--text-0)', color: 'var(--bg-0)',
         padding: '3px 10px', borderRadius: 20,
         fontSize: 11, fontWeight: 600, letterSpacing: '-0.01em',
         whiteSpace: 'nowrap',
@@ -30,10 +30,10 @@ function SourceBadge({ source }) {
   }
   return (
     <span style={{
-      background: '#1e2230', color: '#5b6171',
+      background: 'var(--hover-bg-2)', color: 'var(--text-2)',
       padding: '3px 10px', borderRadius: 20, fontSize: 11,
     }}>
-      Bot
+      {source === 'web' ? 'Web' : source === 'manual' ? 'Manual' : 'Bot'}
     </span>
   );
 }
@@ -54,14 +54,21 @@ export default function Expenses() {
   const reload = useCallback(() => {
     setLoading(true);
     api.get(`/expenses?month=${month}`)
-      .then(r => setExpenses(r.data))
+      .then(r => {
+        setExpenses(r.data);
+        setError('');
+      })
+      .catch(() => setError('Failed to load expenses.'))
       .finally(() => setLoading(false));
   }, [month]);
 
   useEffect(() => {
     reload();
-    api.get('/categories').then(r => setCats(r.data));
   }, [reload]);
+
+  useEffect(() => {
+    api.get('/categories').then(r => setCats(r.data)).catch(console.error);
+  }, []);
 
   function openAdd() {
     setForm(EMPTY_FORM);
@@ -106,8 +113,8 @@ export default function Expenses() {
       await api.delete(`/expenses/${deleteTarget.expense_id}`);
       setDeleteTarget(null);
       reload();
-    } catch {
-      // ignore
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete.');
     } finally {
       setDeleting(false);
     }
@@ -118,6 +125,9 @@ export default function Expenses() {
   return (
     <div className="view-enter">
       <PageHeader title="Expenses" sub="All transactions for the selected month" />
+      {error && !modalOpen && !deleteTarget && (
+        <div style={{ color: 'var(--rose)', padding: '10px 16px', background: 'var(--hover-bg-2)', borderRadius: 8, marginBottom: 20, fontSize: 13 }}>{error}</div>
+      )}
 
       <div className="row" style={{ marginBottom: 20, gap: 10 }}>
         <input
@@ -287,9 +297,7 @@ export default function Expenses() {
             </div>
             {error && (
               <div style={{
-                background: '#450a0a', border: '1px solid #7f1d1d',
-                borderRadius: 8, padding: '8px 12px',
-                color: '#fca5a5', fontSize: 12,
+                color: 'var(--rose)', fontSize: 13, marginTop: 4
               }}>{error}</div>
             )}
             <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
@@ -313,6 +321,7 @@ export default function Expenses() {
             </strong>{' '}
             from {deleteTarget?.created_at?.slice(0, 10)}?
           </p>
+          {error && <div style={{ color: 'var(--rose)', fontSize: 13, marginBottom: 15 }}>{error}</div>}
           <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
             <button className="btn" onClick={() => setDeleteTarget(null)}>Cancel</button>
             <button className="btn danger" onClick={handleDelete} disabled={deleting}>
