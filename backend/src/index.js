@@ -29,4 +29,3 @@ app.listen(PORT, () => {
     console.log(`SmartFin API listening on port ${PORT}`);
     startQueueProcessor();
 });
-//testss

@@ -3,6 +3,9 @@ const db = require('../config/db');
 exports.getIncome = async (req, res) => {
     const user_id = req.user.user_id;
     const month = req.query.month || new Date().toISOString().slice(0, 7);
+    if (month && !/^\d{4}-\d{2}$/.test(month)) {
+        return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM.' });
+    }
     try {
         const [rows] = await db.query(
             'SELECT * FROM income WHERE user_id = ? AND month = ? ORDER BY created_at DESC',
@@ -18,8 +21,14 @@ exports.getIncome = async (req, res) => {
 exports.addIncome = async (req, res) => {
     const user_id = req.user.user_id;
     const { source, amount, type, month, currency, description } = req.body;
-    if (!source || !amount || !month) {
-        return res.status(400).json({ error: 'source, amount, and month are required' });
+    if (!source || amount == null || isNaN(Number(amount)) || Number(amount) <= 0) {
+        return res.status(400).json({ error: 'source and a valid positive amount are required' });
+    }
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+        return res.status(400).json({ error: 'month is required and must be in YYYY-MM format' });
+    }
+    if (type && type !== 'fixed' && type !== 'variable') {
+        return res.status(400).json({ error: 'type must be "fixed" or "variable"' });
     }
     try {
         const [result] = await db.query(
@@ -37,7 +46,8 @@ exports.deleteIncome = async (req, res) => {
     const user_id = req.user.user_id;
     const { id } = req.params;
     try {
-        await db.query('DELETE FROM income WHERE income_id = ? AND user_id = ?', [id, user_id]);
+        const [result] = await db.query('DELETE FROM income WHERE income_id = ? AND user_id = ?', [id, user_id]);
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
         res.json({ success: true });
     } catch (err) {
         console.error('deleteIncome error:', err);
@@ -49,6 +59,9 @@ exports.deleteIncome = async (req, res) => {
 exports.getIncomeSummary = async (req, res) => {
     const user_id = req.user.user_id;
     const month = req.query.month || new Date().toISOString().slice(0, 7);
+    if (month && !/^\d{4}-\d{2}$/.test(month)) {
+        return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM.' });
+    }
 
     try {
         const [fixedRows] = await db.query(

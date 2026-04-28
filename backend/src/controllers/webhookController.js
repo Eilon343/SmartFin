@@ -36,10 +36,14 @@ async function callGemini(text) {
                     }),
                 }
             );
-            const data = await res.json();
-            if (data.error?.code === 503 || data.error?.status === 'UNAVAILABLE') {
-                const e = new Error('Gemini unavailable'); e.unavailable = true; throw e;
+            if (!res.ok) {
+                const isRetryable = res.status === 429 || res.status >= 500;
+                const errData = await res.json().catch(() => ({}));
+                const e = new Error(errData.error?.message || `Gemini HTTP error: ${res.status}`);
+                if (isRetryable) e.unavailable = true;
+                throw e;
             }
+            const data = await res.json();
             if (data.error) throw new Error(`Gemini error: ${data.error.message}`);
             const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (!raw) throw new Error('Empty Gemini response');
@@ -47,11 +51,11 @@ async function callGemini(text) {
             if (!jsonMatch) throw new Error('No JSON found in Gemini response');
             return JSON.parse(jsonMatch[0]);
         } catch (err) {
-            if (attempt < 3 && (err.unavailable || err.name === 'TypeError')) {
+            if (attempt < 3 && (err.unavailable || err.name === 'TypeError' || err.name === 'SyntaxError')) {
                 await new Promise(r => setTimeout(r, 2000 * attempt));
                 continue;
             }
-            if (err.name === 'TypeError') err.unavailable = true; // network failure = treat as unavailable
+            if (err.name === 'TypeError') err.unavailable = true;
             throw err;
         }
     }

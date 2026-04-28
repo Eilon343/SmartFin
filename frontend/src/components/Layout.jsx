@@ -8,6 +8,8 @@ const NAV = [
   { id: 'categories',    name: 'Categories',    icon: 'grid-2x2',         path: '/categories' },
   { id: 'subscriptions', name: 'Subscriptions', icon: 'repeat',           path: '/subscriptions' },
   { id: 'savings',       name: 'Savings',       icon: 'piggy-bank',       path: '/savings' },
+  { id: 'income',        name: 'Income',        icon: 'trending-up',      path: '/income' },
+  { id: 'expenses',      name: 'Expenses',      icon: 'receipt',          path: '/expenses' },
   { id: 'settings',      name: 'Settings',      icon: 'settings',         path: '/settings' },
 ];
 
