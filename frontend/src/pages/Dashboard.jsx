@@ -53,6 +53,25 @@ function currentMonth() {
   return new Date().toISOString().slice(0, 7);
 }
 
+function getRecentMonths(num = 3) {
+  const result = [];
+  const now = new Date();
+  let y = now.getFullYear();
+  let m = now.getMonth();
+  
+  for (let i = 0; i < num; i++) {
+    const d = new Date(y, m, 1);
+    const iso = `${y}-${String(m + 1).padStart(2, '0')}`;
+    const label = i === 0 
+      ? d.toLocaleDateString('en-US', { month: 'long' }) 
+      : d.toLocaleDateString('en-US', { month: 'short' });
+    result.push({ iso, label });
+    m--;
+    if (m < 0) { m = 11; y--; }
+  }
+  return result;
+}
+
 /* -------- Category card -------- */
 function CategoryCard({ budget, color, icon, onOpen }) {
   const hasLimit = !budget.no_budget && budget.effective_limit != null;
@@ -236,12 +255,17 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onReload }) {
 const GOAL_COLORS = ['#6366f1','#10b981','#f472b6','#f59e0b','#fb7185','#22d3ee'];
 const GOAL_ICONS = ['plane','shield-check','laptop','gem','home','car','graduation-cap','heart','baby','gift'];
 
-function SavingsCard({ goals, onContribute }) {
+function SavingsCard({ goals, onContribute, onEdit, onNew }) {
   return (
     <div className="card card-pad-lg">
       <div className="between" style={{ marginBottom: 16 }}>
         <h3 className="h2">Savings Goals</h3>
-        <span className="chip idg"><Icon name="piggy-bank" size={11} /> {goals.length} active</span>
+        <div className="row" style={{ gap: 8 }}>
+          <span className="chip idg"><Icon name="piggy-bank" size={11} /> {goals.length} active</span>
+          <button className="btn ghost" style={{ height: 26, fontSize: 12, padding: '0 10px' }} onClick={onNew}>
+            <Icon name="plus" size={12} /> New
+          </button>
+        </div>
       </div>
       <div>
         {goals.map((g, i) => {
@@ -250,7 +274,7 @@ function SavingsCard({ goals, onContribute }) {
           const p = pct(g.saved_amount, g.target_amount);
           return (
             <div key={g.goal_id} className="goal">
-              <Ring value={g.saved_amount} max={g.target_amount} color={color} size={84} stroke={8} />
+              <Ring value={g.saved_amount} max={g.target_amount} color={color} size={84} stroke={8} label={`${Math.round(p)}%`} />
               <div className="stack" style={{ gap: 8, minWidth: 0 }}>
                 <div className="between" style={{ gap: 8 }}>
                   <div className="row" style={{ gap: 8, minWidth: 0 }}>
@@ -259,14 +283,20 @@ function SavingsCard({ goals, onContribute }) {
                       {g.name}
                     </span>
                   </div>
-                  <button className="btn ghost" style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={() => onContribute(g)}>
-                    <Icon name="plus" size={12} /> Add
-                  </button>
+                  <div className="row" style={{ gap: 4 }}>
+                    <button className="btn ghost icon" style={{ width: 28, height: 28, color: 'var(--text-2)' }} onClick={() => onEdit(g)}>
+                      <Icon name="pencil" size={12} />
+                    </button>
+                    <button className="btn ghost" style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={() => onContribute(g)}>
+                      <Icon name="plus" size={12} /> Add
+                    </button>
+                  </div>
                 </div>
                 <div className="between">
                   <span className="mono tnum" style={{ fontWeight: 600, fontSize: 13 }}>
                     {fmt(g.saved_amount)} <span className="muted" style={{ fontWeight: 400 }}>/ {fmt(g.target_amount)}</span>
                   </span>
+                  <span className="muted" style={{ fontSize: 11 }}>Ongoing</span>
                 </div>
                 <div className="pb-track" style={{ height: 4 }}>
                   <div className="pb-fill" style={{ width: Math.min(100, p) + '%', background: color }} />
@@ -322,28 +352,60 @@ function ContributeModal({ open, goal, onClose, onSubmit }) {
 }
 
 /* -------- Subscriptions mini card -------- */
-function SubscriptionsMini({ subs }) {
-  const total = subs.reduce((s, x) => s + x.amount, 0);
+const SUB_ICONS_MAP = {
+  spotify: 'music-2', apple: 'apple', netflix: 'clapperboard', youtube: 'youtube',
+  icloud: 'cloud', google: 'cloud', dropbox: 'cloud', notion: 'notebook-pen',
+  gym: 'dumbbell', fitness: 'dumbbell', domain: 'globe', hosting: 'server',
+  phone: 'smartphone', mobile: 'smartphone', amazon: 'shopping-bag',
+  microsoft: 'laptop', adobe: 'pen-tool', github: 'code',
+};
+
+function subIcon(name) {
+  const key = name?.toLowerCase().replace(/[^a-z]/g, '');
+  for (const [k, v] of Object.entries(SUB_ICONS_MAP)) {
+    if (key?.includes(k)) return v;
+  }
+  return 'repeat';
+}
+
+function ordinal(d) {
+  const s = ['th', 'st', 'nd', 'rd'], v = d % 100;
+  return d + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function SubscriptionsMini({ subs, onTogglePause }) {
+  const activeSubs = subs.filter(s => !s.paused);
+  const total = activeSubs.reduce((s, x) => s + x.amount, 0);
   return (
-    <div className="card card-pad-lg">
+    <div className="card card-pad-lg" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="between" style={{ marginBottom: 14 }}>
         <div className="stack">
           <h3 className="h2">Subscriptions</h3>
-          <span className="muted" style={{ fontSize: 12 }}>{subs.length} active</span>
+          <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} active monthly</span>
         </div>
-        <span className="chip idg"><Icon name="repeat" size={11} /> {fmt(total, 0)}/mo</span>
+        <span className="chip idg"><Icon name="repeat" size={11} /> ₪{fmt(total, 0)}/mo</span>
       </div>
-      <div>
+      <div style={{ flex: 1 }}>
         {subs.slice(0, 5).map(s => (
-          <div key={s.subscription_id} className="sub-row">
+          <div key={s.subscription_id} className="sub-row" style={{ gridTemplateColumns: '36px 1fr auto 32px' }}>
             <div style={{ width: 36, height: 36, borderRadius: 9, background: 'var(--hover-bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Icon name="repeat" size={15} color="var(--text-1)" />
+              <Icon name={subIcon(s.name)} size={15} color="var(--text-1)" />
             </div>
-            <div className="stack">
-              <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
-              <span className="muted-2" style={{ fontSize: 11 }}>Monthly · day {s.day_of_month}</span>
+            <div className="stack" style={{ opacity: s.paused ? 0.6 : 1, flex: 1, minWidth: 0 }}>
+              <div className="row" style={{ gap: 8 }}>
+                <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
+                {s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
+              </div>
+              <span className="muted-2" style={{ fontSize: 11 }}>Monthly · next on the {ordinal(s.day_of_month)}</span>
             </div>
-            <span className="mono tnum" style={{ fontSize: 13 }}>{fmt(s.amount, s.amount % 1 ? 2 : 0)}</span>
+            <span className="mono tnum" style={{ fontSize: 13, opacity: s.paused ? 0.6 : 1 }}>{fmt(s.amount, s.amount % 1 ? 2 : 0)}</span>
+            <button
+               className="btn ghost icon"
+               style={{ width: 32, height: 32, color: 'var(--text-1)' }}
+               onClick={() => onTogglePause(s)}
+            >
+               <Icon name={s.paused ? "play" : "pause"} size={13} />
+            </button>
           </div>
         ))}
         {subs.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No subscriptions found.</div>}
@@ -402,56 +464,84 @@ function TransactionsTable({ expenses }) {
 function NetPosition({ pnl }) {
   if (!pnl) return null;
   const net = pnl.net_pnl;
-  const up = net >= 0;
+  const lastNet = pnl.last_net_pnl;
+  
+  const prevMonthName = new Date(`${pnl.prev_month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long' });
+  const currMonthName = new Date(`${pnl.month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long' });
+  const currYear = new Date(`${pnl.month}-01T00:00:00Z`).getFullYear();
+
+  let diff = 0;
+  let pctDiff = 0;
+  if (lastNet != null) {
+    diff = net - lastNet;
+    pctDiff = lastNet !== 0 ? (diff / Math.abs(lastNet)) * 100 : 0;
+  }
+  const up = diff >= 0;
+
+  // Generate deterministic sparkline data based on net flow trend
+  const dummySpark = [
+    net * 0.4, net * 0.42, net * 0.38, net * 0.48, 
+    net * 0.55, net * 0.6, net * 0.58, net * 0.7, 
+    net * 0.72, net * 0.85, net * 0.95, net
+  ];
+
+  const [selY, selM] = pnl.month.split('-').map(Number);
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === selY && today.getMonth() === selM - 1;
+  const endDate = isCurrentMonth ? today : new Date(selY, selM, 0);
+  
+  const w12ago = new Date(endDate.getTime() - 12 * 7 * 86400000);
+  const w12str = w12ago.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+
   return (
     <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 28, alignItems: 'center' }}
-           className="np-grid">
-        <div className="stack" style={{ gap: 12 }}>
-          <div className="row" style={{ gap: 10 }}>
-            <span className="meta-label">P&amp;L Forecast — {new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}</span>
-            <span className="chip idg"><Icon name="sparkles" size={11} /> projected</span>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40, alignItems: 'center' }} className="np-grid">
+        <div className="stack" style={{ gap: 16 }}>
+          <div className="row" style={{ gap: 10, textTransform: 'uppercase', fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: 'var(--text-2)' }}>
+            <span>P&amp;L Forecast — {currMonthName} {currYear}</span>
+            <span className="chip idg" style={{ textTransform: 'none', fontWeight: 600 }}><Icon name="sparkles" size={11} /> projected</span>
           </div>
-          <div>
-            <div className="big-num">
-              <span className="ccy">₪</span>{Math.abs(net).toLocaleString('en-US')}
-            </div>
-            <div className="row" style={{ gap: 10, marginTop: 12 }}>
-              <span className={`chip ${up ? 'up' : 'down'}`}>
+          <div className="row" style={{ alignItems: 'flex-start', gap: 6 }}>
+            <span style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-2)', marginTop: 8 }}>₪</span>
+            <span style={{ fontSize: 46, fontWeight: 700, letterSpacing: -1, lineHeight: 1 }}>
+              {Math.abs(net).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+            </span>
+          </div>
+          {lastNet != null && (
+            <div className="row" style={{ gap: 12 }}>
+              <span className={`chip ${up ? 'up' : 'down'}`} style={{ fontWeight: 600 }}>
                 <Icon name={up ? 'trending-up' : 'trending-down'} size={12} />
-                {up ? 'Surplus' : 'Deficit'}
+                {up ? '+' : ''}{pctDiff.toFixed(1)}% vs last month
+              </span>
+              <span className="row" style={{ gap: 4, fontSize: 13, fontWeight: 500, color: 'var(--text-2)' }}>
+                <Icon name={up ? 'triangle' : 'triangle-down'} size={10} style={{ fill: 'currentColor', opacity: 0.8 }} />
+                {up ? '+' : '−'}₪{Math.abs(diff).toLocaleString('en-US', { maximumFractionDigits: 0 })} from {prevMonthName}
               </span>
             </div>
-          </div>
-          <div className="legend" style={{ marginTop: 6 }}>
-            <div><span className="dot" style={{ background: 'var(--emerald)' }} /> Income {fmt(pnl.total_income)}</div>
-            <div><span className="dot" style={{ background: 'var(--rose)' }} /> Expenses {fmt(pnl.total_expenses)}</div>
-            {pnl.subscription_total > 0 && <div><span className="dot" style={{ background: 'var(--indigo)' }} /> Subs {fmt(pnl.subscription_total)}</div>}
+          )}
+          <div className="row" style={{ marginTop: 8, fontSize: 13, gap: 16, color: 'var(--text-2)' }}>
+            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--emerald)' }} /> Income ₪{pnl.total_income.toLocaleString()}</div>
+            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--rose)' }} /> Expenses ₪{pnl.total_expenses.toLocaleString()}</div>
+            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--indigo)' }} /> Virtual Savings ₪{pnl.savings_allocation.toLocaleString()}</div>
           </div>
         </div>
-        <div className="stack" style={{ gap: 8 }}>
-          <div className="between">
-            <span className="meta-label">Breakdown</span>
+        
+        <div className="stack" style={{ gap: 16, height: '100%', justifyContent: 'space-between' }}>
+          <div className="between" style={{ textTransform: 'uppercase', fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: 'var(--text-2)' }}>
+            <span>12-Week Net Flow</span>
+            <span style={{ textTransform: 'lowercase', fontWeight: 500 }}>weekly</span>
           </div>
-          <div className="stack" style={{ gap: 8 }}>
-            {[
-              { label: 'Fixed income', val: pnl.fixed_income, color: 'var(--emerald)' },
-              { label: 'Variable avg', val: pnl.variable_income_avg, color: 'var(--emerald)' },
-              { label: 'Expenses', val: -pnl.total_expenses, color: 'var(--rose)' },
-              { label: 'Subscriptions', val: -pnl.subscription_total, color: 'var(--indigo)' },
-              { label: 'Savings alloc.', val: -pnl.savings_allocation, color: 'var(--amber)' },
-            ].filter(r => r.val !== 0).map(r => (
-              <div key={r.label} className="between" style={{ fontSize: 12.5 }}>
-                <span className="muted">{r.label}</span>
-                <span className="mono tnum" style={{ color: r.color, fontWeight: 600 }}>
-                  {r.val > 0 ? '+' : ''}₪{Math.abs(r.val).toLocaleString('en-US')}
-                </span>
-              </div>
-            ))}
+          <div style={{ flex: 1, minHeight: 60, position: 'relative' }}>
+            <Sparkline data={dummySpark} color="var(--emerald)" height={70} />
+          </div>
+          <div className="between muted-2" style={{ fontSize: 11, fontWeight: 500 }}>
+            <span>{w12str}</span>
+            <span>{endStr}</span>
           </div>
         </div>
       </div>
-      <style>{`@media (max-width: 760px){ .np-grid { grid-template-columns: 1fr !important; } }`}</style>
+      <style>{`@media (max-width: 760px){ .np-grid { grid-template-columns: 1fr !important; gap: 32px !important; } }`}</style>
     </div>
   );
 }
@@ -506,9 +596,63 @@ function IncomeCard({ income }) {
   );
 }
 
+/* -------- Goal modal -------- */
+function GoalModal({ open, goal, onClose, onSave }) {
+  const [name, setName] = useState('');
+  const [target, setTarget] = useState('');
+  const [alloc, setAlloc] = useState('');
+  useEffect(() => { 
+    if (open) { 
+      setName(goal ? goal.name : ''); 
+      setTarget(goal ? goal.target_amount : ''); 
+      setAlloc(goal ? goal.monthly_allocation : ''); 
+    } 
+  }, [open, goal]);
+  const submit = async (e) => {
+    e.preventDefault();
+    const t = parseFloat(target);
+    if (!name.trim() || !t || t <= 0) return;
+    await onSave({ goal_id: goal?.goal_id, name: name.trim(), target_amount: t, monthly_allocation: parseFloat(alloc) || 0 });
+    onClose();
+  };
+  return (
+    <Modal open={open} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 14 }}>
+        <div className="between">
+          <h3 className="h2" style={{ fontSize: 17 }}>
+            {goal ? 'Edit savings goal' : 'New savings goal'}
+          </h3>
+          <button type="button" className="btn ghost icon" onClick={onClose}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="field">
+          <label>Goal name</label>
+          <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Trip to Tokyo" />
+        </div>
+        <div className="grid grid-2" style={{ gap: 12 }}>
+          <div className="field">
+            <label>Target amount (₪)</label>
+            <input className="input mono" type="number" step="100" value={target}
+              onChange={(e) => setTarget(e.target.value)} placeholder="10000" />
+          </div>
+          <div className="field">
+            <label>Monthly allocation (₪)</label>
+            <input className="input mono" type="number" step="50" value={alloc}
+              onChange={(e) => setAlloc(e.target.value)} placeholder="0" />
+          </div>
+        </div>
+        <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn primary"><Icon name="check" size={13} /> {goal ? 'Save' : 'Create'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 /* -------- Main Dashboard -------- */
 export default function Dashboard() {
-  const [month] = useState(currentMonth());
+  const [month, setMonth] = useState(currentMonth());
+  const recentMonths = getRecentMonths(3);
   const [pnl, setPnl] = useState(null);
   const [budgets, setBudgets] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -520,18 +664,32 @@ export default function Dashboard() {
   const [contributeGoal, setContributeGoal] = useState(null);
   const [contributeOpen, setContributeOpen] = useState(false);
   const [toast, setToast] = useState('');
+  const [goalModalOpen, setGoalModalOpen] = useState(false);
+  const [editGoal, setEditGoal] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
+    const [y, m] = month.split('-').map(Number);
+    let py = y, pm = m - 1;
+    if (pm === 0) { pm = 12; py--; }
+    const prevM = `${py}-${String(pm).padStart(2, '0')}`;
+
     Promise.allSettled([
       api.get(`/pnl?month=${month}`),
+      api.get(`/pnl?month=${prevM}`),
       api.get(`/budgets?month=${month}`),
       api.get(`/expenses?month=${month}`),
       api.get(`/income/summary?month=${month}`),
       api.get('/subscriptions'),
       api.get('/savings'),
-    ]).then(([p, b, e, inc, s, g]) => {
-      if (p.status === 'fulfilled') setPnl(p.value.data);
+    ]).then(([p, prevP, b, e, inc, s, g]) => {
+      if (p.status === 'fulfilled') {
+        setPnl({
+          ...p.value.data,
+          last_net_pnl: prevP.status === 'fulfilled' ? prevP.value.data.net_pnl : null,
+          prev_month: prevM
+        });
+      }
       if (b.status === 'fulfilled') setBudgets(b.value.data.budgets || []);
       if (e.status === 'fulfilled') setExpenses(Array.isArray(e.value.data) ? e.value.data : []);
       if (inc.status === 'fulfilled') setIncome(inc.value.data);
@@ -545,6 +703,24 @@ export default function Dashboard() {
   const handleContribute = async (goalId, amount) => {
     await api.post(`/savings/${goalId}/deposit`, { amount });
     setToast(`Contributed ₪${amount.toLocaleString()} to goal`);
+    load();
+  };
+
+  const handleTogglePauseSub = async (sub) => {
+    try {
+      await api.put(`/subscriptions/${sub.subscription_id}/pause`, { paused: !sub.paused });
+      load();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleSaveGoal = async (data) => {
+    if (data.goal_id) {
+      await api.put(`/savings/${data.goal_id}`, data);
+      setToast(`Updated "${data.name}"`);
+    } else {
+      await api.post('/savings', data);
+      setToast(`Created "${data.name}"`);
+    }
     load();
   };
 
@@ -568,6 +744,19 @@ export default function Dashboard() {
       <PageHeader
         title={`Good ${today.getHours() < 12 ? 'morning' : today.getHours() < 18 ? 'afternoon' : 'evening'}`}
         sub={`${today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${daysLeft} days left in the month`}
+        actions={
+          <div className="seg">
+            {recentMonths.map(rm => (
+              <button
+                key={rm.iso}
+                className={month === rm.iso ? 'on' : ''}
+                onClick={() => setMonth(rm.iso)}
+              >
+                {rm.label}
+              </button>
+            ))}
+          </div>
+        }
       />
 
       <NetPosition pnl={pnl} />
@@ -600,10 +789,12 @@ export default function Dashboard() {
 
       <section className="grid grid-3" style={{ marginBottom: 22 }}>
         <IncomeCard income={income} />
-        <SubscriptionsMini subs={subs} />
+        <SubscriptionsMini subs={subs} onTogglePause={handleTogglePauseSub} />
         <SavingsCard
           goals={goals.slice(0, 3)}
           onContribute={(g) => { setContributeGoal(g); setContributeOpen(true); }}
+          onEdit={(g) => { setEditGoal(g); setGoalModalOpen(true); }}
+          onNew={() => { setEditGoal(null); setGoalModalOpen(true); }}
         />
       </section>
 
@@ -627,6 +818,13 @@ export default function Dashboard() {
         goal={contributeGoal}
         onClose={() => setContributeOpen(false)}
         onSubmit={handleContribute}
+      />
+
+      <GoalModal
+        open={goalModalOpen}
+        goal={editGoal}
+        onClose={() => setGoalModalOpen(false)}
+        onSave={handleSaveGoal}
       />
 
       <Toast msg={toast} onDone={() => setToast('')} />

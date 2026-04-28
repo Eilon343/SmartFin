@@ -42,6 +42,28 @@ exports.addIncome = async (req, res) => {
     }
 };
 
+exports.updateIncome = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { id } = req.params;
+    const { source, amount, type, month, currency, description } = req.body;
+    
+    if (!source || amount == null || Number(amount) <= 0 || !month) {
+        return res.status(400).json({ error: 'source, amount (must be positive), and month are required' });
+    }
+    
+    try {
+        const [result] = await db.query(
+            'UPDATE income SET source = ?, amount = ?, currency = ?, type = ?, month = ?, description = ? WHERE income_id = ? AND user_id = ?',
+            [source, Number(amount), currency || 'ILS', type || 'fixed', month, description || null, id, user_id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('updateIncome error:', err);
+        res.status(500).json({ error: 'Failed to update income' });
+    }
+};
+
 exports.deleteIncome = async (req, res) => {
     const user_id = req.user.user_id;
     const { id } = req.params;

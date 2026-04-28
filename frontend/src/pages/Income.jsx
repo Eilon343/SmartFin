@@ -61,6 +61,20 @@ export default function Income() {
     setModalOpen(true);
   }
 
+  function openEdit(entry) {
+    setForm({
+      income_id: entry.income_id,
+      source: entry.source,
+      amount: entry.amount,
+      currency: entry.currency,
+      type: entry.type,
+      month: entry.month,
+      description: entry.description || '',
+    });
+    setError('');
+    setModalOpen(true);
+  }
+
   function closeModal() {
     setModalOpen(false);
     setError('');
@@ -83,7 +97,11 @@ export default function Income() {
     }
     setSaving(true);
     try {
-      await api.post('/income', payload);
+      if (form.income_id) {
+        await api.put(`/income/${form.income_id}`, payload);
+      } else {
+        await api.post('/income', payload);
+      }
       closeModal();
       reload();
     } catch (err) {
@@ -175,7 +193,7 @@ export default function Income() {
                 key={entry.income_id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '36px 1fr auto auto 32px',
+                  gridTemplateColumns: '36px 1fr auto auto 32px 32px',
                   alignItems: 'center',
                   gap: 12,
                   padding: '10px 0',
@@ -203,6 +221,14 @@ export default function Income() {
                 <TypeBadge type={entry.type} />
                 <button
                   className="btn ghost icon"
+                  style={{ width: 32, height: 32, color: 'var(--text-2)' }}
+                  onClick={() => openEdit(entry)}
+                  title="Edit"
+                >
+                  <Icon name="edit-2" size={13} />
+                </button>
+                <button
+                  className="btn ghost icon"
                   style={{ width: 32, height: 32, color: 'var(--rose)' }}
                   onClick={() => setDeleteTarget(entry)}
                   title="Delete"
@@ -218,7 +244,9 @@ export default function Income() {
       {/* Add Modal */}
       <Modal open={modalOpen} onClose={closeModal}>
         <div style={{ padding: '24px 28px', minWidth: 360 }}>
-          <h3 className="h2" style={{ marginBottom: 20 }}>New income entry</h3>
+          <h3 className="h2" style={{ marginBottom: 20 }}>
+            {form.income_id ? 'Edit income entry' : 'New income entry'}
+          </h3>
           <form onSubmit={handleSave} className="stack" style={{ gap: 14 }}>
             <div className="field">
               <label>Source</label>
@@ -295,7 +323,7 @@ export default function Income() {
             <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
               <button type="button" className="btn" onClick={closeModal}>Cancel</button>
               <button type="submit" className="btn primary" disabled={saving}>
-                {saving ? 'Saving…' : 'Add income'}
+                {saving ? 'Saving…' : form.income_id ? 'Save changes' : 'Add income'}
               </button>
             </div>
           </form>

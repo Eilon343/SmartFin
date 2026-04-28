@@ -76,6 +76,19 @@ export default function Expenses() {
     setModalOpen(true);
   }
 
+  function openEdit(tx) {
+    setForm({
+      expense_id: tx.expense_id,
+      description: tx.description || '',
+      amount: tx.amount,
+      currency: tx.currency || 'ILS',
+      category_id: tx.category_id || '',
+      source: tx.source || 'web',
+    });
+    setError('');
+    setModalOpen(true);
+  }
+
   function closeModal() {
     setModalOpen(false);
     setError('');
@@ -96,7 +109,11 @@ export default function Expenses() {
     }
     setSaving(true);
     try {
-      await api.post('/expenses', payload);
+      if (form.expense_id) {
+        await api.put(`/expenses/${form.expense_id}`, payload);
+      } else {
+        await api.post('/expenses', payload);
+      }
       closeModal();
       reload();
     } catch (err) {
@@ -223,7 +240,15 @@ export default function Expenses() {
                     <td style={{ padding: '11px 16px', textAlign: 'right' }}>
                       <SourceBadge source={e.source} />
                     </td>
-                    <td style={{ padding: '11px 16px', textAlign: 'right' }}>
+                    <td style={{ padding: '11px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button
+                        className="btn ghost icon"
+                        style={{ width: 30, height: 30, color: 'var(--text-2)', marginRight: 6 }}
+                        onClick={() => openEdit(e)}
+                        title="Edit"
+                      >
+                        <Icon name="edit-2" size={13} />
+                      </button>
                       <button
                         className="btn ghost icon"
                         style={{ width: 30, height: 30, color: 'var(--rose)' }}
@@ -244,7 +269,9 @@ export default function Expenses() {
       {/* Add Modal */}
       <Modal open={modalOpen} onClose={closeModal}>
         <div style={{ padding: '24px 28px', minWidth: 360 }}>
-          <h3 className="h2" style={{ marginBottom: 20 }}>New expense</h3>
+          <h3 className="h2" style={{ marginBottom: 20 }}>
+            {form.expense_id ? 'Edit expense' : 'New expense'}
+          </h3>
           <form onSubmit={handleSave} className="stack" style={{ gap: 14 }}>
             <div className="field">
               <label>Description (optional)</label>
@@ -303,7 +330,7 @@ export default function Expenses() {
             <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
               <button type="button" className="btn" onClick={closeModal}>Cancel</button>
               <button type="submit" className="btn primary" disabled={saving}>
-                {saving ? 'Saving…' : 'Add expense'}
+                {saving ? 'Saving…' : form.expense_id ? 'Save changes' : 'Add expense'}
               </button>
             </div>
           </form>

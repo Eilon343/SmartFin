@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     category_id        INT,
     day_of_month       TINYINT NOT NULL,
     last_charged_month VARCHAR(7),
+    paused             BOOLEAN DEFAULT FALSE,
     active             BOOLEAN DEFAULT TRUE,
     created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id),

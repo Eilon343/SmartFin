@@ -4,6 +4,7 @@ import Icon from '../components/ui/Icon';
 import ProgressBar, { pct, tone } from '../components/ui/ProgressBar';
 import PageHeader from '../components/ui/PageHeader';
 import Drawer from '../components/ui/Drawer';
+import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
 
 const CAT_COLORS = [
@@ -48,6 +49,11 @@ function CategoryCard({ budget, color, icon, onOpen }) {
   const t = tone(p);
   const colorMap = { ok: 'var(--emerald)', warn: 'var(--amber)', over: 'var(--rose)' };
   const over = hasLimit && budget.spent > budget.effective_limit;
+  
+  const today = new Date();
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const currentDay = today.getDate();
+
   return (
     <div className="card card-pad cat-card focusable" tabIndex={0} onClick={onOpen}
          onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onOpen()}>
@@ -73,12 +79,12 @@ function CategoryCard({ budget, color, icon, onOpen }) {
         {hasLimit && <ProgressBar value={budget.spent} max={budget.effective_limit} />}
         {hasLimit && (
           <div className="between" style={{ marginTop: 8 }}>
-            <span className="meta-label" style={{ color: colorMap[t] }}>
+            <span className="meta-label" style={{ color: colorMap[t], textTransform: 'uppercase' }}>
               {over ? 'over by ' + fmt(budget.spent - budget.effective_limit) : fmt(budget.remaining) + ' left'}
             </span>
-            {budget.carry_over && budget.carried_in > 0 && (
-              <span className="chip amb" style={{ fontSize: 10 }}>+{fmt(budget.carried_in)} carried</span>
-            )}
+            <span className="muted" style={{ fontSize: 11, fontWeight: 500 }}>
+              day {currentDay} / {daysInMonth}
+            </span>
           </div>
         )}
       </div>
@@ -212,12 +218,43 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
   );
 }
 
+/* -------- New category modal -------- */
+function NewCategoryModal({ open, onClose, onSave }) {
+  const [name, setName] = useState('');
+  useEffect(() => { if (open) setName(''); }, [open]);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    await onSave(name.trim());
+    onClose();
+  };
+  return (
+    <Modal open={open} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 14 }}>
+        <div className="between">
+          <h3 className="h2" style={{ fontSize: 17 }}>New category</h3>
+          <button type="button" className="btn ghost icon" onClick={onClose}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="field">
+          <label>Category name</label>
+          <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Subscriptions" />
+        </div>
+        <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn primary"><Icon name="check" size={13} /> Create</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export default function Categories() {
   const [month] = useState(currentMonth());
   const [budgets, setBudgets] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openBudget, setOpenBudget] = useState(null);
+  const [newCatOpen, setNewCatOpen] = useState(false);
   const [toast, setToast] = useState('');
 
   const load = useCallback(() => {
@@ -233,6 +270,16 @@ export default function Categories() {
 
   useEffect(() => { load(); }, [load]);
 
+  const handleNewCategory = async (name) => {
+    try {
+      await api.post('/categories', { name });
+      setToast(`Category "${name}" created`);
+      load();
+    } catch (err) {
+      setToast(err.response?.data?.error || 'Failed to create category');
+    }
+  };
+
   const totalBudget = budgets.reduce((s, b) => s + (b.effective_limit ?? 0), 0);
   const totalSpent = budgets.reduce((s, b) => s + b.spent, 0);
 
@@ -241,6 +288,11 @@ export default function Categories() {
       <PageHeader
         title="Categories"
         sub="Track spending against monthly budget envelopes"
+        actions={
+          <button className="btn primary" style={{ background: 'var(--emerald)' }} onClick={() => setNewCatOpen(true)}>
+            <Icon name="plus" size={13} /> New category
+          </button>
+        }
       />
 
       {totalSpent > 0 && (
@@ -282,6 +334,10 @@ export default function Categories() {
               onOpen={() => setOpenBudget({ budget: b, color: CAT_COLORS[i % CAT_COLORS.length], icon: catIcon(b.category), key: b.budget_id ?? b.category })}
             />
           ))}
+          <div className="card card-pad empty-card focusable" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: '1px dashed var(--line-2)', background: 'transparent', minHeight: 140 }} onClick={() => setNewCatOpen(true)}>
+            <Icon name="plus" size={24} color="var(--text-3)" />
+            <span className="muted" style={{ marginTop: 8, fontSize: 13 }}>New category</span>
+          </div>
         </div>
       )}
 
@@ -295,6 +351,12 @@ export default function Categories() {
           onBudgetSaved={() => { setToast('Budget saved'); load(); setOpenBudget(null); }}
         />
       )}
+
+      <NewCategoryModal
+        open={newCatOpen}
+        onClose={() => setNewCatOpen(false)}
+        onSave={handleNewCategory}
+      />
 
       <Toast msg={toast} onDone={() => setToast('')} />
     </div>
