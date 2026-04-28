@@ -261,7 +261,7 @@ exports.getPnL = async (req, res) => {
                 [user_id, month, month]
             ),
             db.query(
-                "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE AND DATE_FORMAT(created_at, '%Y-%m') <= ?",
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
                 [user_id, month]
             ),
             db.query(
