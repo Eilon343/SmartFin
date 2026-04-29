@@ -529,11 +529,11 @@ function NetPosition({ pnl }) {
           </div>
 
           {/* תיבת התחזית החדשה שיצרנו */}
-          <div style={{ padding: '12px 14px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 8, borderLeft: '3px solid var(--emerald)', marginTop: 4 }}>
+          <div style={{ padding: '12px 14px', background: forecastNet >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)', borderRadius: 8, borderLeft: `3px solid ${forecastNet >= 0 ? 'var(--emerald)' : 'var(--rose)'}`, marginTop: 4 }}>
             <div className="row" style={{ gap: 8, fontSize: 13, color: 'var(--text-1)' }}>
-              <Icon name="sparkles" size={14} color="var(--emerald)" />
+              <Icon name="sparkles" size={14} color={forecastNet >= 0 ? 'var(--emerald)' : 'var(--rose)'} />
               <span>
-                Currently at <strong>₪{currentNet.toLocaleString()}</strong>, expected to reach <strong style={{ color: 'var(--emerald)' }}>₪{forecastNet.toLocaleString()}</strong> by end of month.
+                Currently at <strong>₪{currentNet.toLocaleString()}</strong>, expected to reach <strong style={{ color: forecastNet >= 0 ? 'var(--emerald)' : 'var(--rose)' }}>₪{forecastNet.toLocaleString()}</strong> by end of month.
               </span>
             </div>
           </div>
