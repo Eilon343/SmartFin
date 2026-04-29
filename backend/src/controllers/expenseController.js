@@ -172,7 +172,7 @@ exports.getSubscriptions = async (req, res) => {
     try {
         const [rows] = await db.query(
             `SELECT s.subscription_id, s.name, s.amount, s.currency,
-                    s.day_of_month, s.active, s.last_charged_month,
+                    s.day_of_month, s.active, s.paused, s.last_charged_month,
                     s.category_id, c.name AS category
              FROM subscriptions s
              LEFT JOIN categories c ON s.category_id = c.category_id
@@ -247,6 +247,23 @@ exports.deleteSubscription = async (req, res) => {
     }
 };
 
+exports.togglePauseSubscription = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { id } = req.params;
+    const { paused } = req.body;
+    try {
+        const [result] = await db.query(
+            'UPDATE subscriptions SET paused=? WHERE subscription_id=? AND user_id=?',
+            [paused ? 1 : 0, id, user_id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('togglePauseSubscription error:', err);
+        res.status(500).json({ error: 'Failed to toggle pause' });
+    }
+};
+
 // P&L = fixed_income + avg_variable_income - expenses - subscription_total - savings_allocations
 exports.getPnL = async (req, res) => {
     const user_id = req.user.user_id;
@@ -254,14 +271,13 @@ exports.getPnL = async (req, res) => {
     if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
-        const past3 = getPast3MonthsStr(month);
         const [[expRows], [subRows], [savRows], [fixedRows], [varRows]] = await Promise.all([
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND created_at >= CONCAT(?, '-01') AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
                 [user_id, month, month]
             ),
             db.query(
-                "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE AND paused = FALSE AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
                 [user_id, month]
             ),
             db.query(
@@ -273,15 +289,15 @@ exports.getPnL = async (req, res) => {
                 [user_id, month]
             ),
             db.query(
-                "SELECT COALESCE(SUM(amount), 0) AS total, COUNT(DISTINCT month) AS cnt FROM income WHERE user_id = ? AND type = 'variable' AND month IN (?, ?, ?)",
-                [user_id, ...past3]
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month = ?",
+                [user_id, month]
             ),
         ]);
         const total_expenses = Number(expRows[0].total);
         const subscription_total = Number(subRows[0].total);
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total);
-        const variable_avg = Number(varRows[0].total) / Math.max(Number(varRows[0].cnt), 1);
+        const variable_avg = Number(varRows[0].total);
 
         const total_income = fixed_income + variable_avg;
         const net_pnl = total_income - total_expenses - subscription_total - savings_allocation;
@@ -350,6 +366,28 @@ exports.addExpense = async (req, res) => {
     }
 };
 
+exports.updateExpense = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { id } = req.params;
+    const { amount, currency = 'ILS', description, category_id, source } = req.body;
+
+    if (amount == null || isNaN(Number(amount)) || Number(amount) <= 0) {
+        return res.status(400).json({ error: 'Valid amount required' });
+    }
+
+    try {
+        const [result] = await db.query(
+            'UPDATE expenses SET amount = ?, currency = ?, description = ?, category_id = ?, source = ? WHERE expense_id = ? AND user_id = ?',
+            [Number(amount), currency, description?.trim() || null, category_id || null, source || 'web', id, user_id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('updateExpense error:', err);
+        res.status(500).json({ error: 'Failed to update expense' });
+    }
+};
+
 exports.deleteExpense = async (req, res) => {
     const user_id = req.user.user_id;
     const { id } = req.params;
@@ -377,5 +415,27 @@ exports.getCategories = async (req, res) => {
     } catch (err) {
         console.error('getCategories error:', err);
         res.status(500).json({ error: 'Failed to fetch categories' });
+    }
+};
+
+exports.addCategory = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+    try {
+        const [existing] = await db.query(
+            'SELECT 1 FROM categories WHERE (user_id IS NULL OR user_id = ?) AND LOWER(name) = LOWER(?) LIMIT 1',
+            [user_id, name.trim()]
+        );
+        if (existing.length > 0) return res.status(400).json({ error: 'Category already exists' });
+        const [result] = await db.query(
+            'INSERT INTO categories (user_id, name, is_base) VALUES (?, ?, FALSE)',
+            [user_id, name.trim()]
+        );
+        res.json({ category_id: result.insertId });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Category already exists' });
+        console.error('addCategory error:', err);
+        res.status(500).json({ error: 'Failed to add category' });
     }
 };

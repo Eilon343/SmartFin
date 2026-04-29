@@ -1,5 +1,6 @@
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useI18n } from '../context/I18nContext';
 import Icon from '../components/ui/Icon';
 import PageHeader from '../components/ui/PageHeader';
 
@@ -26,43 +27,60 @@ function ThemeToggle() {
 export default function Settings() {
   const { logout } = useAuth();
   const { theme } = useTheme();
+  const { lang, setLang, t } = useI18n();
 
   const rows = [
     {
+      icon: 'globe',
+      name: t('settings_lang'),
+      sub: t('settings_lang_sub'),
+      val: (
+        <select 
+          className="select" 
+          style={{ height: 32, padding: '0 8px', fontSize: 13 }}
+          value={lang} 
+          onChange={e => setLang(e.target.value)}
+        >
+          <option value="en">English</option>
+          <option value="he">עברית</option>
+        </select>
+      ),
+    },
+    {
       icon: 'message-circle',
-      name: 'Telegram bot',
-      sub: 'Connect SmartFin to your Telegram for expense logging',
-      val: <span className="chip up"><span className="dot" style={{ background: 'var(--emerald)' }} /> connected</span>,
+      name: t('settings_tg'),
+      sub: t('settings_tg_sub'),
+      val: <span className="chip up"><span className="dot" style={{ background: 'var(--emerald)' }} /> {t('settings_tg_connected')}</span>,
     },
     {
       icon: 'banknote',
-      name: 'Currency',
-      sub: 'New Israeli Shekel (₪)',
+      name: t('settings_currency'),
+      sub: t('settings_currency_sub'),
       val: <span className="muted">ILS</span>,
     },
     {
       icon: 'calendar',
-      name: 'Budget cycle',
-      sub: 'Resets on the 1st of each month',
-      val: <span className="muted">Monthly</span>,
+      name: t('settings_cycle'),
+      sub: t('settings_cycle_sub'),
+      val: <span className="muted">{t('settings_cycle_val')}</span>,
     },
     {
       icon: 'sparkles',
-      name: 'Variable income averaging',
-      sub: 'Rolling 3-month mean used in P&L forecast',
+      name: t('settings_avg'),
+      sub: t('settings_avg_sub'),
       val: <span className="muted">3 mo</span>,
     },
     {
       icon: theme === 'dark' ? 'moon' : 'sun',
-      name: 'Theme',
-      sub: theme === 'dark' ? 'Dark mode — easy on the eyes' : 'Light mode — bright and clear',
+      name: t('settings_theme'),
+      sub: theme === 'dark' ? t('settings_theme_dark') : t('settings_theme_light'),
       val: <ThemeToggle />,
     },
   ];
 
   return (
     <div className="view-enter">
-      <PageHeader title="Settings" sub="Configure SmartFin to your workflow" />
+      <PageHeader title={t('settings_title')} sub={t('settings_sub')} />
 
       <div className="card" style={{ overflow: 'hidden', marginBottom: 20 }}>
         {rows.map((r, i) => (
@@ -88,14 +106,14 @@ export default function Settings() {
       </div>
 
       <div className="card card-pad-lg">
-        <h3 className="h2" style={{ marginBottom: 4 }}>Account</h3>
-        <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>Manage your SmartFin account</div>
+        <h3 className="h2" style={{ marginBottom: 4 }}>{t('settings_account')}</h3>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>{t('settings_account_sub')}</div>
         <button
           className="btn"
           style={{ color: 'var(--rose)', borderColor: 'var(--rose-soft)' }}
           onClick={logout}
         >
-          <Icon name="log-out" size={14} /> Sign out
+          <Icon name="log-out" size={14} /> {t('settings_signout')}
         </button>
       </div>
     </div>

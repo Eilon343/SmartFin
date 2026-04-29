@@ -57,24 +57,32 @@ function ContributeModal({ open, goal, onClose, onSubmit }) {
   );
 }
 
-/* -------- New goal modal -------- */
-function NewGoalModal({ open, onClose, onSave }) {
+/* -------- Goal modal -------- */
+function GoalModal({ open, goal, onClose, onSave }) {
   const [name, setName] = useState('');
   const [target, setTarget] = useState('');
   const [alloc, setAlloc] = useState('');
-  useEffect(() => { if (open) { setName(''); setTarget(''); setAlloc(''); } }, [open]);
+  useEffect(() => { 
+    if (open) { 
+      setName(goal ? goal.name : ''); 
+      setTarget(goal ? goal.target_amount : ''); 
+      setAlloc(goal ? goal.monthly_allocation : ''); 
+    } 
+  }, [open, goal]);
   const submit = async (e) => {
     e.preventDefault();
     const t = parseFloat(target);
     if (!name.trim() || !t || t <= 0) return;
-    await onSave({ name: name.trim(), target_amount: t, monthly_allocation: parseFloat(alloc) || 0 });
+    await onSave({ goal_id: goal?.goal_id, name: name.trim(), target_amount: t, monthly_allocation: parseFloat(alloc) || 0 });
     onClose();
   };
   return (
     <Modal open={open} onClose={onClose}>
       <form onSubmit={submit} className="stack" style={{ gap: 14 }}>
         <div className="between">
-          <h3 className="h2" style={{ fontSize: 17 }}>New savings goal</h3>
+          <h3 className="h2" style={{ fontSize: 17 }}>
+            {goal ? 'Edit savings goal' : 'New savings goal'}
+          </h3>
           <button type="button" className="btn ghost icon" onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
         <div className="field">
@@ -95,7 +103,7 @@ function NewGoalModal({ open, onClose, onSave }) {
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary"><Icon name="check" size={13} /> Create</button>
+          <button type="submit" className="btn primary"><Icon name="check" size={13} /> {goal ? 'Save' : 'Create'}</button>
         </div>
       </form>
     </Modal>
@@ -107,6 +115,7 @@ export default function Savings() {
   const [loading, setLoading] = useState(true);
   const [contributeGoal, setContributeGoal] = useState(null);
   const [contributeOpen, setContributeOpen] = useState(false);
+  const [editGoal, setEditGoal] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
   const [toast, setToast] = useState('');
 
@@ -125,9 +134,14 @@ export default function Savings() {
     load();
   };
 
-  const handleNewGoal = async (data) => {
-    await api.post('/savings', data);
-    setToast(`Created "${data.name}"`);
+  const handleSaveGoal = async (data) => {
+    if (data.goal_id) {
+      await api.put(`/savings/${data.goal_id}`, data);
+      setToast(`Updated "${data.name}"`);
+    } else {
+      await api.post('/savings', data);
+      setToast(`Created "${data.name}"`);
+    }
     load();
   };
 
@@ -144,7 +158,7 @@ export default function Savings() {
         title="Savings"
         sub="Goals and virtual envelopes"
         actions={
-          <button className="btn primary" onClick={() => setNewOpen(true)}>
+          <button className="btn primary" onClick={() => { setEditGoal(null); setNewOpen(true); }}>
             <Icon name="plus" size={13} /> New goal
           </button>
         }
@@ -176,7 +190,7 @@ export default function Savings() {
           <div style={{ textAlign: 'center', padding: '32px 0' }}>
             <Icon name="piggy-bank" size={32} color="var(--text-3)" />
             <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>No savings goals yet. Create your first one!</div>
-            <button className="btn primary" style={{ marginTop: 16 }} onClick={() => setNewOpen(true)}>
+            <button className="btn primary" style={{ marginTop: 16 }} onClick={() => { setEditGoal(null); setNewOpen(true); }}>
               <Icon name="plus" size={13} /> New goal
             </button>
           </div>
@@ -201,6 +215,10 @@ export default function Savings() {
                         <button className="btn ghost" style={{ height: 28, padding: '0 10px', fontSize: 12 }}
                                 onClick={() => { setContributeGoal(g); setContributeOpen(true); }}>
                           <Icon name="plus" size={12} /> Add
+                        </button>
+                        <button className="btn ghost icon" style={{ width: 28, height: 28, color: 'var(--text-2)' }}
+                                onClick={() => { setEditGoal(g); setNewOpen(true); }} title="Edit goal">
+                          <Icon name="edit-2" size={12} />
                         </button>
                         <button className="btn ghost icon" style={{ width: 28, height: 28, color: 'var(--rose)' }}
                                 onClick={() => handleDelete(g.goal_id, g.name)} title="Delete goal">
@@ -233,7 +251,7 @@ export default function Savings() {
         onClose={() => setContributeOpen(false)}
         onSubmit={handleContribute}
       />
-      <NewGoalModal open={newOpen} onClose={() => setNewOpen(false)} onSave={handleNewGoal} />
+      <GoalModal open={newOpen} goal={editGoal} onClose={() => setNewOpen(false)} onSave={handleSaveGoal} />
       <Toast msg={toast} onDone={() => setToast('')} />
     </div>
   );

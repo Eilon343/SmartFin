@@ -7,7 +7,7 @@ export default function Sparkline({ data, color = '#10b981', height = 56 }) {
   const points = data.map((v, i) => [i * step, h - ((v - min) / span) * (h - 8) - 4]);
   const d = points.map((p, i) => (i === 0 ? `M${p[0]},${p[1]}` : `L${p[0]},${p[1]}`)).join(' ');
   const fill = `${d} L${w},${h} L0,${h} Z`;
-  const id = `g-${color.replace('#', '')}`;
+  const id = `g-${color.replace(/[^a-zA-Z0-9]/g, '')}`;
   return (
     <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
       <defs>

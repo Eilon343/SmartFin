@@ -109,6 +109,15 @@ export default function Subscriptions() {
     }
   }
 
+  async function handleTogglePause(s) {
+    try {
+      await api.put(`/subscriptions/${s.subscription_id}/pause`, { paused: !s.paused });
+      reload();
+    } catch (err) {
+      setError('Failed to toggle pause state.');
+    }
+  }
+
   async function handleDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -123,7 +132,8 @@ export default function Subscriptions() {
     }
   }
 
-  const monthlyTotal = subs.reduce((s, x) => s + x.amount, 0);
+  const activeSubs = subs.filter(s => !s.paused);
+  const monthlyTotal = activeSubs.reduce((s, x) => s + x.amount, 0);
   const annualized = monthlyTotal * 12;
   const sorted = [...subs].sort((a, b) => a.day_of_month - b.day_of_month);
 
@@ -137,7 +147,7 @@ export default function Subscriptions() {
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>{monthlyTotal.toFixed(2)}
           </div>
-          <span className="muted" style={{ fontSize: 12 }}>{subs.length} active subscriptions</span>
+          <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} active subscriptions</span>
         </div>
         <div className="card card-pad-lg">
           <span className="meta-label">Annualized</span>
@@ -152,7 +162,7 @@ export default function Subscriptions() {
           <span className="meta-label">Avg per subscription</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>
-            {subs.length > 0 ? (monthlyTotal / subs.length).toFixed(2) : '0.00'}
+            {activeSubs.length > 0 ? (monthlyTotal / activeSubs.length).toFixed(2) : '0.00'}
           </div>
           <span className="muted" style={{ fontSize: 12 }}>per month</span>
         </div>
@@ -183,17 +193,27 @@ export default function Subscriptions() {
                 }}>
                   <Icon name={subIcon(s.name)} size={16} />
                 </div>
-                <div className="stack" style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
+                <div className="stack" style={{ flex: 1, minWidth: 0, opacity: s.paused ? 0.6 : 1 }}>
+                  <div className="row" style={{ gap: 8 }}>
+                    <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
+                    {!!s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
+                  </div>
                   <span className="muted-2" style={{ fontSize: 11 }}>
                     Monthly · next on the {ordinal(s.day_of_month)}
                     {s.category ? ` · ${s.category}` : ''}
                   </span>
                 </div>
-                <span className="mono tnum" style={{ fontSize: 13 }}>
+                <span className="mono tnum" style={{ fontSize: 13, opacity: s.paused ? 0.6 : 1 }}>
                   {fmt(s.amount, s.amount % 1 ? 2 : 0)}
                 </span>
-                <span className="chip up" style={{ fontSize: 10 }}>active</span>
+                <button
+                  className="btn ghost icon"
+                  style={{ width: 32, height: 32, color: 'var(--text-1)' }}
+                  onClick={() => handleTogglePause(s)}
+                  title={s.paused ? "Resume" : "Pause"}
+                >
+                  <Icon name={s.paused ? "play" : "pause"} size={16} style={{ fill: 'currentColor' }} />
+                </button>
                 <button
                   className="btn ghost icon"
                   style={{ width: 32, height: 32 }}

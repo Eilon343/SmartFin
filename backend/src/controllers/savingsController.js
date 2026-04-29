@@ -40,6 +40,30 @@ exports.addSavingsGoal = async (req, res) => {
     }
 };
 
+exports.updateSavingsGoal = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { id } = req.params;
+    const { name, target_amount, monthly_allocation, currency } = req.body;
+
+    if (!name || target_amount == null || isNaN(Number(target_amount)) || Number(target_amount) <= 0) {
+        return res.status(400).json({ error: 'name and a valid positive target_amount are required' });
+    }
+    if (monthly_allocation != null && (isNaN(Number(monthly_allocation)) || Number(monthly_allocation) < 0)) {
+        return res.status(400).json({ error: 'monthly_allocation must be a non-negative number' });
+    }
+    try {
+        const [result] = await db.query(
+            'UPDATE savings_goals SET name = ?, target_amount = ?, monthly_allocation = ?, currency = ? WHERE goal_id = ? AND user_id = ?',
+            [name, Number(target_amount), Number(monthly_allocation) || 0, currency || 'ILS', id, user_id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('updateSavingsGoal error:', err);
+        res.status(500).json({ error: 'Failed to update savings goal' });
+    }
+};
+
 exports.depositToGoal = async (req, res) => {
     const user_id = req.user.user_id;
     const { id } = req.params;
