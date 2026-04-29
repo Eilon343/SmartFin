@@ -479,7 +479,10 @@ function buildSpendingSparkline(expenses, month) {
 
   const dailyTotals = new Array(lastDay).fill(0);
   for (const e of expenses) {
-    const day = new Date(e.created_at).getDate();
+    const d = new Date(e.created_at);
+    // Guard: only include expenses that belong to the target month
+    if (d.getFullYear() !== y || d.getMonth() + 1 !== m) continue;
+    const day = d.getDate();
     if (day >= 1 && day <= lastDay) dailyTotals[day - 1] += Number(e.amount);
   }
 
@@ -760,7 +763,8 @@ export default function Dashboard() {
       await api.post(`/savings/${goalId}/deposit`, { amount });
       setToast(`Contributed ₪${amount.toLocaleString()} to goal`);
       load();
-    } catch {
+    } catch (err) {
+      console.error('Contribution failed:', err);
       setToast('Failed to contribute — please try again');
     }
   };
@@ -769,7 +773,8 @@ export default function Dashboard() {
     try {
       await api.put(`/subscriptions/${sub.subscription_id}/pause`, { paused: !sub.paused });
       load();
-    } catch {
+    } catch (err) {
+      console.error('Subscription update failed:', err);
       setToast('Failed to update subscription — please try again');
     }
   };
@@ -784,7 +789,8 @@ export default function Dashboard() {
         setToast(`Created "${data.name}"`);
       }
       load();
-    } catch {
+    } catch (err) {
+      console.error('Goal save failed:', err);
       setToast('Failed to save goal — please try again');
     }
   };

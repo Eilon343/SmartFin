@@ -339,6 +339,9 @@ exports.getPnL = async (req, res) => {
 };
 
 function getPastMonthsStr(month, count) {
+    if (!Number.isInteger(count) || count < 1 || count > 24) {
+        throw new Error(`Invalid lookback count: ${count}`);
+    }
     const [y, m] = month.split('-').map(Number);
     const result = [];
     let cy = y, cm = m;
