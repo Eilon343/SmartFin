@@ -265,7 +265,6 @@ exports.togglePauseSubscription = async (req, res) => {
 };
 
 // P&L = fixed_income + avg_variable_income - expenses - subscription_total - savings_allocations
-// P&L = fixed_income + avg_variable_income - expenses - subscription_total - savings_allocations
 exports.getPnL = async (req, res) => {
     const user_id = req.user.user_id;
     const month = req.query.month || new Date().toISOString().slice(0, 7);
