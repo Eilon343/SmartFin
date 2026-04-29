@@ -272,14 +272,7 @@ exports.getPnL = async (req, res) => {
 
     try {
         // חישוב 3 החודשים האחרונים באופן בטוח
-        const [y, m] = month.split('-').map(Number);
-        const past3Months = [];
-        let cy = y, cm = m;
-        for (let i = 0; i < 3; i++) {
-            cm--;
-            if (cm <= 0) { cm = 12; cy--; }
-            past3Months.push(`${cy}-${String(cm).padStart(2, '0')}`);
-        }
+        const past3Months = getPast3MonthsStr(month);
 
         const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows]] = await Promise.all([
             db.query(
