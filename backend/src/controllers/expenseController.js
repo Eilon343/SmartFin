@@ -265,13 +265,19 @@ exports.togglePauseSubscription = async (req, res) => {
 };
 
 // P&L = fixed_income + avg_variable_income - expenses - subscription_total - savings_allocations
+// variable_income_avg is based on the previous VARIABLE_INCOME_LOOKBACK months of variable income
+const VARIABLE_INCOME_LOOKBACK = 3;
+
 exports.getPnL = async (req, res) => {
     const user_id = req.user.user_id;
     const month = req.query.month || new Date().toISOString().slice(0, 7);
     if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
-        const [[expRows], [subRows], [savRows], [fixedRows], [varRows]] = await Promise.all([
+        // Build the list of prior months used to average variable income
+        const pastMonths = getPastMonthsStr(month, VARIABLE_INCOME_LOOKBACK);
+
+        const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows]] = await Promise.all([
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND created_at >= CONCAT(?, '-01') AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
                 [user_id, month, month]
@@ -288,29 +294,43 @@ exports.getPnL = async (req, res) => {
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'fixed' AND month = ?",
                 [user_id, month]
             ),
+            // Actual variable income recorded for the queried month
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month = ?",
                 [user_id, month]
             ),
+            // Variable income over the previous VARIABLE_INCOME_LOOKBACK months used for the forecast average
+            db.query(
+                `SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month IN (${pastMonths.map(() => '?').join(', ')})`,
+                [user_id, ...pastMonths]
+            )
         ]);
+
         const total_expenses = Number(expRows[0].total);
         const subscription_total = Number(subRows[0].total);
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total);
-        const variable_avg = Number(varRows[0].total);
+        const variable_actual = Number(varActualRows[0].total);
+        const variable_avg = Number(varPastRows[0].total) / VARIABLE_INCOME_LOOKBACK;
 
-        const total_income = fixed_income + variable_avg;
-        const net_pnl = total_income - total_expenses - subscription_total - savings_allocation;
+        const actual_income = fixed_income + variable_actual;
+        const current_net_pnl = actual_income - total_expenses - subscription_total - savings_allocation;
+
+        const projected_income = fixed_income + variable_avg;
+        const forecasted_net_pnl = projected_income - total_expenses - subscription_total - savings_allocation;
 
         res.json({
             month,
             fixed_income: Math.round(fixed_income * 100) / 100,
+            variable_income_actual: Math.round(variable_actual * 100) / 100,
             variable_income_avg: Math.round(variable_avg * 100) / 100,
-            total_income: Math.round(total_income * 100) / 100,
+            total_income_actual: Math.round(actual_income * 100) / 100,
+            total_income_projected: Math.round(projected_income * 100) / 100,
             total_expenses: Math.round(total_expenses * 100) / 100,
             subscription_total: Math.round(subscription_total * 100) / 100,
             savings_allocation: Math.round(savings_allocation * 100) / 100,
-            net_pnl: Math.round(net_pnl * 100) / 100,
+            current_net_pnl: Math.round(current_net_pnl * 100) / 100,
+            forecasted_net_pnl: Math.round(forecasted_net_pnl * 100) / 100,
         });
     } catch (err) {
         console.error('getPnL error:', err);
@@ -318,11 +338,14 @@ exports.getPnL = async (req, res) => {
     }
 };
 
-function getPast3MonthsStr(month) {
+function getPastMonthsStr(month, count) {
+    if (!Number.isInteger(count) || count < 1 || count > 24) {
+        throw new Error(`Invalid lookback count: ${count}`);
+    }
     const [y, m] = month.split('-').map(Number);
     const result = [];
     let cy = y, cm = m;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < count; i++) {
         cm--;
         if (cm <= 0) { cm = 12; cy--; }
         result.push(`${cy}-${String(cm).padStart(2, '0')}`);
