@@ -154,12 +154,12 @@ export default function Income() {
           <span className="muted" style={{ fontSize: 12 }}>this month</span>
         </div>
         <div className="card card-pad-lg">
-          <span className="meta-label">Variable (3-mo avg)</span>
+          <span className="meta-label">Variable (this month)</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>
             {fmt(summary?.variable_total ?? 0)}
           </div>
-          <span className="chip idg" style={{ marginTop: 6, fontSize: 10 }}>averaged</span>
+          <span className="chip idg" style={{ marginTop: 6, fontSize: 10 }}>current month</span>
         </div>
         <div className="card card-pad-lg">
           <span className="meta-label">Total income</span>
@@ -167,7 +167,7 @@ export default function Income() {
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>
             {fmt(summary?.total ?? 0)}
           </div>
-          <span className="muted" style={{ fontSize: 12 }}>fixed + variable avg</span>
+          <span className="muted" style={{ fontSize: 12 }}>fixed + variable</span>
         </div>
       </div>
 

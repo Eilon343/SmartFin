@@ -47,7 +47,7 @@ exports.updateIncome = async (req, res) => {
     const { id } = req.params;
     const { source, amount, type, month, currency, description } = req.body;
     
-    if (!source || amount == null || Number(amount) <= 0 || !month) {
+    if (!source || amount == null || isNaN(Number(amount)) || Number(amount) <= 0 || !month) {
         return res.status(400).json({ error: 'source, amount (must be positive), and month are required' });
     }
     

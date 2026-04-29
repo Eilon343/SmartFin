@@ -539,8 +539,8 @@ function NetPosition({ pnl }) {
         
         <div className="stack" style={{ gap: 16, height: '100%', justifyContent: 'space-between' }}>
           <div className="between" style={{ textTransform: 'uppercase', fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: 'var(--text-2)' }}>
-            <span>12-Week Net Flow</span>
-            <span style={{ textTransform: 'lowercase', fontWeight: 500 }}>weekly</span>
+            <span>Projected Net Flow</span>
+            <span style={{ textTransform: 'lowercase', fontWeight: 500 }}>estimated</span>
           </div>
           <div style={{ flex: 1, minHeight: 60, position: 'relative' }}>
             <Sparkline data={dummySpark} color="var(--emerald)" height={70} />

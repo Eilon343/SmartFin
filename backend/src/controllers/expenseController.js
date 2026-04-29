@@ -423,6 +423,11 @@ exports.addCategory = async (req, res) => {
     const { name } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
     try {
+        const [existing] = await db.query(
+            'SELECT 1 FROM categories WHERE (user_id IS NULL OR user_id = ?) AND LOWER(name) = LOWER(?) LIMIT 1',
+            [user_id, name.trim()]
+        );
+        if (existing.length > 0) return res.status(400).json({ error: 'Category already exists' });
         const [result] = await db.query(
             'INSERT INTO categories (user_id, name, is_base) VALUES (?, ?, FALSE)',
             [user_id, name.trim()]

@@ -44,9 +44,12 @@ exports.updateSavingsGoal = async (req, res) => {
     const user_id = req.user.user_id;
     const { id } = req.params;
     const { name, target_amount, monthly_allocation, currency } = req.body;
-    
-    if (!name || !target_amount) {
-        return res.status(400).json({ error: 'name and target_amount are required' });
+
+    if (!name || target_amount == null || isNaN(Number(target_amount)) || Number(target_amount) <= 0) {
+        return res.status(400).json({ error: 'name and a valid positive target_amount are required' });
+    }
+    if (monthly_allocation != null && (isNaN(Number(monthly_allocation)) || Number(monthly_allocation) < 0)) {
+        return res.status(400).json({ error: 'monthly_allocation must be a non-negative number' });
     }
     try {
         const [result] = await db.query(
