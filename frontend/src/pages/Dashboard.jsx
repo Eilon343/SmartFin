@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import ProgressBar, { pct, tone } from '../components/ui/ProgressBar';
@@ -470,16 +470,36 @@ function TransactionsTable({ expenses }) {
   );
 }
 
+/* -------- Compute real daily cumulative spending for sparkline -------- */
+function buildSpendingSparkline(expenses, month) {
+  const [y, m] = month.split('-').map(Number);
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === y && today.getMonth() === m - 1;
+  const lastDay = isCurrentMonth ? today.getDate() : new Date(y, m, 0).getDate();
+
+  const dailyTotals = new Array(lastDay).fill(0);
+  for (const e of expenses) {
+    const day = new Date(e.created_at).getDate();
+    if (day >= 1 && day <= lastDay) dailyTotals[day - 1] += Number(e.amount);
+  }
+
+  const cumulative = [];
+  let sum = 0;
+  for (const v of dailyTotals) { sum += v; cumulative.push(sum); }
+  return cumulative;
+}
+
 /* -------- Net Position header -------- */
-function NetPosition({ pnl }) {
+function NetPosition({ pnl, expenses }) {
   if (!pnl) return null;
 
-  // קריאת המדדים החדשים (עם fallback)
-  const currentNet = pnl.current_net_pnl ?? pnl.net_pnl ?? 0;
-  const forecastNet = pnl.forecasted_net_pnl ?? pnl.net_pnl ?? 0;
+  const currentNet = pnl.current_net_pnl ?? 0;
+  const forecastNet = pnl.forecasted_net_pnl ?? 0;
   const lastNet = pnl.last_net_pnl;
 
-  const prevMonthName = new Date(`${pnl.prev_month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long' });
+  const prevMonthName = pnl.prev_month
+    ? new Date(`${pnl.prev_month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long' })
+    : null;
   const currMonthName = new Date(`${pnl.month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long' });
   const currYear = new Date(`${pnl.month}-01T00:00:00Z`).getFullYear();
 
@@ -491,23 +511,18 @@ function NetPosition({ pnl }) {
   }
   const up = diff >= 0;
 
-  // הגרף מצביע לתחזית סוף החודש
-  const dummySpark = [
-    forecastNet * 0.4, forecastNet * 0.42, forecastNet * 0.38, forecastNet * 0.48,
-    forecastNet * 0.55, forecastNet * 0.6, forecastNet * 0.58, forecastNet * 0.7,
-    forecastNet * 0.72, forecastNet * 0.85, forecastNet * 0.95, forecastNet
-  ];
+  const spendingSparkData = buildSpendingSparkline(expenses, pnl.month);
 
   const [selY, selM] = pnl.month.split('-').map(Number);
   const today = new Date();
   const isCurrentMonth = today.getFullYear() === selY && today.getMonth() === selM - 1;
   const endDate = isCurrentMonth ? today : new Date(selY, selM, 0);
-
-  const w12ago = new Date(endDate.getTime() - 12 * 7 * 86400000);
-  const w12str = w12ago.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  const startDate = new Date(selY, selM - 1, 1);
+  const startStr = startDate.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
   const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
 
-  const totalIncomeActual = pnl.total_income_actual ?? pnl.total_income ?? 0;
+  const totalIncomeActual = pnl.total_income_actual ?? 0;
+  const forecastColor = forecastNet >= 0 ? 'var(--emerald)' : 'var(--rose)';
 
   return (
     <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
@@ -528,17 +543,16 @@ function NetPosition({ pnl }) {
             </span>
           </div>
 
-          {/* תיבת התחזית החדשה שיצרנו */}
-          <div style={{ padding: '12px 14px', background: forecastNet >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)', borderRadius: 8, borderLeft: `3px solid ${forecastNet >= 0 ? 'var(--emerald)' : 'var(--rose)'}`, marginTop: 4 }}>
+          <div style={{ padding: '12px 14px', background: forecastNet >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)', borderRadius: 8, borderLeft: `3px solid ${forecastColor}`, marginTop: 4 }}>
             <div className="row" style={{ gap: 8, fontSize: 13, color: 'var(--text-1)' }}>
-              <Icon name="sparkles" size={14} color={forecastNet >= 0 ? 'var(--emerald)' : 'var(--rose)'} />
+              <Icon name="sparkles" size={14} color={forecastColor} />
               <span>
-                Currently at <strong>₪{currentNet.toLocaleString()}</strong>, expected to reach <strong style={{ color: forecastNet >= 0 ? 'var(--emerald)' : 'var(--rose)' }}>₪{forecastNet.toLocaleString()}</strong> by end of month.
+                Currently at <strong>₪{currentNet.toLocaleString()}</strong>, expected to reach <strong style={{ color: forecastColor }}>₪{forecastNet.toLocaleString()}</strong> by end of month.
               </span>
             </div>
           </div>
 
-          {lastNet != null && (
+          {lastNet != null && prevMonthName && (
             <div className="row" style={{ gap: 12, marginTop: 4 }}>
               <span className={`chip ${up ? 'up' : 'down'}`} style={{ fontWeight: 600 }}>
                 <Icon name={up ? 'trending-up' : 'trending-down'} size={12} />
@@ -560,16 +574,16 @@ function NetPosition({ pnl }) {
 
         <div className="stack" style={{ gap: 16, height: '100%', justifyContent: 'space-between' }}>
           <div className="between" style={{ textTransform: 'uppercase', fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: 'var(--text-2)' }}>
-            <span>Forecasted Trend</span>
+            <span>Spending Trend</span>
             <span className="chip idg" style={{ textTransform: 'none', fontWeight: 600 }}>
-              target ₪{forecastNet.toLocaleString()}
+              ₪{pnl.total_expenses.toLocaleString()} spent
             </span>
           </div>
           <div style={{ flex: 1, minHeight: 60, position: 'relative' }}>
-            <Sparkline data={dummySpark} color="var(--emerald)" height={70} />
+            <Sparkline data={spendingSparkData.length ? spendingSparkData : [0]} color="var(--rose)" height={70} />
           </div>
           <div className="between muted-2" style={{ fontSize: 11, fontWeight: 500 }}>
-            <span>{w12str}</span>
+            <span>{startStr}</span>
             <span>{endStr}</span>
           </div>
         </div>
@@ -686,7 +700,7 @@ function GoalModal({ open, goal, onClose, onSave }) {
 /* -------- Main Dashboard -------- */
 export default function Dashboard() {
   const [month, setMonth] = useState(currentMonth());
-  const recentMonths = getRecentMonths(3);
+  const recentMonths = useMemo(() => getRecentMonths(3), []);
   const [pnl, setPnl] = useState(null);
   const [budgets, setBudgets] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -700,8 +714,14 @@ export default function Dashboard() {
   const [toast, setToast] = useState('');
   const [goalModalOpen, setGoalModalOpen] = useState(false);
   const [editGoal, setEditGoal] = useState(null);
+  const abortControllerRef = useRef(null);
 
   const load = useCallback(() => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const signal = controller.signal;
+
     setLoading(true);
     const [y, m] = month.split('-').map(Number);
     let py = y, pm = m - 1;
@@ -709,59 +729,72 @@ export default function Dashboard() {
     const prevM = `${py}-${String(pm).padStart(2, '0')}`;
 
     Promise.allSettled([
-      api.get(`/pnl?month=${month}`),
-      api.get(`/pnl?month=${prevM}`),
-      api.get(`/budgets?month=${month}`),
-      api.get(`/expenses?month=${month}`),
-      api.get(`/income/summary?month=${month}`),
-      api.get('/subscriptions'),
-      api.get('/savings'),
+      api.get(`/pnl?month=${month}`, { signal }),
+      api.get(`/pnl?month=${prevM}`, { signal }),
+      api.get(`/budgets?month=${month}`, { signal }),
+      api.get(`/expenses?month=${month}`, { signal }),
+      api.get(`/income/summary?month=${month}`, { signal }),
+      api.get('/subscriptions', { signal }),
+      api.get('/savings', { signal }),
     ]).then(([p, prevP, b, e, inc, s, g]) => {
+      if (signal.aborted) return;
       if (p.status === 'fulfilled') {
         setPnl({
           ...p.value.data,
-          // שינוי קטן כדי לא לפספס את המשתנה החדש:
-          last_net_pnl: prevP.status === 'fulfilled' ? (prevP.value.data.current_net_pnl ?? prevP.value.data.net_pnl) : null,
+          last_net_pnl: prevP.status === 'fulfilled' ? (prevP.value.data.current_net_pnl ?? null) : null,
           prev_month: prevM
         });
       }
-      // ... שאר הפונקציה נשארת רגילה
       if (b.status === 'fulfilled') setBudgets(b.value.data.budgets || []);
       if (e.status === 'fulfilled') setExpenses(Array.isArray(e.value.data) ? e.value.data : []);
       if (inc.status === 'fulfilled') setIncome(inc.value.data);
       if (s.status === 'fulfilled') setSubs(Array.isArray(s.value.data) ? s.value.data : []);
       if (g.status === 'fulfilled') setGoals(Array.isArray(g.value.data) ? g.value.data : []);
-    }).finally(() => setLoading(false));
+    }).finally(() => { if (!signal.aborted) setLoading(false); });
   }, [month]);
 
   useEffect(() => { load(); }, [load]);
 
   const handleContribute = async (goalId, amount) => {
-    await api.post(`/savings/${goalId}/deposit`, { amount });
-    setToast(`Contributed ₪${amount.toLocaleString()} to goal`);
-    load();
+    try {
+      await api.post(`/savings/${goalId}/deposit`, { amount });
+      setToast(`Contributed ₪${amount.toLocaleString()} to goal`);
+      load();
+    } catch {
+      setToast('Failed to contribute — please try again');
+    }
   };
 
   const handleTogglePauseSub = async (sub) => {
     try {
       await api.put(`/subscriptions/${sub.subscription_id}/pause`, { paused: !sub.paused });
       load();
-    } catch (e) { console.error(e); }
+    } catch {
+      setToast('Failed to update subscription — please try again');
+    }
   };
 
   const handleSaveGoal = async (data) => {
-    if (data.goal_id) {
-      await api.put(`/savings/${data.goal_id}`, data);
-      setToast(`Updated "${data.name}"`);
-    } else {
-      await api.post('/savings', data);
-      setToast(`Created "${data.name}"`);
+    try {
+      if (data.goal_id) {
+        await api.put(`/savings/${data.goal_id}`, data);
+        setToast(`Updated "${data.name}"`);
+      } else {
+        await api.post('/savings', data);
+        setToast(`Created "${data.name}"`);
+      }
+      load();
+    } catch {
+      setToast('Failed to save goal — please try again');
     }
-    load();
   };
 
   const today = new Date();
-  const daysLeft = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() - today.getDate();
+  const [selY, selM] = month.split('-').map(Number);
+  const isCurrentMonth = today.getFullYear() === selY && today.getMonth() === selM - 1;
+  const daysLeft = isCurrentMonth
+    ? new Date(selY, selM, 0).getDate() - today.getDate()
+    : null;
 
   if (loading) {
     return (
@@ -779,7 +812,9 @@ export default function Dashboard() {
     <div className="view-enter">
       <PageHeader
         title={`Good ${today.getHours() < 12 ? 'morning' : today.getHours() < 18 ? 'afternoon' : 'evening'}`}
-        sub={`${today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${daysLeft} days left in the month`}
+        sub={isCurrentMonth
+          ? `${today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${daysLeft} days left in the month`
+          : new Date(selY, selM - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
         actions={
           <div className="seg">
             {recentMonths.map(rm => (
@@ -795,7 +830,7 @@ export default function Dashboard() {
         }
       />
 
-      <NetPosition pnl={pnl} />
+      <NetPosition pnl={pnl} expenses={expenses} />
 
       {budgets.length > 0 && (
         <section style={{ marginBottom: 22 }}>

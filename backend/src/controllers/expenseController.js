@@ -265,14 +265,17 @@ exports.togglePauseSubscription = async (req, res) => {
 };
 
 // P&L = fixed_income + avg_variable_income - expenses - subscription_total - savings_allocations
+// variable_income_avg is based on the previous VARIABLE_INCOME_LOOKBACK months of variable income
+const VARIABLE_INCOME_LOOKBACK = 3;
+
 exports.getPnL = async (req, res) => {
     const user_id = req.user.user_id;
     const month = req.query.month || new Date().toISOString().slice(0, 7);
     if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
-        // חישוב 3 החודשים האחרונים באופן בטוח
-        const past3Months = getPast3MonthsStr(month);
+        // Build the list of prior months used to average variable income
+        const pastMonths = getPastMonthsStr(month, VARIABLE_INCOME_LOOKBACK);
 
         const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows]] = await Promise.all([
             db.query(
@@ -291,15 +294,15 @@ exports.getPnL = async (req, res) => {
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'fixed' AND month = ?",
                 [user_id, month]
             ),
-            // 1. סך ההכנסה המשתנה החודש (בפועל)
+            // Actual variable income recorded for the queried month
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month = ?",
                 [user_id, month]
             ),
-            // 2. סך ההכנסה המשתנה ב-3 החודשים הקודמים
+            // Variable income over the previous VARIABLE_INCOME_LOOKBACK months used for the forecast average
             db.query(
-                "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month IN (?, ?, ?)",
-                [user_id, past3Months[0], past3Months[1], past3Months[2]]
+                `SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month IN (${pastMonths.map(() => '?').join(', ')})`,
+                [user_id, ...pastMonths]
             )
         ]);
 
@@ -308,7 +311,7 @@ exports.getPnL = async (req, res) => {
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total);
         const variable_actual = Number(varActualRows[0].total);
-        const variable_avg = Number(varPastRows[0].total) / 3;
+        const variable_avg = Number(varPastRows[0].total) / VARIABLE_INCOME_LOOKBACK;
 
         const actual_income = fixed_income + variable_actual;
         const current_net_pnl = actual_income - total_expenses - subscription_total - savings_allocation;
@@ -328,9 +331,6 @@ exports.getPnL = async (req, res) => {
             savings_allocation: Math.round(savings_allocation * 100) / 100,
             current_net_pnl: Math.round(current_net_pnl * 100) / 100,
             forecasted_net_pnl: Math.round(forecasted_net_pnl * 100) / 100,
-            // נשמור גם על המשתנים הישנים כדי למנוע קריסות בפרונטאנד עד שתעשה רענון
-            net_pnl: Math.round(current_net_pnl * 100) / 100,
-            total_income: Math.round(actual_income * 100) / 100
         });
     } catch (err) {
         console.error('getPnL error:', err);
@@ -338,11 +338,11 @@ exports.getPnL = async (req, res) => {
     }
 };
 
-function getPast3MonthsStr(month) {
+function getPastMonthsStr(month, count) {
     const [y, m] = month.split('-').map(Number);
     const result = [];
     let cy = y, cm = m;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < count; i++) {
         cm--;
         if (cm <= 0) { cm = 12; cy--; }
         result.push(`${cy}-${String(cm).padStart(2, '0')}`);
