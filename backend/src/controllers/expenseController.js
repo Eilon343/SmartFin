@@ -264,8 +264,9 @@ exports.togglePauseSubscription = async (req, res) => {
     }
 };
 
-// P&L = fixed_income + avg_variable_income - expenses - subscription_total - savings_allocations
-// variable_income_avg is based on the previous VARIABLE_INCOME_LOOKBACK months of variable income
+// P&L = fixed_income + max(variable_actual, variable_avg) - projected_expenses - subscription_total - savings_allocations
+// variable_avg denominator = months with actual data (not always VARIABLE_INCOME_LOOKBACK)
+// projected_expenses scales actual spending to end of month (current month only)
 const VARIABLE_INCOME_LOOKBACK = 3;
 
 exports.getPnL = async (req, res) => {
@@ -299,9 +300,9 @@ exports.getPnL = async (req, res) => {
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month = ?",
                 [user_id, month]
             ),
-            // Variable income over the previous VARIABLE_INCOME_LOOKBACK months used for the forecast average
+            // Variable income over the previous VARIABLE_INCOME_LOOKBACK months — fetch count of months with data for accurate average
             db.query(
-                `SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month IN (${pastMonths.map(() => '?').join(', ')})`,
+                `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(DISTINCT month) AS months_with_data FROM income WHERE user_id = ? AND type = 'variable' AND month IN (${pastMonths.map(() => '?').join(', ')})`,
                 [user_id, ...pastMonths]
             )
         ]);
@@ -311,13 +312,26 @@ exports.getPnL = async (req, res) => {
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total);
         const variable_actual = Number(varActualRows[0].total);
-        const variable_avg = Number(varPastRows[0].total) / VARIABLE_INCOME_LOOKBACK;
+
+        // Divide by actual months with data, not always VARIABLE_INCOME_LOOKBACK (avoids near-zero avg for new users)
+        const monthsWithData = Number(varPastRows[0].months_with_data) || 0;
+        const variable_avg = monthsWithData > 0 ? Number(varPastRows[0].total) / monthsWithData : 0;
 
         const actual_income = fixed_income + variable_actual;
         const current_net_pnl = actual_income - total_expenses - subscription_total - savings_allocation;
 
-        const projected_income = fixed_income + variable_avg;
-        const forecasted_net_pnl = projected_income - total_expenses - subscription_total - savings_allocation;
+        // Project expenses to end of month — only for current month; past months are already complete
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        let projected_expenses = total_expenses;
+        if (month === currentMonth && total_expenses > 0) {
+            const today = new Date();
+            const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+            const dayOfMonth = today.getDate();
+            projected_expenses = total_expenses * (daysInMonth / dayOfMonth);
+        }
+
+        const projected_income = fixed_income + Math.max(variable_actual, variable_avg);
+        const forecasted_net_pnl = projected_income - projected_expenses - subscription_total - savings_allocation;
 
         res.json({
             month,
@@ -327,6 +341,7 @@ exports.getPnL = async (req, res) => {
             total_income_actual: Math.round(actual_income * 100) / 100,
             total_income_projected: Math.round(projected_income * 100) / 100,
             total_expenses: Math.round(total_expenses * 100) / 100,
+            projected_expenses: Math.round(projected_expenses * 100) / 100,
             subscription_total: Math.round(subscription_total * 100) / 100,
             savings_allocation: Math.round(savings_allocation * 100) / 100,
             current_net_pnl: Math.round(current_net_pnl * 100) / 100,
