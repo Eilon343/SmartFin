@@ -3,6 +3,7 @@ import os
 import asyncio
 from google import genai
 from google.genai import types
+from google.api_core import exceptions as google_exceptions
 
 _client = None
 
@@ -56,9 +57,8 @@ async def parse_input(user_input: str, categories: list[str]) -> dict:
         try:
             response = await loop.run_in_executor(None, _call)
             return json.loads(response.text)
-        except Exception as e:
-            is_retryable = "503" in str(e) or "429" in str(e) or "UNAVAILABLE" in str(e) or "RESOURCE_EXHAUSTED" in str(e)
-            if attempt < 3 and is_retryable:
+        except (google_exceptions.ResourceExhausted, google_exceptions.ServiceUnavailable):
+            if attempt < 3:
                 await asyncio.sleep(2 * attempt)
                 continue
             raise
