@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from aiogram import Bot
@@ -70,23 +70,22 @@ def _format_score_message(data: dict) -> str:
 
 async def _charge_due_subscriptions(bot: Bot, db_manager):
     """Daily: charge any subscription whose day_of_month has arrived this month."""
-    today = datetime.now()
+    today = date.today()
     today_day = today.day
     current_month = today.strftime("%Y-%m")
 
     due = await db_manager.get_due_subscriptions(today_day, current_month)
-    pool = await db_manager.get_pool()
 
     for sub in due:
         try:
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "INSERT INTO expenses (user_id, amount, currency, description, category_id) "
-                        "VALUES (%s, %s, %s, %s, %s)",
-                        (sub["user_id"], sub["amount"], sub["currency"],
-                         f"[Subscription] {sub['name']}", sub["category_id"]),
-                    )
+            await db_manager.add_expense(
+                user_id=sub["user_id"],
+                amount=sub["amount"],
+                description=sub["name"],
+                category_name=sub.get("category"),
+                currency=sub["currency"],
+                source="bot",
+            )
             await db_manager.mark_subscription_charged(sub["subscription_id"], current_month)
             try:
                 await bot.send_message(

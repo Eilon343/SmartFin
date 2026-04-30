@@ -53,8 +53,6 @@ services:
     environment:
       - DB_HOST=db
       - PORT=3000
-    ports:
-      - "3000:3000"
     networks:
       - smartfin-network
     mem_limit: 256m

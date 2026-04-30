@@ -159,14 +159,16 @@ class DatabaseManager:
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "SELECT subscription_id, user_id, name, amount, currency, category_id "
-                    "FROM subscriptions "
-                    "WHERE active = TRUE AND day_of_month <= %s "
-                    "  AND (last_charged_month IS NULL OR last_charged_month < %s)",
+                    "SELECT s.subscription_id, s.user_id, s.name, s.amount, s.currency, "
+                    "       c.name AS category "
+                    "FROM subscriptions s "
+                    "LEFT JOIN categories c ON s.category_id = c.category_id "
+                    "WHERE s.active = TRUE AND s.day_of_month <= %s "
+                    "  AND (s.last_charged_month IS NULL OR s.last_charged_month < %s)",
                     (today_day, current_month),
                 )
                 rows = await cur.fetchall()
-        keys = ["subscription_id", "user_id", "name", "amount", "currency", "category_id"]
+        keys = ["subscription_id", "user_id", "name", "amount", "currency", "category"]
         return [dict(zip(keys, r)) for r in rows]
 
     async def mark_subscription_charged(self, subscription_id: int, month: str):

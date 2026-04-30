@@ -52,5 +52,13 @@ async def parse_input(user_input: str, categories: list[str]) -> dict:
             ),
         )
 
-    response = await loop.run_in_executor(None, _call)
-    return json.loads(response.text)
+    for attempt in range(1, 4):
+        try:
+            response = await loop.run_in_executor(None, _call)
+            return json.loads(response.text)
+        except Exception as e:
+            is_retryable = "503" in str(e) or "429" in str(e) or "UNAVAILABLE" in str(e) or "RESOURCE_EXHAUSTED" in str(e)
+            if attempt < 3 and is_retryable:
+                await asyncio.sleep(2 * attempt)
+                continue
+            raise
