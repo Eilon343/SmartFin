@@ -178,12 +178,18 @@ export default function LogTransaction({ open, onClose, onSaved }) {
         )}
 
         {tab === 'expense' && (
-          <label className="row" style={{ gap: 10, cursor: 'pointer', marginBottom: 16, padding: '12px 0', borderTop: '1px solid var(--line)' }}>
+          <label className="row" style={{ gap: 10, cursor: 'pointer', marginBottom: 16, padding: '12px 0', borderTop: '1px solid var(--line)' }} onClick={() => setIsVirtual(v => !v)}>
             <div style={{
               width: 44, height: 24, borderRadius: 999, flexShrink: 0,
               background: isVirtual ? 'var(--indigo)' : 'var(--track)',
               position: 'relative', transition: 'background .2s', cursor: 'pointer',
-            }} onClick={() => setIsVirtual(v => !v)}>
+            }}>
+              <div style={{
+                position: 'absolute', top: 3, left: isVirtual ? 23 : 3,
+                width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                transition: 'left .2s',
+              }} />
+            </div>
               <div style={{
                 position: 'absolute', top: 3, left: isVirtual ? 23 : 3,
                 width: 18, height: 18, borderRadius: '50%', background: '#fff',
