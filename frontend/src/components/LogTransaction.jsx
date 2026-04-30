@@ -155,7 +155,7 @@ export default function LogTransaction({ open, onClose, onSaved }) {
           <div style={{ marginBottom: 16 }}>
             <div className="meta-label" style={{ marginBottom: 8 }}>Category</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {categories.slice(0, 8).map((c, i) => (
+              {categories.map((c, i) => (
                 <button
                   key={c.category_id}
                   onClick={() => setCategoryId(categoryId === String(c.category_id) ? '' : String(c.category_id))}
