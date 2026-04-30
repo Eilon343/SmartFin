@@ -88,7 +88,7 @@ export default function LogTransaction({ open, onClose, onSaved }) {
     }
   }
 
-  const displayAmount = amount ? `₪${parseFloat(amount).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '₪0';
+  const displayAmount = amount ? `₪${parseFloat(amount).toLocaleString('en-US', { maximumFractionDigits: 2 })}` : '₪0';
 
   return (
     <BottomSheet open={open} onClose={onClose}>
