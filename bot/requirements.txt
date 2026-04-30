@@ -2,6 +2,7 @@ aiogram==3.27.0
 aiomysql==0.3.2
 aiohttp==3.13.5
 google-genai==1.16.0
+google-api-core==2.24.2
 python-dotenv==1.2.2
 apscheduler==3.11.0
 bcrypt==4.3.0

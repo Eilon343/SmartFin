@@ -105,6 +105,10 @@ body {
 /* login google button */
 .google-btn:hover { background: #252839 !important; border-color: #3a3f55 !important; }
 .google-btn:active { background: #1a1d2a !important; }
+/* force google oauth iframe to fill the full overlay so entire button is clickable */
+.google-overlay { position: absolute; inset: 0; opacity: 0; cursor: pointer; overflow: hidden; border-radius: 12px; }
+.google-overlay > div { width: 100% !important; height: 100% !important; }
+.google-overlay iframe { width: 100% !important; height: 100% !important; min-width: unset !important; }
 
 /* nav */
 .nav-item {

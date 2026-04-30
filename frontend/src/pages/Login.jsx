@@ -49,7 +49,7 @@ export default function Login() {
               <GoogleIcon />
               <span style={styles.googleBtnText}>Continue with Google</span>
             </div>
-            <div style={styles.googleOverlay}>
+            <div style={styles.googleOverlay} className="google-overlay">
               <GoogleLogin
                 onSuccess={handleGoogleSuccess}
                 onError={() => setError('Google sign-in failed. Try again.')}
