@@ -117,7 +117,7 @@ export default function LogTransaction({ open, onClose, onSaved }) {
               ref={amountRef}
               type="number"
               min="0"
-              step="1"
+              step="0.01"
               value={amount}
               onChange={e => setAmount(e.target.value)}
               onBlur={() => setEditingAmount(false)}
