@@ -76,7 +76,7 @@ export default function LogTransaction({ open, onClose, onSaved }) {
           currency: 'ILS',
           source: description.trim() || 'Income',
           type: 'variable',
-          month: new Date().toISOString().slice(0, 7),
+          month: new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0'),
         });
       }
       onSaved?.();
