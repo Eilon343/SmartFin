@@ -249,7 +249,7 @@ export default function Subscriptions() {
                   <Icon name={s.paused ? "play" : "pause"} size={16} style={{ fill: 'currentColor' }} />
                 </button>
                 <button
-                  className="btn ghost icon"
+                  className="btn ghost icon sub-row-edit"
                   style={{ width: 32, height: 32 }}
                   onClick={() => openEdit(s)}
                   title="Edit"
@@ -257,7 +257,7 @@ export default function Subscriptions() {
                   <Icon name="pencil" size={13} />
                 </button>
                 <button
-                  className="btn ghost icon"
+                  className="btn ghost icon sub-row-delete"
                   style={{ width: 32, height: 32, color: 'var(--rose)' }}
                   onClick={() => setDeleteTarget(s)}
                   title="Delete"
