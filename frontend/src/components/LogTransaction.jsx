@@ -190,12 +190,6 @@ export default function LogTransaction({ open, onClose, onSaved }) {
                 transition: 'left .2s',
               }} />
             </div>
-              <div style={{
-                position: 'absolute', top: 3, left: isVirtual ? 23 : 3,
-                width: 18, height: 18, borderRadius: '50%', background: '#fff',
-                transition: 'left .2s',
-              }} />
-            </div>
             <div className="stack" style={{ gap: 2 }}>
               <span style={{ fontSize: 13, fontWeight: 500 }}>Mark as virtual expense</span>
               <span className="muted-2" style={{ fontSize: 11 }}>Tracked but doesn't reduce real spending</span>
