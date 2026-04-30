@@ -6,13 +6,12 @@
     </linearGradient>
   </defs>
   <rect width="512" height="512" rx="114" fill="url(#bg)"/>
-  <text
-    x="256" y="340"
-    font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif"
-    font-size="280"
-    font-weight="800"
-    fill="white"
-    text-anchor="middle"
-    letter-spacing="-10"
-  >S</text>
+  <path
+    d="M 340,130 Q 340,85 256,85 Q 135,85 135,195 Q 135,260 256,260 Q 377,260 377,365 Q 377,430 256,430 Q 150,430 150,375"
+    fill="none"
+    stroke="white"
+    stroke-width="56"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
 </svg>
