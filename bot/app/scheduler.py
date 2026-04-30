@@ -78,14 +78,17 @@ async def _charge_due_subscriptions(bot: Bot, db_manager):
 
     for sub in due:
         try:
-            await db_manager.add_expense(
+            success = await db_manager.add_expense(
                 user_id=sub["user_id"],
                 amount=sub["amount"],
-                description=sub["name"],
+                description=f"[Subscription] {sub['name']}",
                 category_name=sub.get("category"),
                 currency=sub["currency"],
                 source="bot",
             )
+            if not success:
+                logging.error(f"Subscription expense failed for sub_id={sub['subscription_id']}, skipping charge mark")
+                continue
             await db_manager.mark_subscription_charged(sub["subscription_id"], current_month)
             try:
                 await bot.send_message(

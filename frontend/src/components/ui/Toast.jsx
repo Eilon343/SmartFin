@@ -15,7 +15,7 @@ export default function Toast({ msg, onDone }) {
       padding: '10px 16px', borderRadius: 12, color: 'var(--text-1)',
       boxShadow: 'var(--pop-shadow)', zIndex: 80,
       animation: 'pop .25s ease', fontSize: 13, fontWeight: 500,
-      whiteSpace: 'nowrap',
+      whiteSpace: 'nowrap', maxWidth: 'calc(100vw - 32px)',
     }}>
       <span className="row" style={{ gap: 8 }}>
         <Icon name="check-circle-2" size={16} color="var(--emerald)" />

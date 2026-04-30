@@ -79,45 +79,43 @@ function CategoryCard({ budget, color, icon, onOpen }) {
   const hasLimit = !budget.no_budget && budget.effective_limit != null;
   const p = hasLimit ? pct(budget.spent, budget.effective_limit) : 0;
   const toneMap = tone(p);
-  const colorMap = { ok: 'var(--emerald)', warn: 'var(--amber)', over: 'var(--rose)' };
+  const barColor = { ok: 'var(--emerald)', warn: 'var(--amber)', over: 'var(--rose)' }[toneMap];
   const over = hasLimit && budget.spent > budget.effective_limit;
   return (
     <div className="card card-pad cat-card focusable" tabIndex={0} onClick={onOpen}
       onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onOpen()}>
-      <div className="between">
-        <div className="row" style={{ gap: 12 }}>
-          <div className="cat-icon" style={{ color }}>
-            <Icon name={icon} size={18} />
-          </div>
-          <div className="stack">
-            <div style={{ fontWeight: 600, fontSize: 14 }}>{budget.category}</div>
-            <div className="muted-2" style={{ fontSize: 11 }}>
-              {hasLimit ? `${Math.round(p)}% ${t('dash_used')}${over ? ' · ' + t('dash_over_budget') : ''}` : t('dash_no_budget')}
-            </div>
-          </div>
+      <div className="between" style={{ marginBottom: 10 }}>
+        <div className="cat-icon" style={{ color, width: 36, height: 36, borderRadius: 10 }}>
+          <Icon name={icon} size={17} />
         </div>
-        <Icon name="chevron-right" size={16} color="var(--text-3)" />
+        <Icon name="chevron-right" size={14} color="var(--text-3)" />
       </div>
-      <div>
-        <div className="between" style={{ marginBottom: 6 }}>
-          <span className="mono tnum" style={{ fontSize: 14, fontWeight: 600 }}>
-            {fmt(budget.spent)}
-          </span>
-          {hasLimit && (
-            <span className="mono tnum muted" style={{ fontSize: 12 }}>
-              / {fmt(budget.effective_limit)}
-            </span>
-          )}
-        </div>
-        {hasLimit && <ProgressBar value={budget.spent} max={budget.effective_limit} />}
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {budget.category}
+      </div>
+      <div className="between" style={{ marginBottom: 6 }}>
+        <span className="mono tnum" style={{ fontSize: 18, fontWeight: 700, letterSpacing: -0.5 }}>
+          {fmt(budget.spent)}
+        </span>
         {hasLimit && (
-          <div className="between" style={{ marginTop: 8 }}>
-            <span className="meta-label" style={{ color: colorMap[toneMap] }}>
-              {over ? t('dash_over_by') + ' ' + fmt(budget.spent - budget.effective_limit) : fmt(budget.remaining) + ' ' + t('dash_left')}
-            </span>
-          </div>
+          <span className="mono tnum muted" style={{ fontSize: 11 }}>
+            / {fmt(budget.effective_limit)}
+          </span>
         )}
       </div>
+      {hasLimit && <ProgressBar value={budget.spent} max={budget.effective_limit} height={5} />}
+      {hasLimit && (
+        <div style={{ marginTop: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', color: barColor }}>
+            {over
+              ? `${t('dash_over_by')} ${fmt(budget.spent - budget.effective_limit)}`
+              : `${fmt(budget.remaining)} ${t('dash_left')}`}
+          </span>
+        </div>
+      )}
+      {!hasLimit && (
+        <span className="muted-2" style={{ fontSize: 11 }}>{t('dash_no_budget')}</span>
+      )}
     </div>
   );
 }
@@ -758,6 +756,11 @@ export default function Dashboard() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    window.addEventListener('smartfin:reload', load);
+    return () => window.removeEventListener('smartfin:reload', load);
+  }, [load]);
+
   const handleContribute = async (goalId, amount) => {
     try {
       await api.post(`/savings/${goalId}/deposit`, { amount });
@@ -821,20 +824,19 @@ export default function Dashboard() {
         sub={isCurrentMonth
           ? `${today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${daysLeft} days left in the month`
           : new Date(selY, selM - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-        actions={
-          <div className="seg">
-            {recentMonths.map(rm => (
-              <button
-                key={rm.iso}
-                className={month === rm.iso ? 'on' : ''}
-                onClick={() => setMonth(rm.iso)}
-              >
-                {rm.label}
-              </button>
-            ))}
-          </div>
-        }
       />
+
+      <div className="seg" style={{ marginBottom: 20 }}>
+        {recentMonths.map(rm => (
+          <button
+            key={rm.iso}
+            className={month === rm.iso ? 'on' : ''}
+            onClick={() => setMonth(rm.iso)}
+          >
+            {rm.label}
+          </button>
+        ))}
+      </div>
 
       <NetPosition pnl={pnl} expenses={expenses} />
 

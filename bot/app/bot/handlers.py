@@ -5,6 +5,7 @@ from aiogram import Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from google.api_core import exceptions as google_exceptions
 
 from app.ai.ai_engine import parse_input
 from app.bot.states import ExpenseFlow, IncomeFlow, SubscriptionFlow
@@ -99,13 +100,13 @@ def register_handlers(dp: Dispatcher, db_manager):
 
         try:
             parsed = await parse_input(message.text, categories)
+        except (google_exceptions.ResourceExhausted, google_exceptions.ServiceUnavailable) as e:
+            logging.error(f"AI service unavailable after retries: {e}", exc_info=True)
+            await message.reply("⚠️ AI service is temporarily unavailable (Gemini overloaded). Try again in a minute.")
+            return
         except Exception as e:
-            err_str = str(e)
             logging.error(f"AI parse error: {e}", exc_info=True)
-            if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                await message.reply("⚠️ AI service is temporarily unavailable (Gemini overloaded). Try again in a minute.")
-            else:
-                await message.reply("Sorry, I couldn't understand that. Try: '55 NIS for Shawarma'")
+            await message.reply("Sorry, I couldn't understand that. Try: '55 NIS for Shawarma'")
             return
 
         intent = parsed.get("intent", "log_expense")
