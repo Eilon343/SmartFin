@@ -137,17 +137,28 @@ export default function Subscriptions() {
   const annualized = monthlyTotal * 12;
   const sorted = [...subs].sort((a, b) => a.day_of_month - b.day_of_month);
 
+  const now = new Date();
+  const today = now.getDate();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const monthName = now.toLocaleString('en-US', { month: 'long' });
+
+  const dayMap = {};
+  for (const s of activeSubs) {
+    dayMap[s.day_of_month] = (dayMap[s.day_of_month] || 0) + s.amount;
+  }
+  const maxAmt = Math.max(...Object.values(dayMap), 1);
+
   return (
     <div className="view-enter">
       <PageHeader title="Subscriptions" sub="Recurring charges across all sources" />
 
-      <div className="grid grid-3" style={{ marginBottom: 20 }}>
+      <div className="grid grid-2" style={{ marginBottom: 20 }}>
         <div className="card card-pad-lg">
           <span className="meta-label">Monthly burn</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
-            <span className="ccy" style={{ fontSize: 20 }}>₪</span>{monthlyTotal.toFixed(2)}
+            <span className="ccy" style={{ fontSize: 20 }}>₪</span>{monthlyTotal.toFixed(0)}
           </div>
-          <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} active subscriptions</span>
+          <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} active</span>
         </div>
         <div className="card card-pad-lg">
           <span className="meta-label">Annualized</span>
@@ -158,13 +169,36 @@ export default function Subscriptions() {
             <Icon name="repeat" size={11} /> projected
           </span>
         </div>
-        <div className="card card-pad-lg">
-          <span className="meta-label">Avg per subscription</span>
-          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
-            <span className="ccy" style={{ fontSize: 20 }}>₪</span>
-            {activeSubs.length > 0 ? (monthlyTotal / activeSubs.length).toFixed(2) : '0.00'}
-          </div>
-          <span className="muted" style={{ fontSize: 12 }}>per month</span>
+      </div>
+
+      <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
+        <div className="between" style={{ marginBottom: 14 }}>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{monthName} timeline</span>
+          <span className="muted-2" style={{ fontSize: 12 }}>day {today} / {daysInMonth}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 52 }}>
+          {Array.from({ length: daysInMonth }, (_, i) => {
+            const day = i + 1;
+            const amt = dayMap[day] || 0;
+            const isPast = day <= today;
+            const hasSub = amt > 0;
+            const barH = hasSub ? Math.max(14, Math.round((amt / maxAmt) * 44)) : 0;
+            const color = isPast ? '#10b981' : '#6366f1';
+            return (
+              <div key={day} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+                {hasSub
+                  ? <div style={{ width: '100%', maxWidth: 7, minWidth: 3, height: barH, borderRadius: 3, background: color }} />
+                  : <div style={{ width: 3, height: 3, borderRadius: '50%', background: day === today ? 'var(--emerald)' : 'var(--border)' }} />
+                }
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+          <span className="muted-2" style={{ fontSize: 10 }}>1</span>
+          <span className="muted-2" style={{ fontSize: 10 }}>10</span>
+          <span className="muted-2" style={{ fontSize: 10 }}>20</span>
+          <span className="muted-2" style={{ fontSize: 10 }}>{daysInMonth}</span>
         </div>
       </div>
 

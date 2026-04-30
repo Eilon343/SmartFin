@@ -1,7 +1,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY frontend/package*.json ./
-RUN npm install
+RUN npm install --legacy-peer-deps
 COPY frontend/ .
 ARG VITE_GOOGLE_CLIENT_ID
 # In production nginx proxies /api/ to the backend, so use a relative base URL

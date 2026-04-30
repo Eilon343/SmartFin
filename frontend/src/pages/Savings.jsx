@@ -10,6 +10,16 @@ import { pct } from '../components/ui/ProgressBar';
 const GOAL_COLORS = ['#6366f1','#10b981','#f472b6','#f59e0b','#fb7185','#22d3ee','#a78bfa','#34d399'];
 const GOAL_ICONS = ['plane','shield-check','laptop','gem','home','car','graduation-cap','heart','baby','gift','camera','bike'];
 
+function calcDue(g) {
+  const remaining = g.target_amount - g.saved_amount;
+  if (remaining <= 0) return 'Complete';
+  if (!g.monthly_allocation || g.monthly_allocation <= 0) return 'Ongoing';
+  const months = Math.ceil(remaining / g.monthly_allocation);
+  const d = new Date();
+  d.setMonth(d.getMonth() + months);
+  return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+}
+
 function fmt(n) {
   return '₪' + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
 }
@@ -165,85 +175,94 @@ export default function Savings() {
       />
 
       {totalTarget > 0 && (
-        <div className="card card-pad-lg" style={{ marginBottom: 20, display: 'grid', gridTemplateColumns: '160px 1fr', gap: 24, alignItems: 'center' }}>
-          <Ring value={totalSaved} max={totalTarget} color="var(--emerald)" size={140} stroke={12}
+        <div className="card card-pad-lg" style={{ marginBottom: 16, display: 'flex', gap: 20, alignItems: 'center' }}>
+          <Ring value={totalSaved} max={totalTarget} color="var(--emerald)" size={120} stroke={11}
                 label={`${Math.round(pct(totalSaved, totalTarget))}%`} />
-          <div className="stack" style={{ gap: 10 }}>
+          <div className="stack" style={{ gap: 6 }}>
             <span className="meta-label">Total progress</span>
-            <div className="big-num" style={{ fontSize: 40 }}>
-              <span className="ccy" style={{ fontSize: 22 }}>₪</span>{totalSaved.toLocaleString()}
+            <div className="big-num" style={{ fontSize: 38, lineHeight: 1 }}>
+              <span className="ccy" style={{ fontSize: 20 }}>₪</span>{totalSaved.toLocaleString()}
             </div>
-            <span className="muted">of {fmt(totalTarget)} across {goals.length} goal{goals.length !== 1 ? 's' : ''}</span>
+            <span className="muted" style={{ fontSize: 12 }}>of {fmt(totalTarget)}</span>
+            {goals.reduce((s, g) => s + (g.monthly_allocation || 0), 0) > 0 && (
+              <span className="chip" style={{ marginTop: 2, background: 'rgba(16,185,129,.15)', color: '#10b981', fontSize: 11, width: 'fit-content' }}>
+                <Icon name="trending-up" size={11} /> +{fmt(goals.reduce((s, g) => s + (g.monthly_allocation || 0), 0))} this month
+              </span>
+            )}
           </div>
         </div>
       )}
 
-      <div className="card card-pad-lg">
-        <div className="between" style={{ marginBottom: 16 }}>
-          <h3 className="h2">Savings Goals</h3>
-          <span className="chip idg"><Icon name="piggy-bank" size={11} /> {goals.length} active</span>
+      {loading ? (
+        <div className="muted" style={{ fontSize: 13 }}>Loading…</div>
+      ) : goals.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '32px 0' }}>
+          <Icon name="piggy-bank" size={32} color="var(--text-3)" />
+          <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>No savings goals yet. Create your first one!</div>
+          <button className="btn primary" style={{ marginTop: 16 }} onClick={() => { setEditGoal(null); setNewOpen(true); }}>
+            <Icon name="plus" size={13} /> New goal
+          </button>
         </div>
-
-        {loading ? (
-          <div className="muted" style={{ fontSize: 13 }}>Loading…</div>
-        ) : goals.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '32px 0' }}>
-            <Icon name="piggy-bank" size={32} color="var(--text-3)" />
-            <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>No savings goals yet. Create your first one!</div>
-            <button className="btn primary" style={{ marginTop: 16 }} onClick={() => { setEditGoal(null); setNewOpen(true); }}>
-              <Icon name="plus" size={13} /> New goal
-            </button>
-          </div>
-        ) : (
-          <div>
-            {goals.map((g, i) => {
-              const color = GOAL_COLORS[i % GOAL_COLORS.length];
-              const icon = GOAL_ICONS[i % GOAL_ICONS.length];
-              const p = pct(g.saved_amount, g.target_amount);
-              return (
-                <div key={g.goal_id} className="goal">
-                  <Ring value={g.saved_amount} max={g.target_amount} color={color} size={84} stroke={8} />
-                  <div className="stack" style={{ gap: 8, minWidth: 0 }}>
-                    <div className="between" style={{ gap: 8 }}>
-                      <div className="row" style={{ gap: 8, minWidth: 0 }}>
+      ) : (
+        <div className="stack" style={{ gap: 10 }}>
+          {goals.map((g, i) => {
+            const color = GOAL_COLORS[i % GOAL_COLORS.length];
+            const icon = GOAL_ICONS[i % GOAL_ICONS.length];
+            const p = pct(g.saved_amount, g.target_amount);
+            return (
+              <div key={g.goal_id} className="card card-pad-lg">
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                  <Ring value={g.saved_amount} max={g.target_amount} color={color} size={76} stroke={7}
+                        label={`${Math.round(p)}%`} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="between" style={{ marginBottom: 6 }}>
+                      <div className="row" style={{ gap: 7, minWidth: 0 }}>
                         <Icon name={icon} size={14} color={color} />
-                        <span style={{ fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <span style={{ fontWeight: 700, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {g.name}
                         </span>
                       </div>
-                      <div className="row" style={{ gap: 4 }}>
-                        <button className="btn ghost" style={{ height: 28, padding: '0 10px', fontSize: 12 }}
-                                onClick={() => { setContributeGoal(g); setContributeOpen(true); }}>
-                          <Icon name="plus" size={12} /> Add
+                      <button
+                        style={{ width: 32, height: 32, borderRadius: 10, background: color + '28', color, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                        onClick={() => { setContributeGoal(g); setContributeOpen(true); }}
+                      >
+                        <Icon name="plus" size={16} />
+                      </button>
+                    </div>
+                    <div className="row" style={{ gap: 4, marginBottom: 6 }}>
+                      <span className="mono" style={{ fontWeight: 600, fontSize: 13 }}>{fmt(g.saved_amount)}</span>
+                      <span className="muted" style={{ fontSize: 12 }}>/ {fmt(g.target_amount)}</span>
+                    </div>
+                    <div className="pb-track" style={{ height: 4, marginBottom: 5 }}>
+                      <div className="pb-fill" style={{ width: Math.min(100, p) + '%', background: color }} />
+                    </div>
+                    <div className="between">
+                      <span className="muted-2" style={{ fontSize: 11 }}>due {calcDue(g)}</span>
+                      <div className="row" style={{ gap: 2 }}>
+                        <button className="btn ghost icon" style={{ width: 24, height: 24, color: 'var(--text-2)' }}
+                                onClick={() => { setEditGoal(g); setNewOpen(true); }}>
+                          <Icon name="edit-2" size={11} />
                         </button>
-                        <button className="btn ghost icon" style={{ width: 28, height: 28, color: 'var(--text-2)' }}
-                                onClick={() => { setEditGoal(g); setNewOpen(true); }} title="Edit goal">
-                          <Icon name="edit-2" size={12} />
-                        </button>
-                        <button className="btn ghost icon" style={{ width: 28, height: 28, color: 'var(--rose)' }}
-                                onClick={() => handleDelete(g.goal_id, g.name)} title="Delete goal">
-                          <Icon name="trash-2" size={12} />
+                        <button className="btn ghost icon" style={{ width: 24, height: 24, color: 'var(--rose)' }}
+                                onClick={() => handleDelete(g.goal_id, g.name)}>
+                          <Icon name="trash-2" size={11} />
                         </button>
                       </div>
                     </div>
-                    <div className="between">
-                      <span className="mono tnum" style={{ fontWeight: 600, fontSize: 13 }}>
-                        {fmt(g.saved_amount)} <span className="muted" style={{ fontWeight: 400 }}>/ {fmt(g.target_amount)}</span>
-                      </span>
-                      {g.monthly_allocation > 0 && (
-                        <span className="muted-2" style={{ fontSize: 11 }}>{fmt(g.monthly_allocation)}/mo allocated</span>
-                      )}
-                    </div>
-                    <div className="pb-track" style={{ height: 4 }}>
-                      <div className="pb-fill" style={{ width: Math.min(100, p) + '%', background: color }} />
-                    </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              </div>
+            );
+          })}
+          <button
+            className="btn ghost"
+            style={{ width: '100%', height: 52, borderRadius: 14, border: '1.5px dashed var(--border)', color: 'var(--text-3)', fontSize: 13, gap: 8 }}
+            onClick={() => { setEditGoal(null); setNewOpen(true); }}
+          >
+            <Icon name="plus" size={15} /> New savings goal
+          </button>
+        </div>
+      )}
 
       <ContributeModal
         open={contributeOpen}
