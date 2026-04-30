@@ -3,8 +3,17 @@ import api from '../api/client';
 
 const AuthContext = createContext(null);
 
+function decodeJwt(token) {
+  try {
+    return JSON.parse(atob(token.split('.')[1]));
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem('sf_token'));
+  const user = token ? decodeJwt(token) : null;
 
   async function googleLogin(idToken) {
     const { data } = await api.post('/auth/google', { id_token: idToken });
@@ -18,7 +27,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ token, googleLogin, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ token, user, googleLogin, logout, isAuthenticated: !!token }}>
       {children}
     </AuthContext.Provider>
   );

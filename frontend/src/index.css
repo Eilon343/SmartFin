@@ -70,6 +70,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+/* iOS safe area: fills behind notch (top) and home indicator (bottom) */
+body { padding-top: env(safe-area-inset-top); }
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   background: var(--bg-1);
@@ -210,7 +212,7 @@ body {
 }
 .drawer {
   position: fixed; z-index: 70; right: 0; top: 0; height: 100vh;
-  width: min(440px, 92vw);
+  width: min(300px, 80vw);
   background: var(--card); border-left: 1px solid var(--line);
   box-shadow: var(--drawer-shadow);
   animation: slide .25s cubic-bezier(.2,.8,.2,1);
@@ -272,27 +274,57 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 
 /* mobile */
 .mobile-nav { display: none; }
+.mobile-only { display: none !important; }
 .topbar-mobile { display: none; }
+
+/* bottom sheet */
+.bottom-sheet {
+  position: fixed; z-index: 70; left: 0; right: 0; bottom: 0;
+  background: var(--card); border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 20px 20px 0 0;
+  box-shadow: var(--pop-shadow), var(--shadow-card);
+  animation: slideUp .28s cubic-bezier(.2,.8,.2,1);
+  max-height: 92vh; overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 
 @media (max-width: 880px) {
   .sidebar { display: none; }
-  .container { padding: 16px 14px 96px; }
+  .container { padding: 16px 14px 110px; }
+  .mobile-only { display: flex !important; }
+
   .topbar-mobile {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 16px; border-bottom: 1px solid var(--line);
-    background: var(--bg-2); position: sticky; top: 0; z-index: 30;
-    backdrop-filter: blur(8px);
+    padding: 16px 16px 12px;
+    background: var(--bg-2);
+    position: sticky; top: 0; z-index: 30;
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
   }
+
   .mobile-nav {
     display: flex; justify-content: space-around; align-items: center;
-    position: fixed; bottom: 12px; left: 12px; right: 12px;
-    background: var(--card); backdrop-filter: blur(14px);
-    border: 1px solid var(--line-2); border-radius: 16px;
-    padding: 8px; z-index: 50;
+    position: fixed; bottom: 10px; left: 10px; right: 10px;
+    /* push above iOS home indicator */
+    bottom: max(10px, calc(env(safe-area-inset-bottom) + 4px));
+    background: var(--card); backdrop-filter: blur(16px);
+    border: 1px solid var(--line-2); border-radius: 20px;
+    padding: 6px; z-index: 50;
     box-shadow: var(--pop-shadow);
   }
-  .mobile-nav .nav-item { flex-direction: column; gap: 4px; padding: 8px 10px; font-size: 10px; flex: 1; justify-content: center; }
-  .mobile-nav .nav-item .nav-dot { display: none; }
+  .mobile-nav-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 4px; flex: 1; padding: 8px 6px; border-radius: 14px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--text-3); border: none; background: transparent; cursor: pointer;
+    transition: color .15s, background .15s;
+  }
+  .mobile-nav-item.active {
+    color: var(--emerald); background: var(--emerald-soft);
+  }
+
   .big-num { font-size: 40px; }
   .big-num .ccy { font-size: 22px; }
   .tx-row { grid-template-columns: 1fr auto; padding: 14px 14px; }
@@ -300,7 +332,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
   .tx-row .tx-meta-mobile { display: flex; }
   .tx-row .desktop-only { display: none; }
   .grid-2 { grid-template-columns: 1fr !important; }
-  .fab { bottom: 86px !important; }
+  .fab { bottom: 84px !important; right: 16px !important; }
 }
 @media (min-width: 881px) {
   .tx-row .tx-meta-mobile { display: none; }
@@ -337,7 +369,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 @media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 700px)  { .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+@media (max-width: 700px)  { .grid-3 { grid-template-columns: 1fr; } .grid-4 { grid-template-columns: repeat(2, 1fr); } }
 
 /* labels and headings */
 .meta-label { font-size: 11px; color: var(--text-3); letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
