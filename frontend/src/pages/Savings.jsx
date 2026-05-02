@@ -184,11 +184,15 @@ export default function Savings() {
               <span className="ccy" style={{ fontSize: 20 }}>₪</span>{totalSaved.toLocaleString()}
             </div>
             <span className="muted" style={{ fontSize: 12 }}>of {fmt(totalTarget)}</span>
-            {goals.reduce((s, g) => s + (g.monthly_allocation || 0), 0) > 0 && (
-              <span className="chip" style={{ marginTop: 2, background: 'rgba(16,185,129,.15)', color: '#10b981', fontSize: 11, width: 'fit-content' }}>
-                <Icon name="trending-up" size={11} /> +{fmt(goals.reduce((s, g) => s + (g.monthly_allocation || 0), 0))} this month
-              </span>
-            )}
+            {(() => {
+              const totalAlloc = goals.reduce((s, g) => s + (g.monthly_allocation || 0), 0);
+              if (totalAlloc <= 0) return null;
+              return (
+                <span className="chip" style={{ marginTop: 2, background: 'rgba(16,185,129,.15)', color: '#10b981', fontSize: 11, width: 'fit-content' }}>
+                  <Icon name="trending-up" size={11} /> +{fmt(totalAlloc)} this month
+                </span>
+              );
+            })()}
           </div>
         </div>
       )}
