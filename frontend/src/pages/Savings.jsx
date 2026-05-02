@@ -188,7 +188,7 @@ export default function Savings() {
               const totalAlloc = goals.reduce((s, g) => s + (g.monthly_allocation || 0), 0);
               if (totalAlloc <= 0) return null;
               return (
-                <span className="chip" style={{ marginTop: 2, background: 'rgba(16,185,129,.15)', color: '#10b981', fontSize: 11, width: 'fit-content' }}>
+                <span className="chip up" style={{ marginTop: 2 }}>
                   <Icon name="trending-up" size={11} /> +{fmt(totalAlloc)} this month
                 </span>
               );
