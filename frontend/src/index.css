@@ -72,7 +72,7 @@
 html, body { margin: 0; padding: 0; }
 /* iOS safe area handled per-component (topbar, drawer) not on body */
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Arial Hebrew', 'David', sans-serif;
   background: var(--bg-1);
   color: var(--text-0);
   -webkit-font-smoothing: antialiased;
