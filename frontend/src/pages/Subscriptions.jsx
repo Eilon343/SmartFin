@@ -183,7 +183,7 @@ export default function Subscriptions() {
             const isPast = day <= today;
             const hasSub = amt > 0;
             const barH = hasSub ? Math.max(14, Math.round((amt / maxAmt) * 44)) : 0;
-            const color = isPast ? 'var(--emerald)' : '#6366f1';
+            const color = isPast ? 'var(--emerald)' : 'var(--indigo)';
             return (
               <div key={day} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
                 {hasSub
