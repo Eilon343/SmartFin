@@ -13,21 +13,32 @@ function decodeJwt(token) {
 
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem('sf_token'));
+  const [googleProfile, setGoogleProfile] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('sf_gprofile') || 'null'); } catch { return null; }
+  });
   const user = token ? decodeJwt(token) : null;
 
   async function googleLogin(idToken) {
     const { data } = await api.post('/auth/google', { id_token: idToken });
+    const gUser = decodeJwt(idToken);
+    if (gUser) {
+      const profile = { name: gUser.given_name || gUser.name, picture: gUser.picture };
+      localStorage.setItem('sf_gprofile', JSON.stringify(profile));
+      setGoogleProfile(profile);
+    }
     localStorage.setItem('sf_token', data.token);
     setToken(data.token);
   }
 
   function logout() {
     localStorage.removeItem('sf_token');
+    localStorage.removeItem('sf_gprofile');
     setToken(null);
+    setGoogleProfile(null);
   }
 
   return (
-    <AuthContext.Provider value={{ token, user, googleLogin, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ token, user, googleProfile, googleLogin, logout, isAuthenticated: !!token }}>
       {children}
     </AuthContext.Provider>
   );

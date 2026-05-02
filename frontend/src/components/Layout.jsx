@@ -50,6 +50,21 @@ function ThemeToggle({ compact }) {
   );
 }
 
+function MobileThemeBtn() {
+  const { theme, setTheme } = useTheme();
+  const isDark = theme === 'dark';
+  return (
+    <button
+      className="btn ghost icon"
+      style={{ width: 40, height: 40, background: 'none', border: 'none', boxShadow: 'none' }}
+      onClick={() => setTheme(isDark ? 'light' : 'dark')}
+      title={isDark ? 'Light mode' : 'Dark mode'}
+    >
+      <Icon name={isDark ? 'moon' : 'sun'} size={18} color={isDark ? 'var(--indigo)' : 'var(--amber)'} />
+    </button>
+  );
+}
+
 function useActiveNav() {
   const location = useLocation();
   const path = location.pathname;
@@ -67,15 +82,14 @@ function greeting() {
 
 
 export default function Layout() {
-  const { logout, user } = useAuth();
+  const { logout, user, googleProfile } = useAuth();
   const navigate = useNavigate();
   const activeNav = useActiveNav();
   const { t } = useI18n();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
 
-  const username = user?.username || 'You';
-  const displayName = username.replace(/^@/, '');
+  const displayName = googleProfile?.name || user?.username?.replace(/^@/, '') || 'You';
 
   function handleNavClick(path) {
     navigate(path);
@@ -139,19 +153,27 @@ export default function Layout() {
       <main className="main">
         {/* Mobile topbar */}
         <div className="topbar-mobile">
-          <div className="stack" style={{ gap: 1 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-3)' }}>
-              {greeting()}
-            </span>
-            <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em' }}>
-              {displayName}
-            </span>
+          <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+            {googleProfile?.picture && (
+              <img
+                src={googleProfile.picture}
+                alt=""
+                style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }}
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <div className="stack" style={{ gap: 1 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-3)' }}>
+                {greeting()}
+              </span>
+              <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em' }}>
+                {displayName}
+              </span>
+            </div>
           </div>
-          <div className="row" style={{ gap: 6 }}>
-            <button className="btn ghost icon" style={{ width: 40, height: 40 }}>
-              <Icon name="bell" size={18} color="var(--text-2)" />
-            </button>
-            <button className="btn ghost icon" style={{ width: 40, height: 40 }} onClick={() => setDrawerOpen(true)}>
+          <div className="row" style={{ gap: 4 }}>
+            <MobileThemeBtn />
+            <button className="btn ghost icon" style={{ width: 40, height: 40, background: 'none', border: 'none', boxShadow: 'none' }} onClick={() => setDrawerOpen(true)}>
               <Icon name="menu" size={20} color="var(--text-1)" />
             </button>
           </div>
