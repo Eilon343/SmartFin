@@ -19,13 +19,13 @@ export function AuthProvider({ children }) {
   const user = token ? decodeJwt(token) : null;
 
   async function googleLogin(idToken) {
+    const { data } = await api.post('/auth/google', { id_token: idToken });
     const gUser = decodeJwt(idToken);
     if (gUser) {
-      const profile = { name: gUser.name || gUser.given_name, picture: gUser.picture };
+      const profile = { name: gUser.given_name || gUser.name, picture: gUser.picture };
       localStorage.setItem('sf_gprofile', JSON.stringify(profile));
       setGoogleProfile(profile);
     }
-    const { data } = await api.post('/auth/google', { id_token: idToken });
     localStorage.setItem('sf_token', data.token);
     setToken(data.token);
   }
