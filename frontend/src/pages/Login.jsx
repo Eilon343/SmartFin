@@ -49,11 +49,10 @@ export default function Login() {
               <GoogleIcon />
               <span style={styles.googleBtnText}>Continue with Google</span>
             </div>
-            <div style={styles.googleOverlay} className="google-overlay">
+            <div className="google-overlay">
               <GoogleLogin
                 onSuccess={handleGoogleSuccess}
                 onError={() => setError('Google sign-in failed. Try again.')}
-                width="264"
                 type="standard"
                 shape="rectangular"
                 theme="filled_black"
@@ -150,7 +149,6 @@ const styles = {
     border: '1px solid #2e3243',
     borderRadius: 12,
     cursor: 'pointer',
-    transition: 'background 0.15s, border-color 0.15s',
     boxSizing: 'border-box',
   },
   googleBtnText: {
@@ -159,16 +157,6 @@ const styles = {
     fontWeight: 500,
     color: '#cfd2dc',
     letterSpacing: '-0.01em',
-  },
-  googleOverlay: {
-    position: 'absolute',
-    inset: 0,
-    opacity: 0,
-    overflow: 'hidden',
-    borderRadius: 12,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   errorBox: {
     background: '#450a0a',

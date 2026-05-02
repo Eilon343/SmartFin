@@ -156,7 +156,7 @@ export default function Subscriptions() {
         <div className="card card-pad-lg">
           <span className="meta-label">Monthly burn</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
-            <span className="ccy" style={{ fontSize: 20 }}>₪</span>{monthlyTotal.toFixed(0)}
+            <span className="ccy" style={{ fontSize: 20 }}>₪</span>{monthlyTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
           </div>
           <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} active</span>
         </div>
@@ -183,7 +183,7 @@ export default function Subscriptions() {
             const isPast = day <= today;
             const hasSub = amt > 0;
             const barH = hasSub ? Math.max(14, Math.round((amt / maxAmt) * 44)) : 0;
-            const color = isPast ? '#10b981' : '#6366f1';
+            const color = isPast ? 'var(--emerald)' : 'var(--indigo)';
             return (
               <div key={day} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
                 {hasSub

@@ -2,7 +2,7 @@ import json
 import os
 import asyncio
 from google import genai
-from google.genai import types
+from google.genai import types, errors as genai_errors
 from google.api_core import exceptions as google_exceptions
 
 _client = None
@@ -57,7 +57,11 @@ async def parse_input(user_input: str, categories: list[str]) -> dict:
         try:
             response = await loop.run_in_executor(None, _call)
             return json.loads(response.text)
-        except (google_exceptions.ResourceExhausted, google_exceptions.ServiceUnavailable):
+        except (
+            google_exceptions.ResourceExhausted,
+            google_exceptions.ServiceUnavailable,
+            genai_errors.ServerError,
+        ):
             if attempt < 3:
                 await asyncio.sleep(2 * attempt)
                 continue
