@@ -6,6 +6,7 @@ import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
 import { pct } from '../components/ui/ProgressBar';
+import Sk from '../components/ui/Skeleton';
 
 const GOAL_COLORS = ['#6366f1','#10b981','#f472b6','#f59e0b','#fb7185','#22d3ee','#a78bfa','#34d399'];
 const GOAL_ICONS = ['plane','shield-check','laptop','gem','home','car','graduation-cap','heart','baby','gift','camera','bike'];
@@ -162,6 +163,34 @@ export default function Savings() {
     load();
   };
 
+  if (loading) return (
+    <div className="view-enter">
+      <Sk width="28%" height={28} style={{ marginBottom: 8 }} />
+      <Sk width="50%" height={13} style={{ marginBottom: 24 }} />
+      {/* Summary card: ring + text */}
+      <div className="card card-pad-lg" style={{ marginBottom: 16, display: 'flex', gap: 20, alignItems: 'center' }}>
+        <Sk width={120} height={120} radius={60} />
+        <div className="stack" style={{ gap: 8, flex: 1 }}>
+          <Sk width="40%" height={11} />
+          <Sk width="55%" height={38} />
+          <Sk width="35%" height={12} />
+        </div>
+      </div>
+      <div className="stack" style={{ gap: 10 }}>
+        {[1,2,3].map(i => (
+          <div key={i} className="card card-pad-lg" style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+            <Sk width={76} height={76} radius={38} />
+            <div style={{ flex: 1 }}>
+              <Sk width="50%" height={15} style={{ marginBottom: 10 }} />
+              <Sk height={6} radius={3} style={{ marginBottom: 8 }} />
+              <Sk width="40%" height={12} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <div className="view-enter">
       <PageHeader
@@ -197,13 +226,7 @@ export default function Savings() {
         </div>
       )}
 
-      {loading ? (
-        <div className="stack" style={{ gap: 10 }}>
-          {[1, 2, 3].map(i => (
-            <div key={i} className="card card-pad-lg" style={{ height: 110, background: 'var(--hover-bg)', animation: 'pulse 1.5s ease infinite' }} />
-          ))}
-        </div>
-      ) : goals.length === 0 ? (
+      {goals.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '32px 0' }}>
           <Icon name="piggy-bank" size={32} color="var(--text-3)" />
           <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>No savings goals yet. Create your first one!</div>
