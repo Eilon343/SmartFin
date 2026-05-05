@@ -3,6 +3,7 @@ import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
+import Sk from '../components/ui/Skeleton';
 
 function fmt(n, dp = 0) {
   return '₪' + n.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -148,6 +149,35 @@ export default function Subscriptions() {
   }
   const maxAmt = Math.max(...Object.values(dayMap), 1);
 
+  if (loading) return (
+    <div className="view-enter">
+      <Sk width="38%" height={28} style={{ marginBottom: 8 }} />
+      <Sk width="52%" height={13} style={{ marginBottom: 24 }} />
+      <div className="grid grid-2" style={{ marginBottom: 20 }}>
+        {[1,2].map(i => (
+          <div key={i} className="card card-pad-lg">
+            <Sk width="45%" height={11} style={{ marginBottom: 12 }} />
+            <Sk width="55%" height={36} style={{ marginBottom: 8 }} />
+            <Sk width="35%" height={11} />
+          </div>
+        ))}
+      </div>
+      <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
+        <Sk width="40%" height={14} style={{ marginBottom: 16 }} />
+        <Sk height={52} radius={8} />
+      </div>
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="between" style={{ padding: '18px 22px', borderBottom: '1px solid var(--line)' }}>
+          <Sk width={180} height={18} />
+          <Sk width={64} height={32} radius={8} />
+        </div>
+        <div style={{ padding: '12px 22px 20px' }}>
+          {[1,2,3,4].map(i => <Sk key={i} height={56} radius={8} style={{ marginBottom: 8 }} />)}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="view-enter">
       <PageHeader title="Subscriptions" sub="Recurring charges across all sources" />
@@ -209,13 +239,7 @@ export default function Subscriptions() {
             <Icon name="plus" size={14} /> Add
           </button>
         </div>
-        {loading ? (
-          <div style={{ padding: '24px 22px' }}>
-            {[1, 2, 3, 4].map(i => (
-              <div key={i} style={{ height: 56, background: 'var(--hover-bg)', borderRadius: 8, marginBottom: 8, animation: 'pulse 1.5s ease infinite' }} />
-            ))}
-          </div>
-        ) : sorted.length === 0 ? (
+        {sorted.length === 0 ? (
           <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>
             No subscriptions yet. Click Add to create one.
           </div>

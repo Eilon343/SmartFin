@@ -8,6 +8,7 @@ import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
 import Drawer from '../components/ui/Drawer';
 import Toast from '../components/ui/Toast';
+import Sk from '../components/ui/Skeleton';
 import { useI18n } from '../context/I18nContext';
 
 const CAT_COLORS = [
@@ -807,15 +808,51 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="view-enter" style={{ animation: 'pulse 1.5s ease infinite', padding: '20px 0' }}>
-        <div style={{ height: 32, width: '40%', background: 'var(--hover-bg)', borderRadius: 8, marginBottom: 12 }} />
-        <div style={{ height: 16, width: '25%', background: 'var(--hover-bg)', borderRadius: 8, marginBottom: 24 }} />
-        <div className="card" style={{ height: 220, background: 'var(--hover-bg)', borderRadius: 16, marginBottom: 20 }} />
-        <div className="grid grid-4" style={{ marginBottom: 20 }}>
-          {[1, 2, 3, 4].map(i => <div key={i} className="card" style={{ height: 140, background: 'var(--hover-bg)', borderRadius: 16 }} />)}
+      <div className="view-enter" style={{ padding: '20px 0' }}>
+        {/* PageHeader */}
+        <Sk width="38%" height={28} style={{ marginBottom: 8 }} />
+        <Sk width="55%" height={13} style={{ marginBottom: 24 }} />
+        {/* Month selector */}
+        <div className="row" style={{ gap: 6, marginBottom: 20 }}>
+          {[1,2,3,4].map(i => <Sk key={i} width={72} height={32} radius={99} />)}
         </div>
-        <div className="grid grid-3">
-          {[1, 2, 3].map(i => <div key={i} className="card" style={{ height: 260, background: 'var(--hover-bg)', borderRadius: 16 }} />)}
+        {/* NetPosition card */}
+        <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
+          <Sk width="30%" height={13} style={{ marginBottom: 14 }} />
+          <Sk width="50%" height={40} style={{ marginBottom: 10 }} />
+          <Sk width="40%" height={12} style={{ marginBottom: 16 }} />
+          <Sk height={8} radius={4} />
+        </div>
+        {/* Budget category grid */}
+        <Sk width="35%" height={16} style={{ marginBottom: 12 }} />
+        <div className="grid grid-4" style={{ marginBottom: 20 }}>
+          {[1,2,3,4].map(i => (
+            <div key={i} className="card card-pad">
+              <Sk width={32} height={32} radius={9} style={{ marginBottom: 12 }} />
+              <Sk width="60%" height={13} style={{ marginBottom: 8 }} />
+              <Sk height={6} radius={3} style={{ marginBottom: 6 }} />
+              <Sk width="40%" height={11} />
+            </div>
+          ))}
+        </div>
+        {/* grid-3: income / subs / savings */}
+        <div className="grid grid-3" style={{ marginBottom: 20 }}>
+          {[1,2,3].map(i => (
+            <div key={i} className="card card-pad-lg">
+              <Sk width="50%" height={13} style={{ marginBottom: 14 }} />
+              <Sk width="65%" height={32} style={{ marginBottom: 10 }} />
+              {[1,2,3].map(j => <Sk key={j} height={36} radius={8} style={{ marginBottom: 6 }} />)}
+            </div>
+          ))}
+        </div>
+        {/* Transactions table */}
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--line)' }}>
+            <Sk width={200} height={18} />
+          </div>
+          <div style={{ padding: '12px 22px 20px' }}>
+            {[1,2,3,4,5].map(i => <Sk key={i} height={40} radius={8} style={{ marginBottom: 8 }} />)}
+          </div>
         </div>
       </div>
     );

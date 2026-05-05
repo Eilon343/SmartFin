@@ -6,6 +6,7 @@ import PageHeader from '../components/ui/PageHeader';
 import Drawer from '../components/ui/Drawer';
 import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
+import Sk from '../components/ui/Skeleton';
 
 const CAT_COLORS = [
   '#f59e0b','#60a5fa','#a78bfa','#f472b6','#34d399','#fb7185',
@@ -283,6 +284,37 @@ export default function Categories() {
   const totalBudget = budgets.reduce((s, b) => s + (b.effective_limit ?? 0), 0);
   const totalSpent = budgets.reduce((s, b) => s + b.spent, 0);
 
+  if (loading) return (
+    <div className="view-enter">
+      <Sk width="33%" height={28} style={{ marginBottom: 8 }} />
+      <Sk width="60%" height={13} style={{ marginBottom: 24 }} />
+      {/* Summary progress card */}
+      <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
+        <div className="between" style={{ marginBottom: 12 }}>
+          <Sk width="45%" height={11} />
+          <Sk width={80} height={14} />
+        </div>
+        <Sk height={8} radius={4} />
+      </div>
+      {/* Category grid */}
+      <div className="grid grid-3">
+        {[1,2,3,4,5,6].map(i => (
+          <div key={i} className="card card-pad">
+            <div className="row" style={{ gap: 10, marginBottom: 12 }}>
+              <Sk width={32} height={32} radius={9} />
+              <Sk width="55%" height={14} />
+            </div>
+            <Sk height={6} radius={3} style={{ marginBottom: 8 }} />
+            <div className="between">
+              <Sk width="35%" height={11} />
+              <Sk width="25%" height={11} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <div className="view-enter">
       <PageHeader
@@ -316,13 +348,7 @@ export default function Categories() {
         </div>
       )}
 
-      {loading ? (
-        <div className="grid grid-3">
-          {[1,2,3,4,5,6].map(i => (
-            <div key={i} className="card card-pad" style={{ height: 140, background: 'var(--hover-bg)', animation: 'pulse 1.5s ease infinite' }} />
-          ))}
-        </div>
-      ) : (
+      {(
         <div className="grid grid-3">
           {budgets.map((b, i) => (
             <CategoryCard

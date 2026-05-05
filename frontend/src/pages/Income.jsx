@@ -3,6 +3,7 @@ import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import Modal from '../components/ui/Modal';
 import PageHeader from '../components/ui/PageHeader';
+import Sk from '../components/ui/Skeleton';
 
 const EMPTY_FORM = {
   source: '',
@@ -125,6 +126,32 @@ export default function Income() {
     }
   }
 
+  if (loading) return (
+    <div className="view-enter">
+      <Sk width="25%" height={28} style={{ marginBottom: 8 }} />
+      <Sk width="55%" height={13} style={{ marginBottom: 24 }} />
+      <Sk width={160} height={36} radius={10} style={{ marginBottom: 20 }} />
+      <div className="grid grid-3" style={{ marginBottom: 20 }}>
+        {[1,2,3].map(i => (
+          <div key={i} className="card card-pad-lg">
+            <Sk width="55%" height={11} style={{ marginBottom: 12 }} />
+            <Sk width="60%" height={36} style={{ marginBottom: 8 }} />
+            <Sk width="35%" height={11} />
+          </div>
+        ))}
+      </div>
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="between" style={{ padding: '18px 22px', borderBottom: '1px solid var(--line)' }}>
+          <Sk width={200} height={18} />
+          <Sk width={64} height={32} radius={8} />
+        </div>
+        <div style={{ padding: '12px 22px 20px' }}>
+          {[1,2,3,4].map(i => <Sk key={i} height={44} radius={8} style={{ marginBottom: 8 }} />)}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="view-enter">
       <PageHeader title="Income" sub="Fixed salary and variable income by month" />
@@ -180,13 +207,7 @@ export default function Income() {
           </button>
         </div>
 
-        {loading ? (
-          <div style={{ padding: '24px 22px' }}>
-            {[1, 2, 3, 4].map(i => (
-              <div key={i} style={{ height: 44, background: 'var(--hover-bg)', borderRadius: 8, marginBottom: 8, animation: 'pulse 1.5s ease infinite' }} />
-            ))}
-          </div>
-        ) : entries.length === 0 ? (
+        {entries.length === 0 ? (
           <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>
             No income entries for {month}. Click Add to record one.
           </div>
