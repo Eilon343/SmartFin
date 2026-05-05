@@ -64,11 +64,10 @@ function setStoredProfile(profile) {
 }
 
 export function AuthProvider({ children }) {
-  const initialToken = getStoredToken();
-  const [token, setToken] = useState(initialToken);
+  const [token, setToken] = useState(getStoredToken);
   const [googleProfile, setGoogleProfile] = useState(getStoredProfile);
   // true when no stored token — wait for One Tap auto-sign-in attempt before showing login
-  const [autoChecking, setAutoChecking] = useState(!initialToken);
+  const [autoChecking, setAutoChecking] = useState(() => !getStoredToken());
   const user = token ? decodeJwt(token) : null;
 
   const googleLogin = useCallback(async (idToken) => {
