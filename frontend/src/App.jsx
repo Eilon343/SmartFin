@@ -58,6 +58,15 @@ function PrivateRoute({ children }) {
   return isAuthenticated ? children : <Navigate to="/login" replace />;
 }
 
+// Redirects already-authenticated users away from /login back to the app.
+// Needed on iOS PWA: the OS reopens at the last URL, which may be /login,
+// even when a valid token is in localStorage.
+function PublicRoute({ children }) {
+  const { isAuthenticated, autoChecking } = useAuth();
+  if (autoChecking) return null;
+  return isAuthenticated ? <Navigate to="/" replace /> : children;
+}
+
 export default function App() {
   return (
     <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ''}>
@@ -67,7 +76,7 @@ export default function App() {
           <I18nProvider>
             <BrowserRouter>
               <Routes>
-              <Route path="/login" element={<Login />} />
+              <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
               <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
                 <Route index element={<Dashboard />} />
                 <Route path="categories" element={<Categories />} />
