@@ -9,7 +9,7 @@ function issueToken(user) {
     return jwt.sign(
         { user_id: user.user_id, username: user.username },
         process.env.JWT_SECRET,
-        { expiresIn: '365d' }
+        { expiresIn: '12h' }
     );
 }
 

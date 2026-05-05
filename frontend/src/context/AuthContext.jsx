@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, useCallback } from 'react';
 import api from '../api/client';
 
 const AuthContext = createContext(null);
@@ -61,11 +61,14 @@ function setStoredProfile(profile) {
 }
 
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(getStoredToken);
+  const initialToken = getStoredToken();
+  const [token, setToken] = useState(initialToken);
   const [googleProfile, setGoogleProfile] = useState(getStoredProfile);
+  // true when no stored token — wait for One Tap auto-sign-in attempt before showing login
+  const [autoChecking, setAutoChecking] = useState(!initialToken);
   const user = token ? decodeJwt(token) : null;
 
-  async function googleLogin(idToken) {
+  const googleLogin = useCallback(async (idToken) => {
     const { data } = await api.post('/auth/google', { id_token: idToken });
     const gUser = decodeJwt(idToken);
     if (gUser) {
@@ -75,17 +78,21 @@ export function AuthProvider({ children }) {
     }
     setStoredToken(data.token);
     setToken(data.token);
-  }
+    setAutoChecking(false);
+  }, []);
+
+  const finishAutoCheck = useCallback(() => setAutoChecking(false), []);
 
   function logout() {
     setStoredToken(null);
     setStoredProfile(null);
     setToken(null);
     setGoogleProfile(null);
+    setAutoChecking(false);
   }
 
   return (
-    <AuthContext.Provider value={{ token, user, googleProfile, googleLogin, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ token, user, googleProfile, googleLogin, logout, isAuthenticated: !!token, autoChecking, finishAutoCheck }}>
       {children}
     </AuthContext.Provider>
   );

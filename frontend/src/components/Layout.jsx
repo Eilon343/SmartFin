@@ -89,7 +89,7 @@ export default function Layout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
 
-  const displayName = googleProfile?.name || 'You';
+  const displayName = googleProfile?.name || user?.username?.replace(/^@/, '') || 'You';
 
   function handleNavClick(path) {
     navigate(path);
