@@ -50,8 +50,8 @@ function PrivateRoute({ children }) {
   const { isAuthenticated, autoChecking } = useAuth();
   if (autoChecking) {
     return (
-      <div style={{ minHeight: '100vh', background: '#07090d', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 32, height: 32, border: '3px solid #10b981', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+      <div style={{ minHeight: '100vh', background: 'var(--bg-0)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 32, height: 32, border: '3px solid var(--emerald)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
       </div>
     );
   }
