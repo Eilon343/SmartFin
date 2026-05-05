@@ -348,8 +348,7 @@ export default function Categories() {
         </div>
       )}
 
-      {(
-        <div className="grid grid-3">
+      <div className="grid grid-3">
           {budgets.map((b, i) => (
             <CategoryCard
               key={b.budget_id ?? b.category}
@@ -364,7 +363,6 @@ export default function Categories() {
             <span className="muted" style={{ marginTop: 8, fontSize: 13 }}>New category</span>
           </div>
         </div>
-      )}
 
       {openBudget && (
         <CategoryDrawer
