@@ -75,11 +75,19 @@ function setStoredProfile(profile) {
   }
 }
 
+// On iOS standalone PWA, One Tap can't silently re-auth (no shared Google cookies).
+// Skip the 3-second wait and go straight to the login button.
+export const isIOSStandalone =
+  typeof window !== 'undefined' &&
+  /iPad|iPhone|iPod/.test(navigator.userAgent) &&
+  window.navigator.standalone === true;
+
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(getStoredToken);
   const [googleProfile, setGoogleProfile] = useState(getStoredProfile);
   // true when no stored token — wait for One Tap auto-sign-in attempt before showing login
-  const [autoChecking, setAutoChecking] = useState(() => !getStoredToken());
+  // Skip on iOS standalone: One Tap doesn't work there, so the wait is just wasted time
+  const [autoChecking, setAutoChecking] = useState(() => !isIOSStandalone && !getStoredToken());
   const user = token ? decodeJwt(token) : null;
 
   const googleLogin = useCallback(async (idToken) => {
