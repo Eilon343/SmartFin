@@ -1,0 +1,112 @@
+Here's a thorough code review covering the full codebase:
+
+🔍 Code Review — SmartFin
+🔴 Bugs
+1. deleteIncome always returns 200 — missing 404 check (incomeController.js:39)
+js
+await db.query('DELETE FROM income WHERE income_id = ? AND user_id = ?', [id, user_id]);
+res.json({ success: true }); // returns 200 even if nothing was deleted
+Compare with deleteExpense (same file), which correctly checks affectedRows === 0. Fix:
+
+js
+const [result] = await db.query(...);
+if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
+res.json({ success: true });
+2. Delete failures are silently swallowed in both Income.jsx and Expenses.jsx
+js
+} catch {
+  // ignore
+}
+If a delete API call fails (e.g. 500 error, network issue), the user sees nothing — the entry stays in the list but no error is shown. Should display an error toast or inline message.
+
+3. reload() in Income.jsx and Expenses.jsx has no error handling
+js
+Promise.all([api.get(...), api.get(...)])
+  .then(...)
+  .finally(() => setLoading(false)); // no .catch()
+If the API fails, the loading spinner disappears and the user sees an empty list with no indication that something went wrong.
+
+🟡 Logic Issues
+4. addExpense allows amount <= 0 (expenseController.js:346)
+js
+if (amount == null) return res.status(400).json({ error: 'amount required' });
+Passes validation with amount = 0 or amount = -50. Compare with Expenses.jsx which does validate > 0 on the client. Add a server-side check: if (!amount || Number(amount) <= 0).
+
+5. addIncome validation uses falsy check on amount (incomeController.js:21)
+js
+if (!source || !amount || !month)
+amount = 0 passes as falsy — should be amount == null or Number(amount) <= 0.
+
+6. month query parameter never validated as YYYY-MM
+Multiple controllers accept month from query params without format validation:
+
+js
+const month = req.query.month || new Date().toISOString().slice(0, 7);
+A malformed value like abc or 2024-13 would produce a garbage CONCAT(?, '-01') with no error to the caller. Add a simple /^\d{4}-\d{2}$/.test(month) guard.
+
+7. P&L subscription sum is not month-scoped (expenseController.js:269-272)
+js
+"SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE"
+This totals all active subscriptions regardless of when they were created. A subscription added after the queried month would still inflate historical P&L. Should ideally scope to created_at <= end of month.
+
+🟠 Code Quality
+8. sumSpent function is dead code (expenseController.js:152-161)
+js
+async function sumSpent(user_id, category_id, month) { ... }
+Defined but never called anywhere since getBudgets was refactored to use the bulk spentMap. Should be removed.
+
+9. Leftover debug comment in index.js (line 32)
+js
+//testss
+Should be removed.
+
+10. source: 'bot' hardcoded for manually-added expenses (expenseController.js:350)
+js
+[user_id, Number(amount), currency, description?.trim() || null, category_id || null, 'bot']
+Expenses manually added from the UI will show "Bot" badge in the list. The DB schema only has ENUM('bot', 'apple_pay'), so consider adding a 'manual' value to distinguish them.
+
+🔵 Frontend Issues
+11. SourceBadge uses hardcoded hex colors instead of CSS variables (Expenses.jsx:22-38)
+js
+background: '#1a1a1a', color: '#f5f5f7', // dark-mode only
+background: '#1e2230', color: '#5b6171',
+These will look broken in light mode. The rest of the UI correctly uses var(--...) tokens.
+
+12. Error <div> in modals uses hardcoded dark colors (Income.jsx:286-291, Expenses.jsx:288-293)
+js
+background: '#450a0a', border: '1px solid #7f1d1d', color: '#fca5a5',
+This is dark-mode specific. Will look out of place in light theme.
+
+13. Categories are re-fetched on every month change in Expenses.jsx (line 62-64)
+js
+useEffect(() => {
+  reload();
+  api.get('/categories').then(r => setCats(r.data)); // fetches every time month changes
+}, [reload]);
+reload is recreated when month changes, so categories are fetched unnecessarily on every month switch. Move categories fetch into a separate useEffect(() => { ... }, []) with an empty dependency array.
+
+✅ What's Good
+All DB queries use parameterized inputs — no SQL injection risk
+User isolation is consistent: every query filters by req.user.user_id
+The Gemini retry logic is clean and correctly marks 429/5xx as retryable
+Route auth middleware is consistently applied
+The getBudgets bulk-fetch approach (single query + in-memory spentMap) is much better than N+1 queries
+deleteExpense correctly checks affectedRows === 0
+monthsBetween carry-over calculation is correct
+Frontend form state management with EMPTY_FORM pattern is clean
+Summary Table
+Severity	Issue	Location
+🔴 Bug	deleteIncome missing 404	incomeController.js:39
+🔴 Bug	Delete errors silently ignored	Income.jsx:101, Expenses.jsx:109
+🔴 Bug	No error handling on reload	Income.jsx:43, Expenses.jsx:55
+🟡 Logic	addExpense allows 0/negative amount	expenseController.js:346
+🟡 Logic	addIncome falsy check on amount	incomeController.js:21
+🟡 Logic	month param not validated	multiple controllers
+🟡 Logic	Subscription total not month-scoped in P&L	expenseController.js:269
+🟠 Quality	sumSpent is dead code	expenseController.js:152
+🟠 Quality	Leftover //testss comment	index.js:32
+🟠 Quality	Manual expenses labeled 'bot'	expenseController.js:350
+🔵 UI	SourceBadge hardcoded dark colors	Expenses.jsx:22
+🔵 UI	Error div hardcoded dark colors	Income.jsx:286, Expenses.jsx:288
+🔵 UI	Categories re-fetched on month change	Expenses.jsx:62
+

@@ -15,6 +15,7 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem('sf_token');
+      document.cookie = 'sf_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax';
       window.location.href = '/login';
     }
     return Promise.reject(err);

@@ -154,7 +154,7 @@ async function seed() {
         const token = jwt.sign(
             { user_id: USER_ID, username: 'MockUser' },
             process.env.JWT_SECRET,
-            { expiresIn: '12h' }
+            { expiresIn: '365d' }
         );
 
         console.log('\n=============================================');
