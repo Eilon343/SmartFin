@@ -198,7 +198,12 @@ export default function Savings() {
       )}
 
       {loading ? (
-        <div className="muted" style={{ fontSize: 13 }}>Loading…</div>
+        <div className="stack" style={{ gap: 10 }}>
+          {[1, 2, 3].map(i => (
+            <div key={i} className="card card-pad-lg" style={{ height: 110, background: 'var(--hover-bg)', animation: 'pulse 1.5s ease infinite' }} />
+          ))}
+          <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }`}</style>
+        </div>
       ) : goals.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '32px 0' }}>
           <Icon name="piggy-bank" size={32} color="var(--text-3)" />
