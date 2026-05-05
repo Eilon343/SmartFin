@@ -181,7 +181,11 @@ export default function Income() {
         </div>
 
         {loading ? (
-          <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
+          <div style={{ padding: '24px 22px' }}>
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} style={{ height: 44, background: 'var(--hover-bg)', borderRadius: 8, marginBottom: 8, animation: 'pulse 1.5s ease infinite' }} />
+            ))}
+          </div>
         ) : entries.length === 0 ? (
           <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>
             No income entries for {month}. Click Add to record one.

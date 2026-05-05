@@ -1,0 +1,9 @@
+services:
+  db:
+    volumes:
+      - smartfin_mysql_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  smartfin_mysql_data:
+    external: false

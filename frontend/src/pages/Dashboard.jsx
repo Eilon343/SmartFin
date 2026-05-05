@@ -807,12 +807,16 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
-        <div className="stack" style={{ alignItems: 'center', gap: 12 }}>
-          <Icon name="loader-circle" size={32} color="var(--emerald)" style={{ animation: 'spin 1s linear infinite' }} />
-          <span className="muted">Loading your finances…</span>
+      <div className="view-enter" style={{ animation: 'pulse 1.5s ease infinite', padding: '20px 0' }}>
+        <div style={{ height: 32, width: '40%', background: 'var(--hover-bg)', borderRadius: 8, marginBottom: 12 }} />
+        <div style={{ height: 16, width: '25%', background: 'var(--hover-bg)', borderRadius: 8, marginBottom: 24 }} />
+        <div className="card" style={{ height: 220, background: 'var(--hover-bg)', borderRadius: 16, marginBottom: 20 }} />
+        <div className="grid grid-4" style={{ marginBottom: 20 }}>
+          {[1, 2, 3, 4].map(i => <div key={i} className="card" style={{ height: 140, background: 'var(--hover-bg)', borderRadius: 16 }} />)}
         </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div className="grid grid-3">
+          {[1, 2, 3].map(i => <div key={i} className="card" style={{ height: 260, background: 'var(--hover-bg)', borderRadius: 16 }} />)}
+        </div>
       </div>
     );
   }
