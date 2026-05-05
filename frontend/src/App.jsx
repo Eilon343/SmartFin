@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider, useGoogleOneTapLogin } from '@react-oauth/google';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { AuthProvider, useAuth, isIOSStandalone } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -20,7 +20,7 @@ function AutoGoogleAuth() {
   const loginStarted = useRef(false);
 
   useGoogleOneTapLogin({
-    disabled: isAuthenticated || !autoChecking,
+    disabled: isAuthenticated || !autoChecking || isIOSStandalone,
     auto_select: true,
     cancel_on_tap_outside: false,
     onSuccess: async (credentialResponse) => {
