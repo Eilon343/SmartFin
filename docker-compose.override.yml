@@ -6,4 +6,4 @@ services:
 
 volumes:
   smartfin_mysql_data:
-    external: true
+    external: false

@@ -214,7 +214,6 @@ export default function Subscriptions() {
             {[1, 2, 3, 4].map(i => (
               <div key={i} style={{ height: 56, background: 'var(--hover-bg)', borderRadius: 8, marginBottom: 8, animation: 'pulse 1.5s ease infinite' }} />
             ))}
-            <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }`}</style>
           </div>
         ) : sorted.length === 0 ? (
           <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>

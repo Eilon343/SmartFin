@@ -817,7 +817,6 @@ export default function Dashboard() {
         <div className="grid grid-3">
           {[1, 2, 3].map(i => <div key={i} className="card" style={{ height: 260, background: 'var(--hover-bg)', borderRadius: 16 }} />)}
         </div>
-        <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }`}</style>
       </div>
     );
   }

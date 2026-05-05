@@ -5,7 +5,10 @@ const AuthContext = createContext(null);
 
 function decodeJwt(token) {
   try {
-    return JSON.parse(atob(token.split('.')[1]));
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(decodeURIComponent(atob(base64).split('').map(c =>
+      '%' + c.charCodeAt(0).toString(16).padStart(2, '0')
+    ).join('')));
   } catch {
     return null;
   }
@@ -83,13 +86,13 @@ export function AuthProvider({ children }) {
 
   const finishAutoCheck = useCallback(() => setAutoChecking(false), []);
 
-  function logout() {
+  const logout = useCallback(() => {
     setStoredToken(null);
     setStoredProfile(null);
     setToken(null);
     setGoogleProfile(null);
     setAutoChecking(false);
-  }
+  }, []);
 
   return (
     <AuthContext.Provider value={{ token, user, googleProfile, googleLogin, logout, isAuthenticated: !!token, autoChecking, finishAutoCheck }}>

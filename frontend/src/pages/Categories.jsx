@@ -321,7 +321,6 @@ export default function Categories() {
           {[1,2,3,4,5,6].map(i => (
             <div key={i} className="card card-pad" style={{ height: 140, background: 'var(--hover-bg)', animation: 'pulse 1.5s ease infinite' }} />
           ))}
-          <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }`}</style>
         </div>
       ) : (
         <div className="grid grid-3">

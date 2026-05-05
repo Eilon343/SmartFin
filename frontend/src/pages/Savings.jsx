@@ -202,7 +202,6 @@ export default function Savings() {
           {[1, 2, 3].map(i => (
             <div key={i} className="card card-pad-lg" style={{ height: 110, background: 'var(--hover-bg)', animation: 'pulse 1.5s ease infinite' }} />
           ))}
-          <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }`}</style>
         </div>
       ) : goals.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '32px 0' }}>

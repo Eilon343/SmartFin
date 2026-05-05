@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider, useGoogleOneTapLogin } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -17,12 +17,14 @@ import { I18nProvider } from './context/I18nContext';
 // Attempts silent Google re-auth when no token in storage (e.g. iOS ITP cleared it)
 function AutoGoogleAuth() {
   const { isAuthenticated, autoChecking, googleLogin, finishAutoCheck } = useAuth();
+  const loginStarted = useRef(false);
 
   useGoogleOneTapLogin({
     disabled: isAuthenticated || !autoChecking,
     auto_select: true,
     cancel_on_tap_outside: false,
     onSuccess: async (credentialResponse) => {
+      loginStarted.current = true;
       try {
         await googleLogin(credentialResponse.credential);
       } catch {
@@ -35,7 +37,9 @@ function AutoGoogleAuth() {
   useEffect(() => {
     if (!autoChecking) return;
     // Fallback: if One Tap doesn't respond in 3s, proceed to login page
-    const t = setTimeout(finishAutoCheck, 3000);
+    const t = setTimeout(() => {
+      if (!loginStarted.current) finishAutoCheck();
+    }, 3000);
     return () => clearTimeout(t);
   }, [autoChecking, finishAutoCheck]);
 
@@ -48,7 +52,6 @@ function PrivateRoute({ children }) {
     return (
       <div style={{ minHeight: '100vh', background: '#07090d', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ width: 32, height: 32, border: '3px solid #10b981', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
