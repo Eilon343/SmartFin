@@ -10,13 +10,19 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Avoid re-entrant reloads if multiple parallel requests 401 at once
+let reloading = false;
+
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    if (err.response?.status === 401 && !reloading) {
+      reloading = true;
       localStorage.removeItem('sf_token');
       document.cookie = 'sf_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax';
-      window.location.href = '/login';
+      // Reload current page so AutoGoogleAuth + One Tap silently re-auths.
+      // If Google session is gone, falls through to /login after the 3s timeout.
+      window.location.reload();
     }
     return Promise.reject(err);
   }

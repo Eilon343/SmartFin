@@ -14,6 +14,12 @@ function decodeJwt(token) {
   }
 }
 
+function isExpired(token) {
+  const payload = decodeJwt(token);
+  if (!payload?.exp) return false;
+  return payload.exp * 1000 < Date.now();
+}
+
 function getStoredToken() {
   let token = localStorage.getItem('sf_token');
   if (!token) {
@@ -22,6 +28,12 @@ function getStoredToken() {
       token = match[1];
       localStorage.setItem('sf_token', token);
     }
+  }
+  // Treat expired tokens as missing so autoChecking kicks in and One Tap silently re-auths
+  if (token && isExpired(token)) {
+    localStorage.removeItem('sf_token');
+    document.cookie = 'sf_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax';
+    return null;
   }
   return token;
 }
