@@ -396,7 +396,7 @@ function ordinal(d) {
 }
 
 function SubscriptionsMini({ subs, onTogglePause }) {
-  const { t } = useI18n();
+  const { lang, t } = useI18n();
   const activeSubs = subs.filter(s => !s.paused);
   const total = activeSubs.reduce((s, x) => s + x.amount, 0);
   return (
