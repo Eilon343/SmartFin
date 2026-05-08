@@ -419,7 +419,7 @@ function SubscriptionsMini({ subs, onTogglePause }) {
                 <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
                 {!!s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
               </div>
-              <span className="muted-2" style={{ fontSize: 11 }}>{t('dash_next_on')} {ordinal(s.day_of_month)}</span>
+              <span className="muted-2" style={{ fontSize: 11 }}>{t('dash_next_on')} {lang === 'he' ? s.day_of_month : ordinal(s.day_of_month)}</span>
             </div>
             <span className="mono tnum" style={{ fontSize: 13, opacity: s.paused ? 0.6 : 1 }}>{fmt(s.amount, s.amount % 1 ? 2 : 0)}</span>
             <button
