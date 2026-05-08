@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useI18n } from '../context/I18nContext';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import Modal from '../components/ui/Modal';
@@ -12,11 +13,30 @@ const EMPTY_FORM = {
   category_id: '',
 };
 
+function getMonthOptions(lang) {
+  const result = [];
+  const now = new Date();
+  let y = now.getFullYear() + 1;
+  let m = 11;
+  const locale = lang === 'he' ? 'he-IL' : 'en-US';
+
+  for (let i = 0; i < 60; i++) {
+    const d = new Date(y, m, 1);
+    const iso = `${y}-${String(m + 1).padStart(2, '0')}`;
+    const label = d.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
+    result.push({ iso, label });
+    m--;
+    if (m < 0) { m = 11; y--; }
+  }
+  return result;
+}
+
 function fmt(n) {
-  return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `\u200E₪${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u200E`;
 }
 
 function SourceBadge({ source }) {
+  const { t } = useI18n();
   if (source === 'apple_pay') {
     return (
       <span style={{
@@ -34,12 +54,13 @@ function SourceBadge({ source }) {
       background: 'var(--hover-bg-2)', color: 'var(--text-2)',
       padding: '3px 10px', borderRadius: 20, fontSize: 11,
     }}>
-      {source === 'web' ? 'Web' : source === 'manual' ? 'Manual' : 'Bot'}
+      {source === 'web' ? t('web') : source === 'manual' ? t('manual') : t('bot')}
     </span>
   );
 }
 
 export default function Expenses() {
+  const { lang, t } = useI18n();
   const now = new Date().toISOString().slice(0, 7);
   const [month, setMonth] = useState(now);
   const [expenses, setExpenses] = useState([]);
@@ -59,7 +80,7 @@ export default function Expenses() {
         setExpenses(r.data);
         setError('');
       })
-      .catch(() => setError('Failed to load expenses.'))
+      .catch(() => setError(t('exp_err_load')))
       .finally(() => setLoading(false));
   }, [month]);
 
@@ -105,7 +126,7 @@ export default function Expenses() {
       category_id: form.category_id ? parseInt(form.category_id, 10) : null,
     };
     if (isNaN(payload.amount) || payload.amount <= 0) {
-      setError('A valid amount is required.');
+      setError(t('exp_err_req'));
       return;
     }
     setSaving(true);
@@ -118,7 +139,7 @@ export default function Expenses() {
       closeModal();
       reload();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save.');
+      setError(err.response?.data?.error || t('exp_err_load'));
     } finally {
       setSaving(false);
     }
@@ -132,7 +153,7 @@ export default function Expenses() {
       setDeleteTarget(null);
       reload();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to delete.');
+      setError(err.response?.data?.error || t('exp_err_load'));
     } finally {
       setDeleting(false);
     }
@@ -168,68 +189,74 @@ export default function Expenses() {
 
   return (
     <div className="view-enter">
-      <PageHeader title="Expenses" sub="All transactions for the selected month" />
+      <PageHeader title={t('exp_title')} sub={t('exp_sub')} />
       {error && !modalOpen && !deleteTarget && (
         <div style={{ color: 'var(--rose)', padding: '10px 16px', background: 'var(--hover-bg-2)', borderRadius: 8, marginBottom: 20, fontSize: 13 }}>{error}</div>
       )}
 
       <div className="row" style={{ marginBottom: 20, gap: 10 }}>
-        <input
-          type="month"
-          className="input"
-          style={{ width: 160 }}
-          value={month}
-          onChange={e => setMonth(e.target.value)}
-        />
+        <div style={{ position: 'relative' }}>
+          <select
+            className="input"
+            style={{ width: 160, appearance: 'none', paddingRight: lang === 'he' ? 12 : 36, paddingLeft: lang === 'he' ? 36 : 12, cursor: 'pointer' }}
+            value={month}
+            onChange={e => setMonth(e.target.value)}
+          >
+            {getMonthOptions(lang).map(o => (
+              <option key={o.iso} value={o.iso}>{o.label}</option>
+            ))}
+          </select>
+          <Icon name="calendar" size={14} color="var(--text-3)" style={{ position: 'absolute', [lang === 'he' ? 'left' : 'right']: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+        </div>
       </div>
 
       {/* Summary strip */}
       <div className="grid grid-3" style={{ marginBottom: 20 }}>
         <div className="card card-pad-lg">
-          <span className="meta-label">Total spent</span>
-          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
+          <span className="meta-label">{t('exp_total')}</span>
+          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>{fmt(total)}
           </div>
-          <span className="muted" style={{ fontSize: 12 }}>{expenses.length} transactions</span>
+          <span className="muted" style={{ fontSize: 12 }}>{expenses.length} {t('exp_tx_count')}</span>
         </div>
         <div className="card card-pad-lg">
-          <span className="meta-label">Avg per transaction</span>
-          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
+          <span className="meta-label">{t('exp_avg')}</span>
+          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>
             {expenses.length > 0 ? fmt(total / expenses.length) : '0.00'}
           </div>
-          <span className="muted" style={{ fontSize: 12 }}>this month</span>
+          <span className="muted" style={{ fontSize: 12 }}>{t('inc_this_month')}</span>
         </div>
         <div className="card card-pad-lg">
           <span className="meta-label">Apple Pay</span>
-          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
+          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
             {expenses.filter(e => e.source === 'apple_pay').length}
           </div>
-          <span className="muted" style={{ fontSize: 12 }}>tap-to-pay transactions</span>
+          <span className="muted" style={{ fontSize: 12 }}>{t('exp_tap')}</span>
         </div>
       </div>
 
       {/* Table */}
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="between" style={{ padding: '18px 22px' }}>
-          <h3 className="h2">Transactions — {month}</h3>
+          <h3 className="h2">{t('exp_tx_month')} — {month}</h3>
           <button className="btn primary" onClick={openAdd}>
-            <Icon name="plus" size={14} /> Add
+            <Icon name="plus" size={14} /> {t('common_add')}
           </button>
         </div>
 
         {expenses.length === 0 ? (
           <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>
-            No expenses for {month}.
+            {t('exp_no_tx')} {month}.
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr>
-                  {['Date', 'Description', 'Category', 'Amount', 'Source', ''].map((h, i) => (
+                  {[t('dash_date'), t('dash_desc'), t('dash_cat'), t('dash_amt'), t('dash_src'), ''].map((h, i) => (
                     <th key={i} style={{
-                      textAlign: i >= 3 ? 'right' : 'left',
+                      textAlign: i >= 3 && i !== 5 ? (lang === 'he' ? 'left' : 'right') : (lang === 'he' ? 'right' : 'left'),
                       padding: '10px 16px',
                       color: 'var(--text-3)',
                       fontSize: 11,
@@ -252,25 +279,25 @@ export default function Expenses() {
                       {e.created_at?.slice(0, 10)}
                     </td>
                     <td style={{ padding: '11px 16px', color: 'var(--text-1)', maxWidth: 220 }}>
-                      {e.description || <span style={{ color: 'var(--text-3)' }}>—</span>}
+                      {t(e.description || e.category_name) || (e.description || e.category_name) || <span style={{ color: 'var(--text-3)' }}>—</span>}
                     </td>
                     <td style={{ padding: '11px 16px' }}>
                       <span className="chip idg" style={{ fontSize: 11 }}>
-                        {e.category_name || 'Uncategorized'}
+                        {t(e.category_name) || e.category_name || t('exp_uncat')}
                       </span>
                     </td>
-                    <td style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ padding: '11px 16px', textAlign: lang === 'he' ? 'left' : 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }} dir="ltr">
                       {e.currency !== 'ILS' ? `${e.currency} ` : '₪'}{fmt(e.amount)}
                     </td>
-                    <td style={{ padding: '11px 16px', textAlign: 'right' }}>
+                    <td style={{ padding: '11px 16px', textAlign: lang === 'he' ? 'left' : 'right' }}>
                       <SourceBadge source={e.source} />
                     </td>
-                    <td style={{ padding: '11px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '11px 16px', textAlign: lang === 'he' ? 'left' : 'right', whiteSpace: 'nowrap' }}>
                       <button
                         className="btn ghost icon"
                         style={{ width: 30, height: 30, color: 'var(--text-2)', marginRight: 6 }}
                         onClick={() => openEdit(e)}
-                        title="Edit"
+                        title={t('common_edit')}
                       >
                         <Icon name="edit-2" size={13} />
                       </button>
@@ -278,7 +305,7 @@ export default function Expenses() {
                         className="btn ghost icon"
                         style={{ width: 30, height: 30, color: 'var(--rose)' }}
                         onClick={() => setDeleteTarget(e)}
-                        title="Delete"
+                        title={t('common_delete')}
                       >
                         <Icon name="trash-2" size={13} />
                       </button>
@@ -295,14 +322,14 @@ export default function Expenses() {
       <Modal open={modalOpen} onClose={closeModal}>
         <div style={{ padding: '24px 28px', minWidth: 360 }}>
           <h3 className="h2" style={{ marginBottom: 20 }}>
-            {form.expense_id ? 'Edit expense' : 'New expense'}
+            {form.expense_id ? t('exp_edit') : t('exp_new')}
           </h3>
           <form onSubmit={handleSave} className="stack" style={{ gap: 14 }}>
             <div className="field">
-              <label>Description (optional)</label>
+              <label>{t('inc_desc')}</label>
               <input
                 className="input"
-                placeholder="e.g. Coffee, Groceries"
+                placeholder={t('exp_eg_desc')}
                 value={form.description}
                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                 autoFocus
@@ -310,7 +337,7 @@ export default function Expenses() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px', gap: 12 }}>
               <div className="field">
-                <label>Amount</label>
+                <label>{t('dash_amt')}</label>
                 <input
                   className="input mono"
                   type="number"
@@ -322,7 +349,7 @@ export default function Expenses() {
                 />
               </div>
               <div className="field">
-                <label>Currency</label>
+                <label>{t('inc_currency')}</label>
                 <select
                   className="select"
                   value={form.currency}
@@ -335,15 +362,15 @@ export default function Expenses() {
               </div>
             </div>
             <div className="field">
-              <label>Category</label>
+              <label>{t('dash_cat')}</label>
               <select
                 className="select"
                 value={form.category_id}
                 onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
               >
-                <option value="">Uncategorized</option>
+                <option value="">{t('exp_uncat')}</option>
                 {cats.map(c => (
-                  <option key={c.category_id} value={c.category_id}>{c.name}</option>
+                  <option key={c.category_id} value={c.category_id}>{t(c.name) || c.name}</option>
                 ))}
               </select>
             </div>
@@ -353,9 +380,9 @@ export default function Expenses() {
               }}>{error}</div>
             )}
             <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button type="button" className="btn" onClick={closeModal}>Cancel</button>
+              <button type="button" className="btn" onClick={closeModal}>{t('common_cancel')}</button>
               <button type="submit" className="btn primary" disabled={saving}>
-                {saving ? 'Saving…' : form.expense_id ? 'Save changes' : 'Add expense'}
+                {saving ? t('common_saving') : form.expense_id ? t('inc_save_changes') : t('exp_add_btn')}
               </button>
             </div>
           </form>
@@ -365,19 +392,19 @@ export default function Expenses() {
       {/* Delete confirmation */}
       <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)}>
         <div style={{ padding: '24px 28px', minWidth: 320 }}>
-          <h3 className="h2" style={{ marginBottom: 10 }}>Delete expense</h3>
+          <h3 className="h2" style={{ marginBottom: 10 }}>{t('exp_del_title')}</h3>
           <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 20 }}>
-            Remove{' '}
-            <strong style={{ color: 'var(--text-0)' }}>
-              {deleteTarget?.description || `₪${fmt(deleteTarget?.amount ?? 0)}`}
+            {t('inc_del_confirm')}{' '}
+            <strong style={{ color: 'var(--text-0)' }} dir="ltr">
+              {t(deleteTarget?.description) || deleteTarget?.description || `₪${fmt(deleteTarget?.amount ?? 0)}`}
             </strong>{' '}
-            from {deleteTarget?.created_at?.slice(0, 10)}?
+            {t('dash_from')} {deleteTarget?.created_at?.slice(0, 10)}?
           </p>
           {error && <div style={{ color: 'var(--rose)', fontSize: 13, marginBottom: 15 }}>{error}</div>}
           <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
-            <button className="btn" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="btn" onClick={() => setDeleteTarget(null)}>{t('common_cancel')}</button>
             <button className="btn danger" onClick={handleDelete} disabled={deleting}>
-              {deleting ? 'Deleting…' : 'Delete'}
+              {deleting ? t('common_saving') : t('common_delete')}
             </button>
           </div>
         </div>
