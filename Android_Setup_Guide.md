@@ -14,6 +14,8 @@ Unlike iOS where you must add apps to the home screen manually through Safari, A
 4. If the banner does not appear, tap the **Three-Dot Menu (⋮)** in the top right corner of Chrome.
 5. Select **Install app** (or "Add to Home screen").
 6. Confirm the installation. SmartFin will now appear in your Android **App Drawer** and Home screen. It will launch in full-screen mode without the browser UI.
+7. Open the newly installed SmartFin app. **Important:** You must sign in using your linked **Google Account** to access the dashboard. You can do it by sending a command to the telegram bot like this:
+/link_goole <your_mail>@gmail.com (The mail you used to register in the app).
 
 ---
 
@@ -32,7 +34,7 @@ The Telegram bot is your primary method for logging manual expenses when you are
 
 SmartFin's bot acts as your personal AI financial assistant. 
 
-* **Natural Language Input:** You don't need to use rigid formats. You can send it voice notes or type messages exactly how you speak (e.g., in Hebrew: *"הוצאתי 7 שקל על קולה, 5 שקל על מסטיק, ו-200 שקל על דלק"*).
+* **Natural Language Input:** You don't need to use rigid formats. You can type messages exactly how you speak (e.g., in Hebrew: *"הוצאתי 7 שקל על קולה, 5 שקל על מסטיק, ו-200 שקל על דלק"*).
 * **Multi-Expense Processing:** The AI engine is smart enough to extract multiple transactions from a single message.
 * **Automatic Categorization:** The AI automatically identifies the vendor, extracts the exact amount, and classifies the expense into one of your SmartFin categories (e.g., Food, Transport, Utilities).
 * **Instant Sync:** Once the bot processes the message, it will reply with a summary confirmation, and the expenses will instantly appear in your SmartFin dashboard.
