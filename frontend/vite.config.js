@@ -44,7 +44,8 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Cache static assets (JS, CSS, fonts, images)
+        clientsClaim: true,
+        skipWaiting: true,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
