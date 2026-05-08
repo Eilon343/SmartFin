@@ -478,7 +478,7 @@ function TransactionsTable({ expenses }) {
             ) : e.source === 'web' ? (
               <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)' }}>{t('web')}</span>
             ) : (
-              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)' }}>{t(e.source?.toLowerCase() || 'manual') || 'Manual'}</span>
+              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)' }}>{t(e.source?.toLowerCase() || 'manual')}</span>
             )}
           </div>
         </div>
