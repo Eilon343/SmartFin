@@ -90,7 +90,15 @@ When you tap to pay, your banking or wallet app sends a notification. We use **M
 2. Tap the checkmark or back arrow to save.
 3. When prompted, grant MacroDroid **Notification Access** in Android Settings.
 
-### Step 4.3 – Test It
+### Step 4.3 – Disable Battery Optimization for MacroDroid
+
+Android kills background apps aggressively. Without this step, MacroDroid will stop catching notifications after a short while.
+
+1. Open Android **Settings** → **Apps** → **MacroDroid**.
+2. Tap **Battery** → select **Unrestricted** (or "Don't optimize").
+3. On Samsung devices: also go to **Settings** → **Battery** → **Background usage limits** and make sure MacroDroid is not listed there.
+
+### Step 4.4 – Test It
 
 Make a purchase using NFC. You should see:
 1. A payment notification from Google Wallet / your bank app.
