@@ -7,17 +7,26 @@ const TELEGRAM_USER_ID = process.env.TELEGRAM_CHAT_ID;
 
 function buildPrompt(text) {
     return (
-        `Parse this Apple Pay transaction message and return ONLY valid JSON.\n` +
-        `Message: "${text}"\n\n` +
-        `Return this exact shape:\n` +
-        `{"amount": 55.0, "currency": "ILS", "merchant": "Cafe", "category": "Food", "source": "apple_pay"}\n\n` +
+        `You are an expense parser. The user describes one or more purchases in a single message.\n` +
+        `Your job: return a JSON array with ONE object per purchase. NEVER merge or sum items. NEVER return fewer objects than there are purchases.\n\n` +
+        `Example input: "הוצאתי 7 שקל על קולה, 200 שקל על דלק ו5 על חטיף"\n` +
+        `Example output:\n` +
+        `[\n` +
+        `  {"amount": 7.0, "currency": "ILS", "merchant": "קולה", "category": "Food", "source": "apple_pay"},\n` +
+        `  {"amount": 200.0, "currency": "ILS", "merchant": "דלק", "category": "Transport", "source": "apple_pay"},\n` +
+        `  {"amount": 5.0, "currency": "ILS", "merchant": "חטיף", "category": "Food", "source": "apple_pay"}\n` +
+        `]\n\n` +
+        `Now parse this message: "${text}"\n\n` +
         `Rules:\n` +
-        `- amount: numeric value only\n` +
-        `- currency: default "ILS" unless message says otherwise\n` +
-        `- merchant: the store/place name\n` +
+        `- Return ONLY a valid JSON array, no explanation\n` +
+        `- One object per purchase, max 10\n` +
+        `- DO NOT combine amounts — each purchase is its own object\n` +
+        `- amount: numeric only\n` +
+        `- currency: "ILS" unless stated otherwise\n` +
+        `- merchant: the item/place name from the message (keep original language)\n` +
         `- category: best match from [Food, Transport, Housing, Entertainment, Shopping, Utilities, Health, Other]\n` +
         `- source: always "apple_pay"\n` +
-        `Use null for fields that cannot be determined.`
+        `- Use null for fields that cannot be determined`
     );
 }
 
@@ -47,9 +56,11 @@ async function callGemini(text) {
             if (data.error) throw new Error(`Gemini error: ${data.error.message}`);
             const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (!raw) throw new Error('Empty Gemini response');
-            const jsonMatch = raw.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) throw new Error('No JSON found in Gemini response');
-            return JSON.parse(jsonMatch[0]);
+            const arrayMatch = raw.match(/\[[\s\S]*\]/);
+            const objectMatch = raw.match(/\{[\s\S]*\}/);
+            if (!arrayMatch && !objectMatch) throw new Error('No JSON found in Gemini response');
+            const parsed = JSON.parse(arrayMatch ? arrayMatch[0] : objectMatch[0]);
+            return Array.isArray(parsed) ? parsed : [parsed];
         } catch (err) {
             if (attempt < 3 && (err.unavailable || err.name === 'TypeError' || err.name === 'SyntaxError')) {
                 await new Promise(r => setTimeout(r, 2000 * attempt));
@@ -69,22 +80,42 @@ async function sendTelegramMessage(chatId, text) {
     });
 }
 
+async function sendErrorToTelegram(context, err, extra = {}) {
+    const timestamp = new Date().toISOString();
+    const extraLines = Object.entries(extra)
+        .map(([k, v]) => `• *${k}:* \`${String(v).slice(0, 200)}\``)
+        .join('\n');
+    const msg =
+        `🚨 *SmartFin Error*\n` +
+        `• *Where:* ${context}\n` +
+        `• *Error:* \`${err.message}\`\n` +
+        (extraLines ? `${extraLines}\n` : '') +
+        `• *Time:* ${timestamp}`;
+    try {
+        await sendTelegramMessage(TELEGRAM_USER_ID, msg);
+    } catch (telegramErr) {
+        console.error('Failed to send error to Telegram:', telegramErr.message);
+    }
+    console.error(`[${context}]`, err);
+}
+
+const VALID_CATEGORIES = ['Food', 'Transport', 'Housing', 'Entertainment', 'Shopping', 'Utilities', 'Health', 'Other'];
+
 async function insertExpense(userId, parsed) {
-    let categoryId = null;
-    if (parsed.category) {
-        const [rows] = await db.query(
-            'SELECT category_id FROM categories WHERE (user_id IS NULL OR user_id = ?) AND name = ? LIMIT 1',
-            [userId, parsed.category]
+    const categoryName = VALID_CATEGORIES.includes(parsed.category) ? parsed.category : 'Other';
+    const [rows] = await db.query(
+        'SELECT category_id FROM categories WHERE (user_id IS NULL OR user_id = ?) AND name = ? LIMIT 1',
+        [userId, categoryName]
+    );
+    let categoryId;
+    if (rows.length > 0) {
+        categoryId = rows[0].category_id;
+    } else {
+        const [ins] = await db.query(
+            'INSERT INTO categories (user_id, name, is_base) VALUES (?, ?, FALSE) ON DUPLICATE KEY UPDATE category_id=LAST_INSERT_ID(category_id)',
+            [userId, categoryName]
         );
-        if (rows.length > 0) {
-            categoryId = rows[0].category_id;
-        } else {
-            const [ins] = await db.query(
-                'INSERT INTO categories (user_id, name, is_base) VALUES (?, ?, FALSE) ON DUPLICATE KEY UPDATE category_id=LAST_INSERT_ID(category_id)',
-                [userId, parsed.category]
-            );
-            categoryId = ins.insertId;
-        }
+        categoryId = ins.insertId;
     }
     await db.query(
         'INSERT INTO expenses (user_id, amount, currency, description, category_id, source) VALUES (?, ?, ?, ?, ?, ?)',
@@ -93,16 +124,25 @@ async function insertExpense(userId, parsed) {
 }
 
 async function processAndSave(userId, text) {
-    const parsed = await callGemini(text);
-    if (!parsed.amount) throw new Error('Could not parse amount');
-    await insertExpense(userId, parsed);
-    const amt = Number(parsed.amount).toFixed(2);
-    const merchant = parsed.merchant || 'Unknown merchant';
-    await sendTelegramMessage(
-        userId,
-        `✅ Apple Pay transaction confirmed: Logged *${parsed.currency || 'ILS'} ${amt}* at *${merchant}*`
-    );
-    return parsed;
+    const items = await callGemini(text);
+    const saved = [];
+    for (const parsed of items) {
+        if (!parsed.amount) continue;
+        await insertExpense(userId, parsed);
+        saved.push(parsed);
+    }
+    if (saved.length === 0) throw new Error('Could not parse any expense');
+
+    let message;
+    if (saved.length === 1) {
+        const p = saved[0];
+        message = `✅ Logged *${p.currency || 'ILS'} ${Number(p.amount).toFixed(2)}* at *${p.merchant || 'Unknown merchant'}*`;
+    } else {
+        const lines = saved.map(p => `• *${p.currency || 'ILS'} ${Number(p.amount).toFixed(2)}* – ${p.merchant || 'Unknown'}`).join('\n');
+        message = `✅ Logged ${saved.length} expenses:\n${lines}`;
+    }
+    await sendTelegramMessage(userId, message);
+    return saved;
 }
 
 // Background queue processor — runs every 5 minutes
@@ -119,13 +159,66 @@ async function processQueue() {
             } catch (err) {
                 if (err.unavailable) break; // still down, stop trying
                 await db.query("UPDATE webhook_queue SET status = 'failed' WHERE id = ?", [row.id]);
-                console.error(`Queue item ${row.id} failed:`, err.message);
+                await sendErrorToTelegram('Queue processor', err, { input: row.text, queue_id: row.id });
             }
         }
     } catch (err) {
-        console.error('Queue processor error:', err.message);
+        await sendErrorToTelegram('Queue processor (DB)', err);
     }
 }
+
+const HELP_TEXT =
+    `🤖 *SmartFin Bot — Help*\n\n` +
+    `*Log expenses by typing naturally:*\n` +
+    `• \`7 שקל על קולה\`\n` +
+    `• \`spent 50 on lunch\`\n` +
+    `• \`200 דלק, 15 קפה, 80 סופר\`\n\n` +
+    `*Multiple expenses in one message:*\n` +
+    `Separate with commas or "and/ו". Up to 10 per message.\n\n` +
+    `*Auto-logging:*\n` +
+    `Apple Pay notifications are logged automatically via iOS Shortcut — no action needed.\n\n` +
+    `*Categories detected automatically:*\n` +
+    `Food · Transport · Shopping · Housing · Entertainment · Utilities · Health · Other\n\n` +
+    `*Commands:*\n` +
+    `/help — show this message\n` +
+    `/start — show this message\n\n` +
+    `_All expenses appear in your SmartFin dashboard._`;
+
+exports.handleTelegram = async (req, res) => {
+    res.sendStatus(200); // always ack Telegram immediately
+
+    const update = req.body;
+    const message = update?.message;
+    if (!message) return;
+
+    const chatId = String(message.chat.id);
+    const text = (message.text || '').trim();
+
+    // Only respond to the owner
+    if (chatId !== String(TELEGRAM_USER_ID)) return;
+
+    if (text === '/start' || text === '/help') {
+        await sendTelegramMessage(chatId, HELP_TEXT);
+        return;
+    }
+
+    if (!text) return;
+
+    try {
+        await processAndSave(chatId, text);
+    } catch (err) {
+        if (err.unavailable) {
+            await db.query(
+                "INSERT INTO webhook_queue (user_id, text, status) VALUES (?, ?, 'pending')",
+                [chatId, text]
+            );
+            await sendTelegramMessage(chatId, `⏳ AI is temporarily unavailable. Queued — will log automatically when it recovers.`);
+            return;
+        }
+        await sendErrorToTelegram('Telegram message handler', err, { input: text });
+        await sendTelegramMessage(chatId, `❌ Could not parse expense. Try: _"50 שקל על דלק"_ or _"spent 50 on fuel"_`);
+    }
+};
 
 exports.startQueueProcessor = () => {
     const run = async () => {
@@ -144,11 +237,10 @@ exports.handleApplePay = async (req, res) => {
     if (!text) return res.status(400).json({ error: 'text required' });
 
     try {
-        const parsed = await processAndSave(TELEGRAM_USER_ID, text);
-        res.json({ success: true, parsed });
+        const saved = await processAndSave(TELEGRAM_USER_ID, text);
+        res.json({ success: true, count: saved.length, parsed: saved });
     } catch (err) {
         if (err.unavailable) {
-            // Queue for later
             await db.query(
                 "INSERT INTO webhook_queue (user_id, text, status) VALUES (?, ?, 'pending')",
                 [TELEGRAM_USER_ID, text]
@@ -159,7 +251,7 @@ exports.handleApplePay = async (req, res) => {
             );
             return res.json({ success: false, queued: true });
         }
-        console.error('Apple Pay webhook error:', err);
+        await sendErrorToTelegram('Apple Pay webhook', err, { input: text });
         res.status(500).json({ error: 'Failed to process transaction' });
     }
 };

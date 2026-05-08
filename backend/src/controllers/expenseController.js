@@ -30,7 +30,7 @@ exports.getSummary = async (req, res) => {
 
     try {
         const [rows] = await db.query(
-            `SELECT c.name AS category, SUM(e.amount) AS total
+            `SELECT COALESCE(c.name, 'Uncategorized') AS category, SUM(e.amount) AS total
              FROM expenses e
              LEFT JOIN categories c ON e.category_id = c.category_id
              WHERE e.user_id = ? AND DATE_FORMAT(e.created_at, '%Y-%m') = ?
@@ -143,6 +143,24 @@ exports.getBudgets = async (req, res) => {
                     no_budget: true,
                 });
             }
+        }
+
+        // Include null-category expenses as "Uncategorized" if any exist this month
+        const uncategorizedSpent = getSpent(null, month);
+        if (uncategorizedSpent > 0) {
+            result.push({
+                budget_id: null,
+                category_id: null,
+                category: 'Uncategorized',
+                monthly_limit: null,
+                carry_over: false,
+                carried_in: 0,
+                spent: Math.round(uncategorizedSpent * 100) / 100,
+                effective_limit: null,
+                remaining: null,
+                pct_used: null,
+                no_budget: true,
+            });
         }
 
         res.json({ month, budgets: result });
@@ -320,14 +338,26 @@ exports.getPnL = async (req, res) => {
         const actual_income = fixed_income + variable_actual;
         const current_net_pnl = actual_income - total_expenses - subscription_total - savings_allocation;
 
-        // Project expenses to end of month — only for current month; past months are already complete
+        // Project expenses to end of month — only for current month; past months are already complete.
+        // Early-month guard: a single large purchase on day 1 would otherwise inflate the projection ~30x.
+        // Ramp the extrapolation factor from 0 (anchor at actual) to full (daily-rate × daysInMonth)
+        // over MIN_DAYS_FOR_FULL_PROJECTION, so the forecast stabilises as more data arrives.
+        const MIN_DAYS_FOR_FULL_PROJECTION = 5;
         const currentMonth = new Date().toISOString().slice(0, 7);
         let projected_expenses = total_expenses;
         if (month === currentMonth && total_expenses > 0) {
             const today = new Date();
             const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-            const dayOfMonth = today.getDate();
-            projected_expenses = total_expenses * (daysInMonth / dayOfMonth);
+            const dayOfMonth = Math.max(1, today.getDate());
+            const dailyRate = total_expenses / dayOfMonth;
+            const naiveProjection = dailyRate * daysInMonth;
+            if (dayOfMonth >= MIN_DAYS_FOR_FULL_PROJECTION) {
+                projected_expenses = naiveProjection;
+            } else {
+                // Blend: weight = days_elapsed / MIN_DAYS. At day 1 mostly trust actual, by day 5 trust the projection.
+                const weight = dayOfMonth / MIN_DAYS_FOR_FULL_PROJECTION;
+                projected_expenses = total_expenses + (naiveProjection - total_expenses) * weight;
+            }
         }
 
         const projected_income = fixed_income + Math.max(variable_actual, variable_avg);

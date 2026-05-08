@@ -99,7 +99,7 @@ def register_handlers(dp: Dispatcher, db_manager):
         categories = await db_manager.get_user_categories(message.from_user.id)
 
         try:
-            parsed = await parse_input(message.text, categories)
+            parsed_list = await parse_input(message.text, categories)
         except (google_exceptions.ResourceExhausted, google_exceptions.ServiceUnavailable) as e:
             logging.error(f"AI service unavailable after retries: {e}", exc_info=True)
             await message.reply("⚠️ AI service is temporarily unavailable (Gemini overloaded). Try again in a minute.")
@@ -108,6 +108,45 @@ def register_handlers(dp: Dispatcher, db_manager):
             logging.error(f"AI parse error: {e}", exc_info=True)
             await message.reply("Sorry, I couldn't understand that. Try: '55 NIS for Shawarma'")
             return
+
+        if not parsed_list:
+            await message.reply("Sorry, I couldn't find any financial intents in that.")
+            return
+
+        if len(parsed_list) > 1:
+            expenses = [p for p in parsed_list if p.get("intent", "log_expense") == "log_expense"]
+            if len(expenses) > 1:
+                # Calculate warnings for each
+                for exp in expenses:
+                    warning = await _check_budget_warning(
+                        db_manager, message.from_user.id,
+                        exp.get("category"), float(exp.get("amount") or 0)
+                    )
+                    exp["budget_warning"] = warning
+                
+                await state.set_state(ExpenseFlow.pending_multi_confirmation)
+                await state.update_data(parsed_list=expenses)
+                
+                lines = ["📋 *Multiple Expenses Summary*", "━━━━━━━━━━━━━━"]
+                for i, exp in enumerate(expenses, 1):
+                    item = exp.get("item") or exp.get("description") or "Unknown item"
+                    amount = exp.get("amount", "?")
+                    curr = exp.get("currency", "ILS")
+                    cat = exp.get("category", "Uncategorized")
+                    lines.append(f"{i}. `{amount} {curr}` - {item} ({cat})")
+                    if exp.get("budget_warning"):
+                        lines.append(f"   {exp['budget_warning']}")
+                lines.append("━━━━━━━━━━━━━━\nLog all these expenses?")
+                
+                await message.reply(
+                    "\n".join(lines),
+                    parse_mode="Markdown",
+                    reply_markup=_simple_confirm_keyboard("confirm_multi_expenses", "cancel_multi_expenses"),
+                )
+                return
+            parsed = parsed_list[0]
+        else:
+            parsed = parsed_list[0]
 
         intent = parsed.get("intent", "log_expense")
 
@@ -183,7 +222,6 @@ def register_handlers(dp: Dispatcher, db_manager):
         message.text = text
         await handle_text(message, state)
 
-    # --- ✅ Confirm expense ---
     @dp.callback_query(F.data == "confirm_expense", ExpenseFlow.pending_confirmation)
     async def callback_confirm(callback: types.CallbackQuery, state: FSMContext):
         data = await state.get_data()
@@ -204,6 +242,39 @@ def register_handlers(dp: Dispatcher, db_manager):
             await callback.message.edit_text("✅ Expense saved!", reply_markup=None)
         else:
             await callback.message.edit_text("❌ Failed to save. Try again.", reply_markup=None)
+        await callback.answer()
+
+    # --- ✅ Confirm multi expenses ---
+    @dp.callback_query(F.data == "confirm_multi_expenses", ExpenseFlow.pending_multi_confirmation)
+    async def callback_confirm_multi(callback: types.CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        parsed_list = data.get("parsed_list", [])
+        user_id = callback.from_user.id
+
+        success_count = 0
+        for parsed in parsed_list:
+            success = await db_manager.add_expense(
+                user_id=user_id,
+                amount=parsed.get("amount"),
+                description=parsed.get("item") or parsed.get("description"),
+                category_name=parsed.get("category"),
+                currency=parsed.get("currency", "ILS"),
+                source=parsed.get("source", "bot"),
+            )
+            if success:
+                success_count += 1
+
+        await state.clear()
+        if success_count > 0:
+            await callback.message.edit_text(f"✅ {success_count} expenses saved!", reply_markup=None)
+        else:
+            await callback.message.edit_text("❌ Failed to save. Try again.", reply_markup=None)
+        await callback.answer()
+
+    @dp.callback_query(F.data == "cancel_multi_expenses", ExpenseFlow.pending_multi_confirmation)
+    async def callback_cancel_multi(callback: types.CallbackQuery, state: FSMContext):
+        await state.clear()
+        await callback.message.edit_text("🗑️ Expenses cancelled.", reply_markup=None)
         await callback.answer()
 
     # --- 🗑️ Delete expense ---
