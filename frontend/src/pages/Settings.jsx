@@ -6,6 +6,7 @@ import PageHeader from '../components/ui/PageHeader';
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
+  const { t } = useI18n();
   const isDark = theme === 'dark';
   return (
     <button
@@ -19,7 +20,7 @@ function ThemeToggle() {
         transition: 'background .2s',
       }}>
       {isDark ? <Icon name="moon" size={15} color="var(--indigo)" /> : <Icon name="sun" size={15} color="var(--amber)" />}
-      <span>{isDark ? 'Dark' : 'Light'}</span>
+      <span>{isDark ? t('settings_theme_btn_dark') : t('settings_theme_btn_light')}</span>
     </button>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useI18n } from '../context/I18nContext';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import PageHeader from '../components/ui/PageHeader';
@@ -6,7 +7,7 @@ import Modal from '../components/ui/Modal';
 import Sk from '../components/ui/Skeleton';
 
 function fmt(n, dp = 0) {
-  return '₪' + n.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  return `\u200E₪${Number(n).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })}\u200E`;
 }
 
 function ordinal(d) {
@@ -33,6 +34,7 @@ function subIcon(name) {
 const EMPTY_FORM = { name: '', amount: '', currency: 'ILS', category_id: '', day_of_month: '1' };
 
 export default function Subscriptions() {
+  const { lang, t } = useI18n();
   const [subs, setSubs] = useState([]);
   const [cats, setCats] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -91,7 +93,7 @@ export default function Subscriptions() {
       day_of_month: parseInt(form.day_of_month, 10),
     };
     if (!payload.name || isNaN(payload.amount) || isNaN(payload.day_of_month)) {
-      setError('Name, amount and billing day are required.');
+      setError(t('sub_err_req'));
       return;
     }
     setSaving(true);
@@ -104,7 +106,7 @@ export default function Subscriptions() {
       closeModal();
       reload();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save.');
+      setError(err.response?.data?.error || t('exp_err_load'));
     } finally {
       setSaving(false);
     }
@@ -115,7 +117,7 @@ export default function Subscriptions() {
       await api.put(`/subscriptions/${s.subscription_id}/pause`, { paused: !s.paused });
       reload();
     } catch (err) {
-      setError('Failed to toggle pause state.');
+      setError(t('sub_err_pause'));
     }
   }
 
@@ -141,7 +143,7 @@ export default function Subscriptions() {
   const now = new Date();
   const today = now.getDate();
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const monthName = now.toLocaleString('en-US', { month: 'long' });
+  const monthName = now.toLocaleString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'long' });
 
   const dayMap = {};
   for (const s of activeSubs) {
@@ -180,31 +182,31 @@ export default function Subscriptions() {
 
   return (
     <div className="view-enter">
-      <PageHeader title="Subscriptions" sub="Recurring charges across all sources" />
+      <PageHeader title={t('sub_title')} sub={t('sub_sub')} />
 
       <div className="grid grid-2" style={{ marginBottom: 20 }}>
         <div className="card card-pad-lg">
-          <span className="meta-label">Monthly burn</span>
-          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
-            <span className="ccy" style={{ fontSize: 20 }}>₪</span>{monthlyTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          <span className="meta-label">{t('sub_monthly')}</span>
+          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
+            {fmt(monthlyTotal)}
           </div>
-          <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} active</span>
+          <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} {t('dash_active')}</span>
         </div>
         <div className="card card-pad-lg">
-          <span className="meta-label">Annualized</span>
-          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }}>
-            <span className="ccy" style={{ fontSize: 20 }}>₪</span>{annualized.toFixed(0)}
+          <span className="meta-label">{t('sub_annual')}</span>
+          <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
+            {fmt(annualized)}
           </div>
           <span className="chip idg" style={{ marginTop: 6 }}>
-            <Icon name="repeat" size={11} /> projected
+            <Icon name="repeat" size={11} /> {t('sub_projected')}
           </span>
         </div>
       </div>
 
       <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
         <div className="between" style={{ marginBottom: 14 }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{monthName} timeline</span>
-          <span className="muted-2" style={{ fontSize: 12 }}>day {today} / {daysInMonth}</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{monthName} {t('sub_timeline')}</span>
+          <span className="muted-2" style={{ fontSize: 12 }}>{t('sub_day')} {today} / {daysInMonth}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 52 }}>
           {Array.from({ length: daysInMonth }, (_, i) => {
@@ -234,14 +236,14 @@ export default function Subscriptions() {
 
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="between" style={{ padding: '18px 22px' }}>
-          <h3 className="h2">All subscriptions</h3>
+          <h3 className="h2">{t('sub_all')}</h3>
           <button className="btn primary" onClick={openAdd}>
-            <Icon name="plus" size={14} /> Add
+            <Icon name="plus" size={14} /> {t('common_add')}
           </button>
         </div>
         {sorted.length === 0 ? (
           <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>
-            No subscriptions yet. Click Add to create one.
+            {t('sub_no_subs')}
           </div>
         ) : (
           <div style={{ padding: '0 22px 14px' }}>
@@ -258,21 +260,21 @@ export default function Subscriptions() {
                 <div className="stack" style={{ flex: 1, minWidth: 0, opacity: s.paused ? 0.6 : 1 }}>
                   <div className="row" style={{ gap: 8 }}>
                     <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
-                    {!!s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
+                    {!!s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>{t('sub_paused')}</span>}
                   </div>
                   <span className="muted-2" style={{ fontSize: 11 }}>
-                    Monthly · next on the {ordinal(s.day_of_month)}
-                    {s.category ? ` · ${s.category}` : ''}
+                    {lang === 'he' ? `חודשי · הבא ב-${s.day_of_month}` : `Monthly · next on the ${ordinal(s.day_of_month)}`}
+                    {s.category ? ` · ${t(s.category) || s.category}` : ''}
                   </span>
                 </div>
-                <span className="mono tnum" style={{ fontSize: 13, opacity: s.paused ? 0.6 : 1 }}>
+                <span className="mono tnum" style={{ fontSize: 13, opacity: s.paused ? 0.6 : 1 }} dir="ltr">
                   {fmt(s.amount, s.amount % 1 ? 2 : 0)}
                 </span>
                 <button
                   className="btn ghost icon"
                   style={{ width: 32, height: 32, color: 'var(--text-1)' }}
                   onClick={() => handleTogglePause(s)}
-                  title={s.paused ? "Resume" : "Pause"}
+                  title={s.paused ? t('sub_resume') : t('sub_pause')}
                 >
                   <Icon name={s.paused ? "play" : "pause"} size={16} style={{ fill: 'currentColor' }} />
                 </button>
@@ -280,7 +282,7 @@ export default function Subscriptions() {
                   className="btn ghost icon sub-row-edit"
                   style={{ width: 32, height: 32 }}
                   onClick={() => openEdit(s)}
-                  title="Edit"
+                  title={t('common_edit')}
                 >
                   <Icon name="pencil" size={13} />
                 </button>
@@ -288,7 +290,7 @@ export default function Subscriptions() {
                   className="btn ghost icon sub-row-delete"
                   style={{ width: 32, height: 32, color: 'var(--rose)' }}
                   onClick={() => setDeleteTarget(s)}
-                  title="Delete"
+                  title={t('common_delete')}
                 >
                   <Icon name="trash-2" size={13} />
                 </button>
@@ -302,14 +304,14 @@ export default function Subscriptions() {
       <Modal open={modalOpen} onClose={closeModal}>
         <div style={{ padding: '24px 28px', minWidth: 360 }}>
           <h3 className="h2" style={{ marginBottom: 20 }}>
-            {editing ? 'Edit subscription' : 'New subscription'}
+            {editing ? t('sub_edit') : t('sub_new')}
           </h3>
           <form onSubmit={handleSave} className="stack" style={{ gap: 14 }}>
             <div className="field">
-              <label>Name</label>
+              <label>{t('sub_name')}</label>
               <input
                 className="input"
-                placeholder="e.g. Netflix"
+                placeholder={t('sub_eg_name')}
                 value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                 autoFocus
@@ -317,7 +319,7 @@ export default function Subscriptions() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px', gap: 12 }}>
               <div className="field">
-                <label>Amount</label>
+                <label>{t('dash_amt')}</label>
                 <input
                   className="input mono"
                   type="number"
@@ -329,7 +331,7 @@ export default function Subscriptions() {
                 />
               </div>
               <div className="field">
-                <label>Currency</label>
+                <label>{t('inc_currency')}</label>
                 <select
                   className="select"
                   value={form.currency}
@@ -343,7 +345,7 @@ export default function Subscriptions() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="field">
-                <label>Billing day</label>
+                <label>{t('sub_billing')}</label>
                 <input
                   className="input mono"
                   type="number"
@@ -355,15 +357,15 @@ export default function Subscriptions() {
                 />
               </div>
               <div className="field">
-                <label>Category</label>
+                <label>{t('dash_cat')}</label>
                 <select
                   className="select"
                   value={form.category_id}
                   onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
                 >
-                  <option value="">None</option>
+                  <option value="">{t('sub_none')}</option>
                   {cats.map(c => (
-                    <option key={c.category_id} value={c.category_id}>{c.name}</option>
+                    <option key={c.category_id} value={c.category_id}>{t(c.name) || c.name}</option>
                   ))}
                 </select>
               </div>
@@ -376,9 +378,9 @@ export default function Subscriptions() {
               }}>{error}</div>
             )}
             <div className="row" style={{ gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button type="button" className="btn" onClick={closeModal}>Cancel</button>
+              <button type="button" className="btn" onClick={closeModal}>{t('common_cancel')}</button>
               <button type="submit" className="btn primary" disabled={saving}>
-                {saving ? 'Saving…' : editing ? 'Save changes' : 'Add subscription'}
+                {saving ? t('common_saving') : editing ? t('inc_save_changes') : t('sub_add_btn')}
               </button>
             </div>
           </form>
@@ -388,15 +390,15 @@ export default function Subscriptions() {
       {/* Delete confirmation */}
       <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)}>
         <div style={{ padding: '24px 28px', minWidth: 320 }}>
-          <h3 className="h2" style={{ marginBottom: 10 }}>Delete subscription</h3>
+          <h3 className="h2" style={{ marginBottom: 10 }}>{t('sub_del_title')}</h3>
           <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 20 }}>
-            Remove <strong style={{ color: 'var(--text-0)' }}>{deleteTarget?.name}</strong>?
-            Auto-charges will stop.
+            {t('inc_del_confirm')} <strong style={{ color: 'var(--text-0)' }}>{deleteTarget?.name}</strong>?
+            <br/>{t('sub_auto_stop')}
           </p>
           <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
-            <button className="btn" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="btn" onClick={() => setDeleteTarget(null)}>{t('common_cancel')}</button>
             <button className="btn danger" onClick={handleDelete} disabled={deleting}>
-              {deleting ? 'Deleting…' : 'Delete'}
+              {deleting ? t('common_saving') : t('common_delete')}
             </button>
           </div>
         </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useI18n } from '../context/I18nContext';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import ProgressBar, { pct, tone } from '../components/ui/ProgressBar';
@@ -32,12 +33,12 @@ function catIcon(name) {
 }
 
 function fmt(n) {
-  return '₪' + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  return `\u200E₪${Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 })}\u200E`;
 }
 
-function formatDate(isoOrDateStr) {
+function formatDate(isoOrDateStr, lang) {
   const d = new Date(isoOrDateStr);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  return d.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'short', day: '2-digit' });
 }
 
 function currentMonth() {
@@ -45,9 +46,10 @@ function currentMonth() {
 }
 
 function CategoryCard({ budget, color, icon, onOpen }) {
+  const { lang, t } = useI18n();
   const hasLimit = !budget.no_budget && budget.effective_limit != null;
   const p = hasLimit ? pct(budget.spent, budget.effective_limit) : 0;
-  const t = tone(p);
+  const toneVal = tone(p);
   const colorMap = { ok: 'var(--emerald)', warn: 'var(--amber)', over: 'var(--rose)' };
   const over = hasLimit && budget.spent > budget.effective_limit;
   
@@ -64,9 +66,9 @@ function CategoryCard({ budget, color, icon, onOpen }) {
             <Icon name={icon} size={18} />
           </div>
           <div className="stack">
-            <div style={{ fontWeight: 600, fontSize: 14 }}>{budget.category}</div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{t(budget.category) || budget.category}</div>
             <div className="muted-2" style={{ fontSize: 11 }}>
-              {hasLimit ? `${Math.round(p)}% used${over ? ' · over budget' : ''}` : 'no budget set'}
+              {hasLimit ? `${Math.round(p)}% ${t('dash_used')}${over ? ` · ${t('dash_over_budget')}` : ''}` : t('dash_no_budget')}
             </div>
           </div>
         </div>
@@ -74,17 +76,17 @@ function CategoryCard({ budget, color, icon, onOpen }) {
       </div>
       <div>
         <div className="between" style={{ marginBottom: 6 }}>
-          <span className="mono tnum" style={{ fontSize: 14, fontWeight: 600 }}>{fmt(budget.spent)}</span>
-          {hasLimit && <span className="mono tnum muted" style={{ fontSize: 12 }}>/ {fmt(budget.effective_limit)}</span>}
+          <span className="mono tnum" style={{ fontSize: 14, fontWeight: 600 }} dir="ltr">{fmt(budget.spent)}</span>
+          {hasLimit && <span className="mono tnum muted" style={{ fontSize: 12 }} dir="ltr">/ {fmt(budget.effective_limit)}</span>}
         </div>
         {hasLimit && <ProgressBar value={budget.spent} max={budget.effective_limit} />}
         {hasLimit && (
           <div className="between" style={{ marginTop: 8 }}>
-            <span className="meta-label" style={{ color: colorMap[t], textTransform: 'uppercase' }}>
-              {over ? 'over by ' + fmt(budget.spent - budget.effective_limit) : fmt(budget.remaining) + ' left'}
+            <span className="meta-label" style={{ color: colorMap[toneVal], textTransform: 'uppercase' }} dir="ltr">
+              {over ? t('dash_over_by') + ' ' + fmt(budget.spent - budget.effective_limit) : fmt(budget.remaining) + ' ' + t('dash_left')}
             </span>
             <span className="muted" style={{ fontSize: 11, fontWeight: 500 }}>
-              day {currentDay} / {daysInMonth}
+              {t('sub_day')} {currentDay} / {daysInMonth}
             </span>
           </div>
         )}
@@ -94,6 +96,7 @@ function CategoryCard({ budget, color, icon, onOpen }) {
 }
 
 function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved }) {
+  const { lang, t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [limitVal, setLimitVal] = useState('');
   const [carryOver, setCarryOver] = useState(false);
@@ -108,13 +111,11 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
   }, [budget]);
 
   if (!budget) return null;
-  console.log('[cat-debug] budget.category_id:', budget.category_id, '| expenses.length:', expenses.length);
   const catExpenses = expenses.filter(e =>
     budget.category_id === null
       ? e.category_name == null
       : e.category_name === budget.category
   );
-  console.log('[cat-debug] catExpenses.length:', catExpenses.length);
   const hasLimit = !budget.no_budget && budget.effective_limit != null;
   const p = hasLimit ? pct(budget.spent, budget.effective_limit) : 0;
 
@@ -138,8 +139,8 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
         <div className="row" style={{ gap: 12 }}>
           <div className="cat-icon" style={{ color }}><Icon name={icon} size={18} /></div>
           <div className="stack">
-            <span style={{ fontWeight: 700, fontSize: 16 }}>{budget.category}</span>
-            <span className="muted" style={{ fontSize: 12 }}>{catExpenses.length} transactions this month</span>
+            <span style={{ fontWeight: 700, fontSize: 16 }}>{t(budget.category) || budget.category}</span>
+            <span className="muted" style={{ fontSize: 12 }}>{catExpenses.length} {t('dash_tx_month')}</span>
           </div>
         </div>
         <button className="btn ghost icon" onClick={onClose}><Icon name="x" size={16} /></button>
@@ -149,31 +150,31 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
           {editing ? (
             <form onSubmit={saveBudget} className="stack" style={{ gap: 12 }}>
               <div className="between">
-                <span style={{ fontWeight: 600, fontSize: 14 }}>Set monthly budget</span>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>{t('dash_set_budget')}</span>
                 <button type="button" className="btn ghost icon" onClick={() => setEditing(false)}><Icon name="x" size={14} /></button>
               </div>
               <div className="field">
-                <label>Monthly limit (₪)</label>
+                <label>{t('dash_monthly_limit')}</label>
                 <input className="input mono" type="number" step="1" min="1" autoFocus
                   value={limitVal} onChange={e => setLimitVal(e.target.value)} placeholder="e.g. 2000" />
               </div>
               <label className="row" style={{ gap: 8, cursor: 'pointer', fontSize: 13 }}>
                 <input type="checkbox" checked={carryOver} onChange={e => setCarryOver(e.target.checked)} />
-                <span className="muted">Roll unspent balance to next month</span>
+                <span className="muted">{t('dash_roll_balance')}</span>
               </label>
               <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
-                <button type="button" className="btn" onClick={() => setEditing(false)}>Cancel</button>
+                <button type="button" className="btn" onClick={() => setEditing(false)}>{t('common_cancel')}</button>
                 <button type="submit" className="btn primary" disabled={saving}>
-                  <Icon name="check" size={13} /> {saving ? 'Saving…' : 'Save'}
+                  <Icon name="check" size={13} /> {saving ? t('common_saving') : t('common_save')}
                 </button>
               </div>
             </form>
           ) : (
             <>
               <div className="between" style={{ marginBottom: hasLimit ? 10 : 0 }}>
-                <span className="mono tnum" style={{ fontWeight: 700, fontSize: 22 }}>{fmt(budget.spent)}</span>
+                <span className="mono tnum" style={{ fontWeight: 700, fontSize: 22 }} dir="ltr">{fmt(budget.spent)}</span>
                 <div className="row" style={{ gap: 8 }}>
-                  {hasLimit && <span className="mono muted">/ {fmt(budget.effective_limit)}</span>}
+                  {hasLimit && <span className="mono muted" dir="ltr">/ {fmt(budget.effective_limit)}</span>}
                   {budget.category_id !== null && (
                     <button className="btn ghost icon" style={{ width: 28, height: 28 }} onClick={() => setEditing(true)}>
                       <Icon name="pencil" size={13} color="var(--text-3)" />
@@ -185,17 +186,17 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
                 <>
                   <ProgressBar value={budget.spent} max={budget.effective_limit} height={8} />
                   <div className="between" style={{ marginTop: 10 }}>
-                    <span className="muted" style={{ fontSize: 12 }}>{Math.round(p)}% of budget used</span>
-                    <span className="mono" style={{ fontSize: 12, color: budget.spent > budget.effective_limit ? 'var(--rose)' : 'var(--emerald)' }}>
+                    <span className="muted" style={{ fontSize: 12 }}>{Math.round(p)}% {t('dash_pct_used')}</span>
+                    <span className="mono" style={{ fontSize: 12, color: budget.spent > budget.effective_limit ? 'var(--rose)' : 'var(--emerald)' }} dir="ltr">
                       {budget.spent > budget.effective_limit
-                        ? 'over by ' + fmt(budget.spent - budget.effective_limit)
-                        : fmt(budget.remaining) + ' left'}
+                        ? t('dash_over_by') + ' ' + fmt(budget.spent - budget.effective_limit)
+                        : fmt(budget.remaining) + ' ' + t('dash_left')}
                     </span>
                   </div>
                   {budget.carry_over && (
                     <div className="row" style={{ marginTop: 10, gap: 8 }}>
-                      <span className="chip amb"><Icon name="arrow-right" size={10} /> Carry-over</span>
-                      {budget.carried_in > 0 && <span className="muted" style={{ fontSize: 12 }}>+{fmt(budget.carried_in)} rolled in</span>}
+                      <span className="chip amb"><Icon name="arrow-right" size={10} /> {t('dash_carry_over')}</span>
+                      {budget.carried_in > 0 && <span className="muted" style={{ fontSize: 12 }} dir="ltr">+{fmt(budget.carried_in)} {t('dash_rolled_in')}</span>}
                     </div>
                   )}
                 </>
@@ -203,22 +204,22 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
               {!hasLimit && budget.category_id !== null && (
                 <button className="btn ghost" style={{ marginTop: 8, width: '100%', justifyContent: 'center', gap: 6 }}
                   onClick={() => setEditing(true)}>
-                  <Icon name="plus" size={13} /> Set a budget limit
+                  <Icon name="plus" size={13} /> {t('dash_set_limit')}
                 </button>
               )}
             </>
           )}
         </div>
-        <div className="meta-label" style={{ marginBottom: 10 }}>Transactions</div>
+        <div className="meta-label" style={{ marginBottom: 10 }}>{t('dash_transactions')}</div>
         {catExpenses.length === 0
-          ? <div className="muted" style={{ fontSize: 13 }}>No transactions yet for this category.</div>
+          ? <div className="muted" style={{ fontSize: 13 }}>{t('dash_no_tx_cat')}</div>
           : catExpenses.map(e => (
               <div key={e.expense_id} className="between" style={{ padding: '12px 0', borderBottom: '1px solid var(--row-divider)' }}>
                 <div className="stack">
-                  <span style={{ fontSize: 13.5, fontWeight: 500 }}>{e.description || e.category_name}</span>
-                  <span className="muted-2" style={{ fontSize: 11 }}>{formatDate(e.created_at)}</span>
+                  <span style={{ fontSize: 13.5, fontWeight: 500 }}>{t(e.description || e.category_name) || e.description || e.category_name}</span>
+                  <span className="muted-2" style={{ fontSize: 11 }}>{formatDate(e.created_at, lang)}</span>
                 </div>
-                <span className="mono tnum" style={{ fontWeight: 600 }}>−{fmt(e.amount)}</span>
+                <span className="mono tnum" style={{ fontWeight: 600 }} dir="ltr">−{fmt(e.amount)}</span>
               </div>
             ))
         }
@@ -229,6 +230,7 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
 
 /* -------- New category modal -------- */
 function NewCategoryModal({ open, onClose, onSave }) {
+  const { t } = useI18n();
   const [name, setName] = useState('');
   useEffect(() => { if (open) setName(''); }, [open]);
   const submit = async (e) => {
@@ -241,16 +243,16 @@ function NewCategoryModal({ open, onClose, onSave }) {
     <Modal open={open} onClose={onClose}>
       <form onSubmit={submit} className="stack" style={{ gap: 14 }}>
         <div className="between">
-          <h3 className="h2" style={{ fontSize: 17 }}>New category</h3>
+          <h3 className="h2" style={{ fontSize: 17 }}>{t('cat_new')}</h3>
           <button type="button" className="btn ghost icon" onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
         <div className="field">
-          <label>Category name</label>
-          <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Subscriptions" />
+          <label>{t('cat_name')}</label>
+          <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t('cat_eg_name')} />
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary"><Icon name="check" size={13} /> Create</button>
+          <button type="button" className="btn" onClick={onClose}>{t('common_cancel')}</button>
+          <button type="submit" className="btn primary"><Icon name="check" size={13} /> {t('common_create')}</button>
         </div>
       </form>
     </Modal>
@@ -258,6 +260,7 @@ function NewCategoryModal({ open, onClose, onSave }) {
 }
 
 export default function Categories() {
+  const { lang, t } = useI18n();
   const [month] = useState(currentMonth());
   const [budgets, setBudgets] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -282,10 +285,10 @@ export default function Categories() {
   const handleNewCategory = async (name) => {
     try {
       await api.post('/categories', { name });
-      setToast(`Category "${name}" created`);
+      setToast(`${t('cat_toast_cre')} "${name}"`);
       load();
     } catch (err) {
-      setToast(err.response?.data?.error || 'Failed to create category');
+      setToast(err.response?.data?.error || t('cat_err_cre'));
     }
   };
 
@@ -326,11 +329,11 @@ export default function Categories() {
   return (
     <div className="view-enter">
       <PageHeader
-        title="Categories"
-        sub="Track spending against monthly budget envelopes"
+        title={t('cat_title')}
+        sub={t('cat_sub')}
         actions={
           <button className="btn primary" style={{ background: 'var(--emerald)' }} onClick={() => setNewCatOpen(true)}>
-            <Icon name="plus" size={13} /> New category
+            <Icon name="plus" size={13} /> {t('cat_new')}
           </button>
         }
       />
@@ -338,8 +341,8 @@ export default function Categories() {
       {totalSpent > 0 && (
         <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
           <div className="between" style={{ marginBottom: 12 }}>
-            <span className="meta-label">All categories — {new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}</span>
-            <span className="mono tnum" style={{ fontSize: 14 }}>
+            <span className="meta-label">{t('cat_all')} — {new Date().toLocaleString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'long', year: 'numeric' })}</span>
+            <span className="mono tnum" style={{ fontSize: 14 }} dir="ltr">
               <span style={{ fontWeight: 700 }}>{fmt(totalSpent)}</span>
               {totalBudget > 0 && <span className="muted"> / {fmt(totalBudget)}</span>}
             </span>
@@ -348,8 +351,8 @@ export default function Categories() {
           {totalBudget > 0 && (
             <div className="row" style={{ marginTop: 12, gap: 16, flexWrap: 'wrap' }}>
               <span className="muted" style={{ fontSize: 12 }}>
-                {budgets.filter(b => b.effective_limit && b.spent > b.effective_limit).length} over budget ·&nbsp;
-                {budgets.filter(b => b.effective_limit && pct(b.spent, b.effective_limit) >= 80).length} at risk
+                {budgets.filter(b => b.effective_limit && b.spent > b.effective_limit).length} {t('cat_over_risk')}
+                {budgets.filter(b => b.effective_limit && pct(b.spent, b.effective_limit) >= 80).length} {t('cat_at_risk')}
               </span>
             </div>
           )}
@@ -368,7 +371,7 @@ export default function Categories() {
           ))}
           <div className="card card-pad empty-card focusable" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: '1px dashed var(--line-2)', background: 'transparent', minHeight: 140 }} onClick={() => setNewCatOpen(true)}>
             <Icon name="plus" size={24} color="var(--text-3)" />
-            <span className="muted" style={{ marginTop: 8, fontSize: 13 }}>New category</span>
+            <span className="muted" style={{ marginTop: 8, fontSize: 13 }}>{t('cat_new')}</span>
           </div>
         </div>
 
@@ -379,7 +382,7 @@ export default function Categories() {
           icon={openBudget.icon}
           expenses={expenses}
           onClose={() => setOpenBudget(null)}
-          onBudgetSaved={() => { setToast('Budget saved'); load(); setOpenBudget(null); }}
+          onBudgetSaved={() => { setToast(t('cat_toast_save')); load(); setOpenBudget(null); }}
         />
       )}
 

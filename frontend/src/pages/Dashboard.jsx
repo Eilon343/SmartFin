@@ -38,15 +38,16 @@ function catColor(index) {
 }
 
 // Currency: sign placed before symbol ("-₪221" not "₪-221"). Uses U+2212 for visual weight.
+// \u200E is the Left-To-Right Mark, forcing browsers to correctly order punctuation/symbols in RTL context.
 function fmt(n, dp = 0) {
   if (n == null || Number.isNaN(n)) return '—';
   const sign = n < 0 ? '−' : '';
-  return `${sign}₪${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
+  return `\u200E${sign}₪${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })}\u200E`;
 }
 
 function fmtSign(n) {
   if (n == null || Number.isNaN(n)) return '—';
-  return (n >= 0 ? '+' : '−') + '₪' + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  return `\u200E${n >= 0 ? '+' : '−'}₪${Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 })}\u200E`;
 }
 
 // Safe MoM %: handles null prev (no data), zero prev (undefined ratio), and zero-to-zero.
@@ -59,30 +60,31 @@ function safePctChange(curr, prev) {
     return { value: null, label: 'N/A', valid: false };
   }
   const v = ((curr - prev) / Math.abs(prev)) * 100;
-  return { value: v, label: `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`, valid: true };
+  return { value: v, label: `\u200E${v >= 0 ? '+' : ''}${v.toFixed(1)}%\u200E`, valid: true };
 }
 
-function formatDate(isoOrDateStr) {
+function formatDate(isoOrDateStr, lang = 'en') {
   const d = new Date(isoOrDateStr);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  return d.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'short', day: '2-digit' });
 }
 
 function currentMonth() {
   return new Date().toISOString().slice(0, 7);
 }
 
-function getRecentMonths(num = 3) {
+function getRecentMonths(num = 3, lang = 'en') {
   const result = [];
   const now = new Date();
   let y = now.getFullYear();
   let m = now.getMonth();
+  const locale = lang === 'he' ? 'he-IL' : 'en-US';
 
   for (let i = 0; i < num; i++) {
     const d = new Date(y, m, 1);
     const iso = `${y}-${String(m + 1).padStart(2, '0')}`;
     const label = i === 0
-      ? d.toLocaleDateString('en-US', { month: 'long' })
-      : d.toLocaleDateString('en-US', { month: 'short' });
+      ? d.toLocaleDateString(locale, { month: 'long' })
+      : d.toLocaleDateString(locale, { month: 'short' });
     result.push({ iso, label });
     m--;
     if (m < 0) { m = 11; y--; }
@@ -108,10 +110,10 @@ function CategoryCard({ budget, color, icon, onOpen }) {
         <Icon name="chevron-right" size={14} color="var(--text-3)" />
       </div>
       <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {budget.category}
+        {t(budget.category) || budget.category}
       </div>
       <div className="between" style={{ marginBottom: 6 }}>
-        <span className="mono tnum" style={{ fontSize: 18, fontWeight: 700, letterSpacing: -0.5 }}>
+        <span className="mono tnum" style={{ fontSize: 18, fontWeight: 700, letterSpacing: -0.5 }} dir="ltr">
           {fmt(budget.spent)}
         </span>
         {hasLimit && (
@@ -139,7 +141,7 @@ function CategoryCard({ budget, color, icon, onOpen }) {
 
 /* -------- Category drawer -------- */
 function CategoryDrawer({ budget, color, icon, expenses, onClose, onReload }) {
-  const { t } = useI18n();
+  const { lang, t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [limitVal, setLimitVal] = useState('');
   const [carryOver, setCarryOver] = useState(false);
@@ -182,7 +184,7 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onReload }) {
             <Icon name={icon} size={18} />
           </div>
           <div className="stack">
-            <span style={{ fontWeight: 700, fontSize: 16 }}>{budget.category}</span>
+            <span style={{ fontWeight: 700, fontSize: 16 }}>{t(budget.category) || budget.category}</span>
             <span className="muted" style={{ fontSize: 12 }}>{catExpenses.length} {t('dash_tx_month')}</span>
           </div>
         </div>
@@ -193,22 +195,22 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onReload }) {
           {editing ? (
             <form onSubmit={saveBudget} className="stack" style={{ gap: 12 }}>
               <div className="between">
-                <span style={{ fontWeight: 600, fontSize: 14 }}>Set monthly budget</span>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>{t('dash_set_budget')}</span>
                 <button type="button" className="btn ghost icon" onClick={() => setEditing(false)}><Icon name="x" size={14} /></button>
               </div>
               <div className="field">
-                <label>Monthly limit (₪)</label>
+                <label>{t('dash_monthly_limit')}</label>
                 <input className="input mono" type="number" step="1" min="1" autoFocus
                   value={limitVal} onChange={e => setLimitVal(e.target.value)} placeholder="e.g. 2000" />
               </div>
               <label className="row" style={{ gap: 8, cursor: 'pointer', fontSize: 13 }}>
                 <input type="checkbox" checked={carryOver} onChange={e => setCarryOver(e.target.checked)} />
-                <span className="muted">Roll unspent balance to next month</span>
+                <span className="muted">{t('dash_roll_balance')}</span>
               </label>
               <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
-                <button type="button" className="btn" onClick={() => setEditing(false)}>Cancel</button>
+                <button type="button" className="btn" onClick={() => setEditing(false)}>{t('common_cancel')}</button>
                 <button type="submit" className="btn primary" disabled={saving}>
-                  <Icon name="check" size={13} /> {saving ? 'Saving…' : 'Save'}
+                  <Icon name="check" size={13} /> {saving ? t('common_saving') : t('common_save')}
                 </button>
               </div>
             </form>
@@ -227,17 +229,17 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onReload }) {
                 <>
                   <ProgressBar value={budget.spent} max={budget.effective_limit} height={8} />
                   <div className="between" style={{ marginTop: 10 }}>
-                    <span className="muted" style={{ fontSize: 12 }}>{Math.round(p)}% of budget used</span>
+                    <span className="muted" style={{ fontSize: 12 }}>{Math.round(p)}% {t('dash_pct_used')}</span>
                     <span className="mono" style={{ fontSize: 12, color: budget.spent > budget.effective_limit ? 'var(--rose)' : 'var(--emerald)' }}>
                       {budget.spent > budget.effective_limit
-                        ? 'over by ' + fmt(budget.spent - budget.effective_limit)
-                        : fmt(budget.remaining) + ' left'}
+                        ? `${t('dash_over_by')} ${fmt(budget.spent - budget.effective_limit)}`
+                        : `${fmt(budget.remaining)} ${t('dash_left')}`}
                     </span>
                   </div>
                   {budget.carry_over && (
                     <div className="row" style={{ marginTop: 10, gap: 8 }}>
-                      <span className="chip amb"><Icon name="arrow-right" size={10} /> Carry-over</span>
-                      {budget.carried_in > 0 && <span className="muted" style={{ fontSize: 12 }}>+{fmt(budget.carried_in)} rolled in</span>}
+                      <span className="chip amb"><Icon name="arrow-right" size={10} /> {t('dash_carry_over')}</span>
+                      {budget.carried_in > 0 && <span className="muted" style={{ fontSize: 12 }}>+{fmt(budget.carried_in)} {t('dash_rolled_in')}</span>}
                     </div>
                   )}
                 </>
@@ -245,22 +247,22 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onReload }) {
               {!hasLimit && (
                 <button className="btn ghost" style={{ marginTop: 8, width: '100%', justifyContent: 'center', gap: 6 }}
                   onClick={() => setEditing(true)}>
-                  <Icon name="plus" size={13} /> Set a budget limit
+                  <Icon name="plus" size={13} /> {t('dash_set_limit')}
                 </button>
               )}
             </>
           )}
         </div>
-        <div className="meta-label" style={{ marginBottom: 10 }}>Transactions</div>
+        <div className="meta-label" style={{ marginBottom: 10 }}>{t('dash_transactions')}</div>
         {catExpenses.length === 0
-          ? <div className="muted" style={{ fontSize: 13 }}>No transactions yet for this category.</div>
+          ? <div className="muted" style={{ fontSize: 13 }}>{t('dash_no_tx_cat')}</div>
           : catExpenses.map(e => (
             <div key={e.expense_id} className="between" style={{ padding: '12px 0', borderBottom: '1px solid var(--row-divider)' }}>
               <div className="stack">
-                <span style={{ fontSize: 13.5, fontWeight: 500 }}>{e.description || e.category_name}</span>
-                <span className="muted-2" style={{ fontSize: 11 }}>{formatDate(e.created_at)}</span>
+                <span style={{ fontSize: 13.5, fontWeight: 500 }}>{t(e.description || e.category_name) || (e.description || e.category_name)}</span>
+                <span className="muted-2" style={{ fontSize: 11 }}>{formatDate(e.created_at, lang)}</span>
               </div>
-              <span className="mono tnum" style={{ fontWeight: 600 }}>−{fmt(e.amount)}</span>
+              <span className="mono tnum" style={{ fontWeight: 600 }} dir="ltr">−{fmt(e.amount)}</span>
             </div>
           ))
         }
@@ -274,14 +276,15 @@ const GOAL_COLORS = ['#6366f1', '#10b981', '#f472b6', '#f59e0b', '#fb7185', '#22
 const GOAL_ICONS = ['plane', 'shield-check', 'laptop', 'gem', 'home', 'car', 'graduation-cap', 'heart', 'baby', 'gift'];
 
 function SavingsCard({ goals, onContribute, onEdit, onNew }) {
+  const { t } = useI18n();
   return (
     <div className="card card-pad-lg">
       <div className="between" style={{ marginBottom: 16 }}>
-        <h3 className="h2">Savings Goals</h3>
+        <h3 className="h2">{t('dash_savings_goals')}</h3>
         <div className="row" style={{ gap: 8 }}>
-          <span className="chip idg"><Icon name="piggy-bank" size={11} /> {goals.length} active</span>
+          <span className="chip idg"><Icon name="piggy-bank" size={11} /> {goals.length} {t('dash_active')}</span>
           <button className="btn ghost" style={{ height: 26, fontSize: 12, padding: '0 10px' }} onClick={onNew}>
-            <Icon name="plus" size={12} /> New
+            <Icon name="plus" size={12} /> {t('common_new')}
           </button>
         </div>
       </div>
@@ -314,7 +317,7 @@ function SavingsCard({ goals, onContribute, onEdit, onNew }) {
                   <span className="mono tnum" style={{ fontWeight: 600, fontSize: 13 }}>
                     {fmt(g.saved_amount)} <span className="muted" style={{ fontWeight: 400 }}>/ {fmt(g.target_amount)}</span>
                   </span>
-                  <span className="muted" style={{ fontSize: 11 }}>Ongoing</span>
+                  <span className="muted" style={{ fontSize: 11 }}>{t('dash_ongoing')}</span>
                 </div>
                 <div className="pb-track" style={{ height: 4 }}>
                   <div className="pb-fill" style={{ width: Math.min(100, p) + '%', background: color }} />
@@ -323,7 +326,7 @@ function SavingsCard({ goals, onContribute, onEdit, onNew }) {
             </div>
           );
         })}
-        {goals.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No savings goals yet.</div>}
+        {goals.length === 0 && <div className="muted" style={{ fontSize: 13 }}>{t('dash_no_goals')}</div>}
       </div>
     </div>
   );
@@ -331,6 +334,7 @@ function SavingsCard({ goals, onContribute, onEdit, onNew }) {
 
 /* -------- Contribute modal -------- */
 function ContributeModal({ open, goal, onClose, onSubmit }) {
+  const { t } = useI18n();
   const [amt, setAmt] = useState('');
   useEffect(() => { if (open) setAmt(''); }, [open]);
   if (!goal) return null;
@@ -341,7 +345,7 @@ function ContributeModal({ open, goal, onClose, onSubmit }) {
         <div className="between">
           <div className="row" style={{ gap: 10 }}>
             <Icon name="piggy-bank" size={18} color={color} />
-            <h3 className="h2" style={{ fontSize: 17 }}>Contribute to {goal.name}</h3>
+            <h3 className="h2" style={{ fontSize: 17 }}>{t('dash_contribute')} {goal.name}</h3>
           </div>
           <button type="button" className="btn ghost icon" onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
@@ -350,7 +354,7 @@ function ContributeModal({ open, goal, onClose, onSubmit }) {
           {fmt(goal.saved_amount)} of {fmt(goal.target_amount)} ({Math.round(pct(goal.saved_amount, goal.target_amount))}%)
         </div>
         <div className="field">
-          <label>Amount to add (₪)</label>
+          <label>{t('dash_amt_add')}</label>
           <input className="input mono" type="number" step="1" autoFocus value={amt} onChange={(e) => setAmt(e.target.value)} placeholder="500" />
         </div>
         <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
@@ -361,8 +365,8 @@ function ContributeModal({ open, goal, onClose, onSubmit }) {
           ))}
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary"><Icon name="plus" size={13} /> Add to goal</button>
+          <button type="button" className="btn" onClick={onClose}>{t('common_cancel')}</button>
+          <button type="submit" className="btn primary"><Icon name="plus" size={13} /> {t('dash_add_goal')}</button>
         </div>
       </form>
     </Modal>
@@ -392,16 +396,17 @@ function ordinal(d) {
 }
 
 function SubscriptionsMini({ subs, onTogglePause }) {
+  const { t } = useI18n();
   const activeSubs = subs.filter(s => !s.paused);
   const total = activeSubs.reduce((s, x) => s + x.amount, 0);
   return (
     <div className="card card-pad-lg" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="between" style={{ marginBottom: 14 }}>
         <div className="stack">
-          <h3 className="h2">Subscriptions</h3>
-          <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} active monthly</span>
+          <h3 className="h2">{t('nav_subscriptions')}</h3>
+          <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} {t('dash_active_mo')}</span>
         </div>
-        <span className="chip idg"><Icon name="repeat" size={11} /> ₪{fmt(total, 0)}/mo</span>
+        <span className="chip idg"><Icon name="repeat" size={11} /> ₪{fmt(total, 0)}{t('dash_mo')}</span>
       </div>
       <div style={{ flex: 1 }}>
         {subs.slice(0, 5).map(s => (
@@ -414,7 +419,7 @@ function SubscriptionsMini({ subs, onTogglePause }) {
                 <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
                 {!!s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
               </div>
-              <span className="muted-2" style={{ fontSize: 11 }}>Monthly · next on the {ordinal(s.day_of_month)}</span>
+              <span className="muted-2" style={{ fontSize: 11 }}>{t('dash_next_on')} {ordinal(s.day_of_month)}</span>
             </div>
             <span className="mono tnum" style={{ fontSize: 13, opacity: s.paused ? 0.6 : 1 }}>{fmt(s.amount, s.amount % 1 ? 2 : 0)}</span>
             <button
@@ -427,7 +432,7 @@ function SubscriptionsMini({ subs, onTogglePause }) {
             </button>
           </div>
         ))}
-        {subs.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No subscriptions found.</div>}
+        {subs.length === 0 && <div className="muted" style={{ fontSize: 13 }}>{t('dash_no_subs')}</div>}
       </div>
     </div>
   );
@@ -435,50 +440,51 @@ function SubscriptionsMini({ subs, onTogglePause }) {
 
 /* -------- Transactions table -------- */
 function TransactionsTable({ expenses }) {
+  const { lang, t } = useI18n();
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       <div className="between" style={{ padding: '18px 22px 12px' }}>
         <div className="stack">
-          <h3 className="h2">Recent Transactions</h3>
-          <span className="muted" style={{ fontSize: 12 }}>This month</span>
+          <h3 className="h2">{t('dash_recent_tx')}</h3>
+          <span className="muted" style={{ fontSize: 12 }}>{t('dash_this_month')}</span>
         </div>
       </div>
       <div className="tx-row head">
-        <div>Date</div><div>Description</div><div>Category</div><div style={{ textAlign: 'right' }}>Amount</div><div style={{ textAlign: 'right' }}>Source</div>
+        <div>{t('dash_date')}</div><div>{t('dash_desc')}</div><div className="desktop-only">{t('dash_cat')}</div><div style={{ textAlign: lang === 'he' ? 'left' : 'right' }}>{t('dash_amt')}</div><div className="desktop-only" style={{ textAlign: lang === 'he' ? 'left' : 'right' }}>{t('dash_src')}</div>
       </div>
       {expenses.slice(0, 12).map(e => (
         <div key={e.expense_id} className="tx-row">
-          <div className="mono muted desktop-only" style={{ fontSize: 12 }}>{formatDate(e.created_at)}</div>
+          <div className="mono muted desktop-only" style={{ fontSize: 12 }}>{formatDate(e.created_at, lang)}</div>
           <div className="stack" style={{ minWidth: 0 }}>
             <span style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {e.description || e.category_name}
+              {t(e.description || e.category_name) || (e.description || e.category_name)}
             </span>
             <span className="tx-meta-mobile muted-2" style={{ fontSize: 11, gap: 8, display: 'flex' }}>
-              {formatDate(e.created_at)} · {e.category_name}
+              {formatDate(e.created_at, lang)} · {t(e.category_name) || e.category_name}
             </span>
           </div>
           <div className="row desktop-only" style={{ gap: 8 }}>
             <Icon name={catIcon(e.category_name)} size={13} color="var(--text-2)" />
-            <span style={{ fontSize: 13, color: 'var(--text-1)' }}>{e.category_name}</span>
+            <span style={{ fontSize: 13, color: 'var(--text-1)' }}>{t(e.category_name) || e.category_name}</span>
           </div>
-          <div className="mono tnum" style={{ textAlign: 'right', fontWeight: 600 }}>
+          <div className="mono tnum" style={{ textAlign: lang === 'he' ? 'left' : 'right', fontWeight: 600 }} dir="ltr">
             −{fmt(e.amount)}
           </div>
-          <div className="desktop-only" style={{ textAlign: 'right' }}>
+          <div className="desktop-only" style={{ textAlign: lang === 'he' ? 'left' : 'right' }}>
             {e.source === 'apple_pay' ? (
               <span className="vr" style={{ background: '#1a1a1a', color: '#f5f5f7', fontSize: 10, fontWeight: 600 }}>Apple Pay</span>
             ) : e.source === 'bot' ? (
-              <span className="vr" style={{ background: 'var(--indigo-soft)', color: 'var(--indigo)' }}>Bot</span>
+              <span className="vr" style={{ background: 'var(--indigo-soft)', color: 'var(--indigo)' }}>{t('bot')}</span>
             ) : e.source === 'web' ? (
-              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)' }}>Web</span>
+              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)' }}>{t('web')}</span>
             ) : (
-              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)' }}>{e.source || 'Manual'}</span>
+              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)' }}>{t(e.source?.toLowerCase() || 'manual') || 'Manual'}</span>
             )}
           </div>
         </div>
       ))}
       {expenses.length === 0 && (
-        <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>No transactions this month.</div>
+        <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>{t('dash_no_tx_month')}</div>
       )}
     </div>
   );
@@ -508,6 +514,7 @@ function buildSpendingSparkline(expenses, month) {
 
 /* -------- Net Position header -------- */
 function NetPosition({ pnl, expenses }) {
+  const { lang, t } = useI18n();
   if (!pnl) return null;
 
   const currentNet = pnl.current_net_pnl ?? 0;
@@ -515,9 +522,9 @@ function NetPosition({ pnl, expenses }) {
   const lastNet = pnl.last_net_pnl;
 
   const prevMonthName = pnl.prev_month
-    ? new Date(`${pnl.prev_month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long' })
+    ? new Date(`${pnl.prev_month}-01T00:00:00Z`).toLocaleString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'long' })
     : null;
-  const currMonthName = new Date(`${pnl.month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long' });
+  const currMonthName = new Date(`${pnl.month}-01T00:00:00Z`).toLocaleString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'long' });
   const currYear = new Date(`${pnl.month}-01T00:00:00Z`).getFullYear();
 
   const diff = lastNet != null ? currentNet - lastNet : 0;
@@ -534,8 +541,8 @@ function NetPosition({ pnl, expenses }) {
   const isCurrentMonth = today.getFullYear() === selY && today.getMonth() === selM - 1;
   const endDate = isCurrentMonth ? today : new Date(selY, selM, 0);
   const startDate = new Date(selY, selM - 1, 1);
-  const startStr = startDate.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
-  const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  const startStr = startDate.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'short', day: '2-digit' });
+  const endStr = endDate.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'short', day: '2-digit' });
 
   const totalIncomeActual = pnl.total_income_actual ?? 0;
   const forecastColor = forecastNet >= 0 ? 'var(--emerald)' : 'var(--rose)';
@@ -546,17 +553,28 @@ function NetPosition({ pnl, expenses }) {
 
         <div className="stack" style={{ gap: 16 }}>
           <div className="row" style={{ gap: 10, textTransform: 'uppercase', fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: 'var(--text-2)' }}>
-            <span>Current Net Position — {currMonthName} {currYear}</span>
+            <span>{t('dash_net_pos')} — {currMonthName} {currYear}</span>
             <span className="chip" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)', textTransform: 'none', fontWeight: 600 }}>
-              <Icon name="wallet" size={11} /> live
+              <Icon name="wallet" size={11} /> {t('dash_live')}
             </span>
           </div>
 
           <div className="row" style={{ alignItems: 'flex-start', gap: 6 }}>
-            <span style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-2)', marginTop: 8 }}>{currentNet < 0 ? '−' : ''}₪</span>
-            <span style={{ fontSize: 46, fontWeight: 700, letterSpacing: -1, lineHeight: 1 }}>
-              {Math.abs(currentNet).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-            </span>
+            {lang === 'he' ? (
+              <>
+                <span style={{ fontSize: 46, fontWeight: 700, letterSpacing: -1, lineHeight: 1 }}>
+                  {Math.abs(currentNet).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                </span>
+                <span style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-2)', marginTop: 8 }}>{currentNet < 0 ? '−' : ''}₪</span>
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-2)', marginTop: 8 }}>{currentNet < 0 ? '−' : ''}₪</span>
+                <span style={{ fontSize: 46, fontWeight: 700, letterSpacing: -1, lineHeight: 1 }}>
+                  {Math.abs(currentNet).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                </span>
+              </>
+            )}
           </div>
 
           <div style={{ padding: '12px 14px', background: isForecastDeficit ? 'rgba(244, 63, 94, 0.1)' : 'rgba(16, 185, 129, 0.1)', borderRadius: 8, borderLeft: `3px solid ${forecastColor}`, marginTop: 4 }}>
@@ -564,11 +582,11 @@ function NetPosition({ pnl, expenses }) {
               <Icon name="sparkles" size={14} color={forecastColor} />
               <span>
                 {isDeficit
-                  ? <>Spending currently exceeds income by <strong>{fmt(Math.abs(currentNet))}</strong>. </>
-                  : <>Net position currently <strong>{fmt(currentNet)}</strong>. </>}
+                  ? <>{t('dash_np_exceeds')} <strong dir="ltr">{fmt(Math.abs(currentNet))}</strong>. </>
+                  : <>{t('dash_np_currently')} <strong dir="ltr">{fmt(currentNet)}</strong>. </>}
                 {isForecastDeficit
-                  ? <>Projected to end the month <strong style={{ color: forecastColor }}>{fmt(forecastNet)}</strong> in the red.</>
-                  : <>Projected to end the month at <strong style={{ color: forecastColor }}>{fmt(forecastNet)}</strong>.</>}
+                  ? <>{t('dash_np_proj_red')} <strong style={{ color: forecastColor }} dir="ltr">{fmt(forecastNet)}</strong> {t('dash_np_in_red')}</>
+                  : <>{t('dash_np_proj_at')} <strong style={{ color: forecastColor }} dir="ltr">{fmt(forecastNet)}</strong>.</>}
               </span>
             </div>
           </div>
@@ -577,27 +595,31 @@ function NetPosition({ pnl, expenses }) {
             <div className="row" style={{ gap: 12, marginTop: 4 }}>
               <span className={`chip ${pctChange.valid ? (up ? 'up' : 'down') : ''}`} style={{ fontWeight: 600 }}>
                 <Icon name={pctChange.valid ? (up ? 'trending-up' : 'trending-down') : 'minus'} size={12} />
-                {pctChange.label} vs last month
+                <span dir="ltr">{pctChange.label}</span> {t('dash_vs_last')}
               </span>
               <span className="row" style={{ gap: 4, fontSize: 13, fontWeight: 500, color: 'var(--text-2)' }}>
                 <Icon name={up ? 'triangle' : 'triangle-down'} size={10} style={{ fill: 'currentColor', opacity: 0.8 }} />
-                {fmtSign(diff)} from {prevMonthName}
+                {lang === 'he' ? (
+                  <>{t('dash_from')} {prevMonthName} <span dir="ltr">{fmtSign(diff)}</span></>
+                ) : (
+                  <>{fmtSign(diff)} {t('dash_from')} {prevMonthName}</>
+                )}
               </span>
             </div>
           )}
 
           <div className="row" style={{ marginTop: 8, fontSize: 13, gap: 16, color: 'var(--text-2)', flexWrap: 'wrap' }}>
-            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--emerald)' }} /> In {fmt(totalIncomeActual)}</div>
-            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--rose)' }} /> Out {fmt(pnl.total_expenses)}</div>
-            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--indigo)' }} /> Save {fmt(pnl.savings_allocation)}</div>
+            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--emerald)' }} /> {t('dash_in')} <span dir="ltr">{fmt(totalIncomeActual)}</span></div>
+            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--rose)' }} /> {t('dash_out')} <span dir="ltr">{fmt(pnl.total_expenses)}</span></div>
+            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--indigo)' }} /> {t('dash_save')} <span dir="ltr">{fmt(pnl.savings_allocation)}</span></div>
           </div>
         </div>
 
         <div className="stack" style={{ gap: 16, height: '100%', justifyContent: 'space-between' }}>
           <div className="between" style={{ textTransform: 'uppercase', fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: 'var(--text-2)' }}>
-            <span>Spending Trend</span>
+            <span>{t('dash_trend')}</span>
             <span className="chip idg" style={{ textTransform: 'none', fontWeight: 600 }}>
-              {fmt(pnl.total_expenses)} spent
+              <span dir="ltr">{fmt(pnl.total_expenses)}</span> {t('dash_spent')}
             </span>
           </div>
           <div style={{ flex: 1, minHeight: 60, position: 'relative' }}>
@@ -617,19 +639,20 @@ function NetPosition({ pnl, expenses }) {
 
 /* -------- Income card -------- */
 function IncomeCard({ income }) {
+  const { t } = useI18n();
   if (!income) return null;
   return (
     <div className="card card-pad-lg">
       <div className="between" style={{ marginBottom: 14 }}>
-        <h3 className="h2">Income</h3>
+        <h3 className="h2">{t('nav_income')}</h3>
         <span className="chip up"><Icon name="arrow-down-to-line" size={11} /> {fmt(income.total)}</span>
       </div>
       <div className="stack" style={{ gap: 10 }}>
         <div className="between">
           <div className="row" style={{ gap: 8 }}>
             <span className="dot" style={{ background: 'var(--emerald)' }} />
-            <span style={{ fontWeight: 500 }}>Fixed</span>
-            <span className="muted" style={{ fontSize: 12 }}>· {income.fixed.length} sources</span>
+            <span style={{ fontWeight: 500 }}>{t('dash_fixed')}</span>
+            <span className="muted" style={{ fontSize: 12 }}>· {income.fixed.length} {t('dash_sources')}</span>
           </div>
           <span className="mono tnum" style={{ fontWeight: 600 }}>{fmt(income.fixed_total)}</span>
         </div>
@@ -647,8 +670,8 @@ function IncomeCard({ income }) {
             <div className="between">
               <div className="row" style={{ gap: 8 }}>
                 <span className="dot" style={{ background: 'var(--indigo)' }} />
-                <span style={{ fontWeight: 500 }}>Variable</span>
-                <span className="muted" style={{ fontSize: 12 }}>· {income.variable.length} sources</span>
+                <span style={{ fontWeight: 500 }}>{t('dash_variable')}</span>
+                <span className="muted" style={{ fontSize: 12 }}>· {income.variable.length} {t('dash_sources')}</span>
               </div>
               <span className="mono tnum" style={{ fontWeight: 600 }}>{fmt(income.variable_total)}</span>
             </div>
@@ -667,6 +690,7 @@ function IncomeCard({ income }) {
 
 /* -------- Goal modal -------- */
 function GoalModal({ open, goal, onClose, onSave }) {
+  const { t } = useI18n();
   const [name, setName] = useState('');
   const [target, setTarget] = useState('');
   const [alloc, setAlloc] = useState('');
@@ -689,29 +713,29 @@ function GoalModal({ open, goal, onClose, onSave }) {
       <form onSubmit={submit} className="stack" style={{ gap: 14 }}>
         <div className="between">
           <h3 className="h2" style={{ fontSize: 17 }}>
-            {goal ? 'Edit savings goal' : 'New savings goal'}
+            {goal ? t('dash_edit_goal') : t('dash_new_goal')}
           </h3>
           <button type="button" className="btn ghost icon" onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
         <div className="field">
-          <label>Goal name</label>
-          <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Trip to Tokyo" />
+          <label>{t('dash_goal_name')}</label>
+          <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t('dash_goal_eg')} />
         </div>
         <div className="grid grid-2" style={{ gap: 12 }}>
           <div className="field">
-            <label>Target amount (₪)</label>
+            <label>{t('dash_target_amt')}</label>
             <input className="input mono" type="number" step="100" value={target}
               onChange={(e) => setTarget(e.target.value)} placeholder="10000" />
           </div>
           <div className="field">
-            <label>Monthly allocation (₪)</label>
+            <label>{t('dash_mo_alloc')}</label>
             <input className="input mono" type="number" step="50" value={alloc}
               onChange={(e) => setAlloc(e.target.value)} placeholder="0" />
           </div>
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary"><Icon name="check" size={13} /> {goal ? 'Save' : 'Create'}</button>
+          <button type="button" className="btn" onClick={onClose}>{t('common_cancel')}</button>
+          <button type="submit" className="btn primary"><Icon name="check" size={13} /> {goal ? t('common_save') : t('common_create')}</button>
         </div>
       </form>
     </Modal>
@@ -720,8 +744,9 @@ function GoalModal({ open, goal, onClose, onSave }) {
 
 /* -------- Main Dashboard -------- */
 export default function Dashboard() {
+  const { lang, t } = useI18n();
   const [month, setMonth] = useState(currentMonth());
-  const recentMonths = useMemo(() => getRecentMonths(3), []);
+  const recentMonths = useMemo(() => getRecentMonths(3, lang), [lang]);
   const [pnl, setPnl] = useState(null);
   const [budgets, setBudgets] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -880,10 +905,10 @@ export default function Dashboard() {
   return (
     <div className="view-enter">
       <PageHeader
-        title={`Good ${today.getHours() < 12 ? 'morning' : today.getHours() < 18 ? 'afternoon' : 'evening'}`}
+        title={t(today.getHours() < 12 ? 'dash_morning' : today.getHours() < 18 ? 'dash_afternoon' : 'dash_evening')}
         sub={isCurrentMonth
-          ? `${today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${daysLeft} days left in the month`
-          : new Date(selY, selM - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+          ? `${today.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${daysLeft} ${t('dash_days_left')}`
+          : new Date(selY, selM - 1, 1).toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'long', year: 'numeric' })}
       />
 
       <div className="seg" style={{ marginBottom: 20 }}>
@@ -906,9 +931,9 @@ export default function Dashboard() {
             <h3 className="h2">Category Budgets</h3>
             <div className="row" style={{ gap: 12 }}>
               <span className="legend">
-                <div><span className="dot" style={{ background: 'var(--emerald)' }} /> &lt; 50%</div>
-                <div><span className="dot" style={{ background: 'var(--amber)' }} /> 50–80%</div>
-                <div><span className="dot" style={{ background: 'var(--rose)' }} /> &gt; 80%</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, direction: 'ltr' }}><span className="dot" style={{ background: 'var(--emerald)' }} /> &lt; 50%</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, direction: 'ltr' }}><span className="dot" style={{ background: 'var(--amber)' }} /> 50–80%</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, direction: 'ltr' }}><span className="dot" style={{ background: 'var(--rose)' }} /> &gt; 80%</div>
               </span>
             </div>
           </div>
