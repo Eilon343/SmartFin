@@ -597,7 +597,7 @@ function NetPosition({ pnl, expenses }) {
                 className={`chip ${pctChange.valid ? (up ? 'up' : 'down') : ''}`}
                 style={{ fontWeight: 600 }}
                 title={pnl.prev_is_mtd
-                  ? `Through day ${pnl.prev_as_of_day} of each month`
+                  ? (lang === 'he' ? `עד יום ${pnl.prev_as_of_day} בכל חודש` : `Through day ${pnl.prev_as_of_day} of each month`)
                   : undefined}
               >
                 <Icon name={pctChange.valid ? (up ? 'trending-up' : 'trending-down') : 'minus'} size={12} />
