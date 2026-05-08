@@ -37,13 +37,29 @@ function catColor(index) {
   return CAT_COLORS[index % CAT_COLORS.length];
 }
 
+// Currency: sign placed before symbol ("-₪221" not "₪-221"). Uses U+2212 for visual weight.
 function fmt(n, dp = 0) {
-  const sign = n < 0 ? '-' : '';
+  if (n == null || Number.isNaN(n)) return '—';
+  const sign = n < 0 ? '−' : '';
   return `${sign}₪${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
 }
 
 function fmtSign(n) {
+  if (n == null || Number.isNaN(n)) return '—';
   return (n >= 0 ? '+' : '−') + '₪' + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+// Safe MoM %: handles null prev (no data), zero prev (undefined ratio), and zero-to-zero.
+// Returns { value: number|null, label: string, valid: boolean }.
+function safePctChange(curr, prev) {
+  if (prev == null || curr == null) return { value: null, label: 'N/A', valid: false };
+  if (prev === 0) {
+    if (curr === 0) return { value: 0, label: '0.0%', valid: true };
+    // Undefined ratio (division by zero) — show N/A rather than fake Infinity/100%.
+    return { value: null, label: 'N/A', valid: false };
+  }
+  const v = ((curr - prev) / Math.abs(prev)) * 100;
+  return { value: v, label: `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`, valid: true };
 }
 
 function formatDate(isoOrDateStr) {
@@ -424,16 +440,15 @@ function TransactionsTable({ expenses }) {
       <div className="between" style={{ padding: '18px 22px 12px' }}>
         <div className="stack">
           <h3 className="h2">Recent Transactions</h3>
-          <span className="muted" style={{ fontSize: 12 }}>This month · from Telegram bot</span>
+          <span className="muted" style={{ fontSize: 12 }}>This month</span>
         </div>
-        <span className="chip"><Icon name="message-circle" size={11} /> tg-bot</span>
       </div>
       <div className="tx-row head">
         <div>Date</div><div>Description</div><div>Category</div><div style={{ textAlign: 'right' }}>Amount</div><div style={{ textAlign: 'right' }}>Source</div>
       </div>
       {expenses.slice(0, 12).map(e => (
         <div key={e.expense_id} className="tx-row">
-          <div className="mono muted" style={{ fontSize: 12 }}>{formatDate(e.created_at)}</div>
+          <div className="mono muted desktop-only" style={{ fontSize: 12 }}>{formatDate(e.created_at)}</div>
           <div className="stack" style={{ minWidth: 0 }}>
             <span style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {e.description || e.category_name}
@@ -505,13 +520,12 @@ function NetPosition({ pnl, expenses }) {
   const currMonthName = new Date(`${pnl.month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long' });
   const currYear = new Date(`${pnl.month}-01T00:00:00Z`).getFullYear();
 
-  let diff = 0;
-  let pctDiff = 0;
-  if (lastNet != null) {
-    diff = currentNet - lastNet;
-    pctDiff = lastNet !== 0 ? (diff / Math.abs(lastNet)) * 100 : 0;
-  }
+  const diff = lastNet != null ? currentNet - lastNet : 0;
+  const pctChange = safePctChange(currentNet, lastNet);
   const up = diff >= 0;
+  // Clarity: negative net = spending exceeds income. Avoid double-negatives in copy.
+  const isDeficit = currentNet < 0;
+  const isForecastDeficit = forecastNet < 0;
 
   const spendingSparkData = buildSpendingSparkline(expenses, pnl.month);
 
@@ -545,32 +559,37 @@ function NetPosition({ pnl, expenses }) {
             </span>
           </div>
 
-          <div style={{ padding: '12px 14px', background: forecastNet >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)', borderRadius: 8, borderLeft: `3px solid ${forecastColor}`, marginTop: 4 }}>
+          <div style={{ padding: '12px 14px', background: isForecastDeficit ? 'rgba(244, 63, 94, 0.1)' : 'rgba(16, 185, 129, 0.1)', borderRadius: 8, borderLeft: `3px solid ${forecastColor}`, marginTop: 4 }}>
             <div className="row" style={{ gap: 8, fontSize: 13, color: 'var(--text-1)' }}>
               <Icon name="sparkles" size={14} color={forecastColor} />
               <span>
-                Currently at <strong>₪{currentNet.toLocaleString()}</strong>, expected to reach <strong style={{ color: forecastColor }}>₪{forecastNet.toLocaleString()}</strong> by end of month.
+                {isDeficit
+                  ? <>Spending currently exceeds income by <strong>{fmt(Math.abs(currentNet))}</strong>. </>
+                  : <>Net position currently <strong>{fmt(currentNet)}</strong>. </>}
+                {isForecastDeficit
+                  ? <>Projected to end the month <strong style={{ color: forecastColor }}>{fmt(forecastNet)}</strong> in the red.</>
+                  : <>Projected to end the month at <strong style={{ color: forecastColor }}>{fmt(forecastNet)}</strong>.</>}
               </span>
             </div>
           </div>
 
           {lastNet != null && prevMonthName && (
             <div className="row" style={{ gap: 12, marginTop: 4 }}>
-              <span className={`chip ${up ? 'up' : 'down'}`} style={{ fontWeight: 600 }}>
-                <Icon name={up ? 'trending-up' : 'trending-down'} size={12} />
-                {up ? '+' : ''}{pctDiff.toFixed(1)}% vs last month
+              <span className={`chip ${pctChange.valid ? (up ? 'up' : 'down') : ''}`} style={{ fontWeight: 600 }}>
+                <Icon name={pctChange.valid ? (up ? 'trending-up' : 'trending-down') : 'minus'} size={12} />
+                {pctChange.label} vs last month
               </span>
               <span className="row" style={{ gap: 4, fontSize: 13, fontWeight: 500, color: 'var(--text-2)' }}>
                 <Icon name={up ? 'triangle' : 'triangle-down'} size={10} style={{ fill: 'currentColor', opacity: 0.8 }} />
-                {up ? '+' : '−'}₪{Math.abs(diff).toLocaleString('en-US', { maximumFractionDigits: 0 })} from {prevMonthName}
+                {fmtSign(diff)} from {prevMonthName}
               </span>
             </div>
           )}
 
           <div className="row" style={{ marginTop: 8, fontSize: 13, gap: 16, color: 'var(--text-2)', flexWrap: 'wrap' }}>
-            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--emerald)' }} /> In ₪{totalIncomeActual.toLocaleString()}</div>
-            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--rose)' }} /> Out ₪{pnl.total_expenses.toLocaleString()}</div>
-            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--indigo)' }} /> Save ₪{pnl.savings_allocation.toLocaleString()}</div>
+            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--emerald)' }} /> In {fmt(totalIncomeActual)}</div>
+            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--rose)' }} /> Out {fmt(pnl.total_expenses)}</div>
+            <div className="row" style={{ gap: 6 }}><span className="dot" style={{ background: 'var(--indigo)' }} /> Save {fmt(pnl.savings_allocation)}</div>
           </div>
         </div>
 
@@ -578,7 +597,7 @@ function NetPosition({ pnl, expenses }) {
           <div className="between" style={{ textTransform: 'uppercase', fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: 'var(--text-2)' }}>
             <span>Spending Trend</span>
             <span className="chip idg" style={{ textTransform: 'none', fontWeight: 600 }}>
-              ₪{pnl.total_expenses.toLocaleString()} spent
+              {fmt(pnl.total_expenses)} spent
             </span>
           </div>
           <div style={{ flex: 1, minHeight: 60, position: 'relative' }}>

@@ -108,7 +108,13 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
   }, [budget]);
 
   if (!budget) return null;
-  const catExpenses = expenses.filter(e => e.category_name === budget.category);
+  console.log('[cat-debug] budget.category_id:', budget.category_id, '| expenses.length:', expenses.length);
+  const catExpenses = expenses.filter(e =>
+    budget.category_id === null
+      ? e.category_name == null
+      : e.category_name === budget.category
+  );
+  console.log('[cat-debug] catExpenses.length:', catExpenses.length);
   const hasLimit = !budget.no_budget && budget.effective_limit != null;
   const p = hasLimit ? pct(budget.spent, budget.effective_limit) : 0;
 
@@ -168,9 +174,11 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
                 <span className="mono tnum" style={{ fontWeight: 700, fontSize: 22 }}>{fmt(budget.spent)}</span>
                 <div className="row" style={{ gap: 8 }}>
                   {hasLimit && <span className="mono muted">/ {fmt(budget.effective_limit)}</span>}
-                  <button className="btn ghost icon" style={{ width: 28, height: 28 }} onClick={() => setEditing(true)}>
-                    <Icon name="pencil" size={13} color="var(--text-3)" />
-                  </button>
+                  {budget.category_id !== null && (
+                    <button className="btn ghost icon" style={{ width: 28, height: 28 }} onClick={() => setEditing(true)}>
+                      <Icon name="pencil" size={13} color="var(--text-3)" />
+                    </button>
+                  )}
                 </div>
               </div>
               {hasLimit && (
@@ -192,7 +200,7 @@ function CategoryDrawer({ budget, color, icon, expenses, onClose, onBudgetSaved 
                   )}
                 </>
               )}
-              {!hasLimit && (
+              {!hasLimit && budget.category_id !== null && (
                 <button className="btn ghost" style={{ marginTop: 8, width: '100%', justifyContent: 'center', gap: 6 }}
                   onClick={() => setEditing(true)}>
                   <Icon name="plus" size={13} /> Set a budget limit
