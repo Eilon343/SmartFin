@@ -292,15 +292,33 @@ exports.getPnL = async (req, res) => {
     const month = req.query.month || new Date().toISOString().slice(0, 7);
     if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
+    // Month-to-Date clamp (`?as_of_day=N`): only count data for days 1..N of `month`.
+    // Used by the dashboard to compare same-length windows (e.g. May 1–8 vs April 1–8)
+    // so the previous month doesn't look artificially better/worse just because it's complete.
+    // Day is clamped to the queried month's actual length, which safely handles 31-vs-30/28/29
+    // and leap-year February.
+    const [yQ, mQ] = month.split('-').map(Number);
+    const daysInMonth = new Date(yQ, mQ, 0).getDate();
+    const asOfRaw = req.query.as_of_day != null ? Number(req.query.as_of_day) : NaN;
+    const asOfDay = Number.isFinite(asOfRaw)
+        ? Math.max(1, Math.min(daysInMonth, Math.floor(asOfRaw)))
+        : null;
+    const isMTD = asOfDay != null;
+    // Income, subscriptions, and savings allocations have no per-day granularity in their
+    // tables, so they are pro-rated by (asOfDay / daysInMonth) for fair MTD comparison.
+    const proRate = isMTD ? asOfDay / daysInMonth : 1;
+
     try {
-        // Build the list of prior months used to average variable income
         const pastMonths = getPastMonthsStr(month, VARIABLE_INCOME_LOOKBACK);
 
+        // Expenses have a real `created_at` timestamp, so we clamp them via SQL rather than pro-rating.
+        const expensesSql = isMTD
+            ? "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND created_at >= CONCAT(?, '-01') AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL ? DAY)"
+            : "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND created_at >= CONCAT(?, '-01') AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)";
+        const expensesParams = isMTD ? [user_id, month, month, asOfDay] : [user_id, month, month];
+
         const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows]] = await Promise.all([
-            db.query(
-                "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND created_at >= CONCAT(?, '-01') AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
-                [user_id, month, month]
-            ),
+            db.query(expensesSql, expensesParams),
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE AND paused = FALSE AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
                 [user_id, month]
@@ -313,12 +331,10 @@ exports.getPnL = async (req, res) => {
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'fixed' AND month = ?",
                 [user_id, month]
             ),
-            // Actual variable income recorded for the queried month
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month = ?",
                 [user_id, month]
             ),
-            // Variable income over the previous VARIABLE_INCOME_LOOKBACK months — fetch count of months with data for accurate average
             db.query(
                 `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(DISTINCT month) AS months_with_data FROM income WHERE user_id = ? AND type = 'variable' AND month IN (${pastMonths.map(() => '?').join(', ')})`,
                 [user_id, ...pastMonths]
@@ -326,45 +342,47 @@ exports.getPnL = async (req, res) => {
         ]);
 
         const total_expenses = Number(expRows[0].total);
-        const subscription_total = Number(subRows[0].total);
-        const savings_allocation = Number(savRows[0].total);
-        const fixed_income = Number(fixedRows[0].total);
-        const variable_actual = Number(varActualRows[0].total);
+        const subscription_total = Number(subRows[0].total) * proRate;
+        const savings_allocation = Number(savRows[0].total) * proRate;
+        const fixed_income = Number(fixedRows[0].total) * proRate;
+        const variable_actual = Number(varActualRows[0].total) * proRate;
 
-        // Divide by actual months with data, not always VARIABLE_INCOME_LOOKBACK (avoids near-zero avg for new users)
         const monthsWithData = Number(varPastRows[0].months_with_data) || 0;
-        const variable_avg = monthsWithData > 0 ? Number(varPastRows[0].total) / monthsWithData : 0;
+        const variable_avg = (monthsWithData > 0 ? Number(varPastRows[0].total) / monthsWithData : 0) * proRate;
 
         const actual_income = fixed_income + variable_actual;
         const current_net_pnl = actual_income - total_expenses - subscription_total - savings_allocation;
 
-        // Project expenses to end of month — only for current month; past months are already complete.
-        // Early-month guard: a single large purchase on day 1 would otherwise inflate the projection ~30x.
-        // Ramp the extrapolation factor from 0 (anchor at actual) to full (daily-rate × daysInMonth)
-        // over MIN_DAYS_FOR_FULL_PROJECTION, so the forecast stabilises as more data arrives.
+        // Forecast and projection only make sense for the live current month at full scope.
+        // For MTD requests (used as the prev-month comparison anchor) we keep projection = actual.
         const MIN_DAYS_FOR_FULL_PROJECTION = 5;
         const currentMonth = new Date().toISOString().slice(0, 7);
         let projected_expenses = total_expenses;
-        if (month === currentMonth && total_expenses > 0) {
+        if (!isMTD && month === currentMonth && total_expenses > 0) {
             const today = new Date();
-            const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
             const dayOfMonth = Math.max(1, today.getDate());
             const dailyRate = total_expenses / dayOfMonth;
             const naiveProjection = dailyRate * daysInMonth;
             if (dayOfMonth >= MIN_DAYS_FOR_FULL_PROJECTION) {
                 projected_expenses = naiveProjection;
             } else {
-                // Blend: weight = days_elapsed / MIN_DAYS. At day 1 mostly trust actual, by day 5 trust the projection.
                 const weight = dayOfMonth / MIN_DAYS_FOR_FULL_PROJECTION;
                 projected_expenses = total_expenses + (naiveProjection - total_expenses) * weight;
             }
         }
 
-        const projected_income = fixed_income + Math.max(variable_actual, variable_avg);
-        const forecasted_net_pnl = projected_income - projected_expenses - subscription_total - savings_allocation;
+        const projected_income = isMTD
+            ? actual_income
+            : fixed_income + Math.max(variable_actual, variable_avg);
+        const forecasted_net_pnl = isMTD
+            ? current_net_pnl
+            : projected_income - projected_expenses - subscription_total - savings_allocation;
 
         res.json({
             month,
+            as_of_day: asOfDay,
+            days_in_month: daysInMonth,
+            is_mtd: isMTD,
             fixed_income: Math.round(fixed_income * 100) / 100,
             variable_income_actual: Math.round(variable_actual * 100) / 100,
             variable_income_avg: Math.round(variable_avg * 100) / 100,

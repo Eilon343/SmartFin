@@ -593,9 +593,15 @@ function NetPosition({ pnl, expenses }) {
 
           {lastNet != null && prevMonthName && (
             <div className="row" style={{ gap: 12, marginTop: 4 }}>
-              <span className={`chip ${pctChange.valid ? (up ? 'up' : 'down') : ''}`} style={{ fontWeight: 600 }}>
+              <span
+                className={`chip ${pctChange.valid ? (up ? 'up' : 'down') : ''}`}
+                style={{ fontWeight: 600 }}
+                title={pnl.prev_is_mtd
+                  ? `Through day ${pnl.prev_as_of_day} of each month`
+                  : undefined}
+              >
                 <Icon name={pctChange.valid ? (up ? 'trending-up' : 'trending-down') : 'minus'} size={12} />
-                <span dir="ltr">{pctChange.label}</span> {t('dash_vs_last')}
+                <span dir="ltr">{pctChange.label}</span> {pnl.prev_is_mtd ? t('dash_vs_same_time_last') : t('dash_vs_last')}
               </span>
               <span className="row" style={{ gap: 4, fontSize: 13, fontWeight: 500, color: 'var(--text-2)' }}>
                 <Icon name={up ? 'triangle' : 'triangle-down'} size={10} style={{ fill: 'currentColor', opacity: 0.8 }} />
@@ -774,9 +780,19 @@ export default function Dashboard() {
     if (pm === 0) { pm = 12; py--; }
     const prevM = `${py}-${String(pm).padStart(2, '0')}`;
 
+    // MTD comparison: when viewing the live current month, ask the backend for the
+    // previous month clamped to today's day-of-month so we compare same-length windows.
+    // Backend clamps automatically if the previous month is shorter (e.g. asking for
+    // day 31 in February returns day 28/29).
+    const today = new Date();
+    const isLiveCurrentMonth = today.toISOString().slice(0, 7) === month;
+    const prevPnlUrl = isLiveCurrentMonth
+      ? `/pnl?month=${prevM}&as_of_day=${today.getDate()}`
+      : `/pnl?month=${prevM}`;
+
     Promise.allSettled([
       api.get(`/pnl?month=${month}`, { signal }),
-      api.get(`/pnl?month=${prevM}`, { signal }),
+      api.get(prevPnlUrl, { signal }),
       api.get(`/budgets?month=${month}`, { signal }),
       api.get(`/expenses?month=${month}`, { signal }),
       api.get(`/income/summary?month=${month}`, { signal }),
@@ -788,7 +804,9 @@ export default function Dashboard() {
         setPnl({
           ...p.value.data,
           last_net_pnl: prevP.status === 'fulfilled' ? (prevP.value.data.current_net_pnl ?? null) : null,
-          prev_month: prevM
+          prev_month: prevM,
+          prev_is_mtd: isLiveCurrentMonth,
+          prev_as_of_day: isLiveCurrentMonth ? today.getDate() : null,
         });
       }
       if (b.status === 'fulfilled') setBudgets(b.value.data.budgets || []);
