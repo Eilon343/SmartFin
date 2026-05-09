@@ -598,6 +598,7 @@ export default function Insights() {
   const [month, setMonth] = useState(months[0].iso);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [toast, setToast] = useState('');
   const abortRef = useRef(null);
 
@@ -606,9 +607,14 @@ export default function Insights() {
     const controller = new AbortController();
     abortRef.current = controller;
     setLoading(true);
+    setError(null);
     api.get(`/insights?month=${month}`, { signal: controller.signal })
-      .then(r => { if (!controller.signal.aborted) setData(r.data); })
-      .catch(err => { if (!controller.signal.aborted && err.code !== 'ERR_CANCELED') console.error(err); })
+      .then(r => { if (!controller.signal.aborted) { setData(r.data); setError(null); } })
+      .catch(err => {
+        if (controller.signal.aborted || err.code === 'ERR_CANCELED') return;
+        console.error('insights load error:', err);
+        setError(err?.response?.data?.error || 'Failed to load insights');
+      })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
   }, [month]);
 
@@ -644,7 +650,18 @@ export default function Insights() {
         }
       />
 
-      {loading || !data ? (
+      {error ? (
+        <div className="card card-pad-lg" style={{ textAlign: 'center', padding: '48px 24px' }}>
+          <Icon name="wifi-off" size={32} color="var(--text-3)" />
+          <div style={{ marginTop: 14, fontSize: 15, fontWeight: 600, color: 'var(--text-1)' }}>
+            Could not load insights
+          </div>
+          <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>{error}</div>
+          <button className="btn primary" style={{ marginTop: 20 }} onClick={load}>
+            <Icon name="refresh-cw" size={14} /> Retry
+          </button>
+        </div>
+      ) : loading || !data ? (
         <div className="stack" style={{ gap: 18 }}>
           <div className="grid ins-row-1" style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 18 }}>
             <Sk height={300} radius={14} />
