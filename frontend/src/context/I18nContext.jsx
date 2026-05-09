@@ -9,6 +9,7 @@ const translations = {
     nav_subscriptions: "Subscriptions",
     nav_savings: "Savings",
     nav_categories: "Categories",
+    nav_insights: "Insights",
     nav_settings: "Settings",
 
     // Settings
@@ -256,6 +257,7 @@ const translations = {
     nav_subscriptions: "מנויים",
     nav_savings: "חסכונות",
     nav_categories: "קטגוריות",
+    nav_insights: "תובנות",
     nav_settings: "הגדרות",
 
     // Settings
