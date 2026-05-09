@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS categories (
     user_id     BIGINT,
     name        VARCHAR(100) NOT NULL,
     is_base     BOOLEAN DEFAULT FALSE,
+    is_fixed    BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE(user_id, name)
 );
 
@@ -90,9 +91,14 @@ CREATE TABLE IF NOT EXISTS webhook_queue (
 );
 
 -- Base categories (user_id NULL = shared across all users)
-INSERT INTO categories (user_id, name, is_base)
-SELECT NULL, name, TRUE FROM (
-    SELECT 'Food' AS name UNION ALL SELECT 'Transport' UNION ALL SELECT 'Housing'
-    UNION ALL SELECT 'Entertainment' UNION ALL SELECT 'Shopping' UNION ALL SELECT 'Utilities'
+-- is_fixed=TRUE for categories that recur as flat monthly costs (not run-rated in forecast)
+INSERT INTO categories (user_id, name, is_base, is_fixed)
+SELECT NULL, name, TRUE, is_fixed FROM (
+    SELECT 'Food'          AS name, FALSE AS is_fixed UNION ALL
+    SELECT 'Transport',         FALSE UNION ALL
+    SELECT 'Housing',           TRUE  UNION ALL
+    SELECT 'Entertainment',     FALSE UNION ALL
+    SELECT 'Shopping',          FALSE UNION ALL
+    SELECT 'Utilities',         TRUE
 ) AS base
 WHERE NOT EXISTS (SELECT 1 FROM categories c2 WHERE c2.user_id IS NULL AND c2.name = base.name);
