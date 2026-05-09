@@ -57,9 +57,10 @@ exports.getInsights = async (req, res) => {
                 `SELECT category_id, DATE_FORMAT(created_at, '%Y-%m') AS mo, COALESCE(SUM(amount), 0) AS total
                  FROM expenses
                  WHERE user_id = ?
-                   AND DATE_FORMAT(created_at, '%Y-%m') IN (?, ?, ?)
+                   AND created_at >= CONCAT(?, '-01')
+                   AND created_at < CONCAT(?, '-01')
                  GROUP BY category_id, mo`,
-                [user_id, ...lookback]
+                [user_id, lookback[2], month]
             ),
             db.query(
                 `SELECT DAY(created_at) AS d, COALESCE(SUM(amount), 0) AS total
