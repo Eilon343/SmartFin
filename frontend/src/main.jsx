@@ -4,16 +4,25 @@ import './index.css'
 import App from './App.jsx'
 import { registerSW } from 'virtual:pwa-register'
 
-// Poll for SW updates every 60 s and on tab focus — critical for iPhone PWA
-// which doesn't re-check the SW file unless explicitly told to.
 registerSW({
   onRegisteredSW(swUrl, r) {
     if (!r) return;
-    // Check once immediately, then every 60 seconds
-    setInterval(() => r.update(), 60_000);
-    // Also check when the user returns to the app
+
+    // Reload the moment the new SW claims this client — gets fresh JS chunks.
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      window.location.reload();
+    });
+
+    // Safari caches the SW file aggressively via HTTP cache.
+    // Fetching with cache:'no-store' forces a byte-fresh response before update().
+    async function checkForUpdate() {
+      try { await fetch(swUrl, { cache: 'no-store' }); } catch (_) { /* offline */ }
+      await r.update();
+    }
+
+    setInterval(checkForUpdate, 60_000);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') r.update();
+      if (document.visibilityState === 'visible') checkForUpdate();
     });
   },
 });
