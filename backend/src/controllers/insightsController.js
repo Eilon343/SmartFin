@@ -39,7 +39,7 @@ exports.getInsights = async (req, res) => {
                 `SELECT category_id, COALESCE(SUM(amount), 0) AS total
                  FROM expenses
                  WHERE user_id = ?
-                   AND is_virtual = FALSE
+
                    AND created_at >= CONCAT(?, '-01')
                    AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
                  GROUP BY category_id`,
@@ -49,6 +49,7 @@ exports.getInsights = async (req, res) => {
                 `SELECT category_id, COALESCE(SUM(amount), 0) AS total
                  FROM expenses
                  WHERE user_id = ?
+
                    AND created_at >= CONCAT(?, '-01')
                    AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
                  GROUP BY category_id`,
@@ -58,6 +59,7 @@ exports.getInsights = async (req, res) => {
                 `SELECT category_id, DATE_FORMAT(created_at, '%Y-%m') AS mo, COALESCE(SUM(amount), 0) AS total
                  FROM expenses
                  WHERE user_id = ?
+
                    AND created_at >= CONCAT(?, '-01')
                    AND created_at < CONCAT(?, '-01')
                  GROUP BY category_id, mo`,
@@ -67,6 +69,7 @@ exports.getInsights = async (req, res) => {
                 `SELECT DAY(created_at) AS d, COALESCE(SUM(amount), 0) AS total
                  FROM expenses
                  WHERE user_id = ?
+
                    AND created_at >= CONCAT(?, '-01')
                    AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
                  GROUP BY DAY(created_at)
