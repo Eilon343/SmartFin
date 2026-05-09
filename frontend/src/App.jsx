@@ -10,6 +10,7 @@ import Subscriptions from './pages/Subscriptions';
 import Savings from './pages/Savings';
 import Income from './pages/Income';
 import Expenses from './pages/Expenses';
+import Insights from './pages/Insights';
 import Settings from './pages/Settings';
 import Layout from './components/Layout';
 import { I18nProvider } from './context/I18nContext';
@@ -84,6 +85,7 @@ export default function App() {
                 <Route path="savings" element={<Savings />} />
                 <Route path="income" element={<Income />} />
                 <Route path="expenses" element={<Expenses />} />
+                <Route path="insights" element={<Insights />} />
                 <Route path="settings" element={<Settings />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />

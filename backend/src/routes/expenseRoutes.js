@@ -5,6 +5,7 @@ const expenseController = require('../controllers/expenseController');
 const authController = require('../controllers/authController');
 const incomeController = require('../controllers/incomeController');
 const savingsController = require('../controllers/savingsController');
+const insightsController = require('../controllers/insightsController');
 
 router.post('/auth/login', authController.login);
 router.post('/auth/google', authController.googleLogin);
@@ -24,6 +25,7 @@ router.put('/subscriptions/:id', auth, expenseController.updateSubscription);
 router.put('/subscriptions/:id/pause', auth, expenseController.togglePauseSubscription);
 router.delete('/subscriptions/:id', auth, expenseController.deleteSubscription);
 router.get('/pnl', auth, expenseController.getPnL);
+router.get('/insights', auth, insightsController.getInsights);
 
 router.get('/income', auth, incomeController.getIncome);
 router.post('/income', auth, incomeController.addIncome);
