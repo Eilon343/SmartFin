@@ -39,6 +39,7 @@ exports.getInsights = async (req, res) => {
                 `SELECT category_id, COALESCE(SUM(amount), 0) AS total
                  FROM expenses
                  WHERE user_id = ?
+                   AND is_virtual = FALSE
                    AND created_at >= CONCAT(?, '-01')
                    AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
                  GROUP BY category_id`,
