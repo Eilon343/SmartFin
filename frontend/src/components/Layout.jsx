@@ -146,6 +146,11 @@ export default function Layout() {
             <span className="muted" style={{ fontSize: 12 }}>{t('settings_signout')}</span>
             <Icon name="log-out" size={13} color="var(--text-3)" />
           </div>
+          <div style={{ marginTop: 10, textAlign: 'center' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.03em' }}>
+              v{__APP_VERSION__}
+            </span>
+          </div>
         </div>
       </aside>
 
@@ -262,6 +267,11 @@ export default function Layout() {
           >
             <Icon name="log-out" size={14} /> {t('settings_signout')}
           </button>
+          <div style={{ marginTop: 12, textAlign: 'center' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.03em' }}>
+              v{__APP_VERSION__}
+            </span>
+          </div>
         </div>
       </Drawer>
 
