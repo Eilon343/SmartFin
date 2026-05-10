@@ -1,3 +1,5 @@
+name: smartfin
+
 services:
   db:
     image: mysql:8.0
@@ -13,7 +15,12 @@ services:
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - smartfin-network
-    mem_limit: 512m
+    mem_limit: 1g
+    command:
+      - --innodb-buffer-pool-size=256M
+      - --innodb-log-file-size=64M
+      - --max-connections=50
+      - --performance-schema=OFF
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
@@ -82,3 +89,5 @@ networks:
 
 volumes:
   smartfin_mysql_data:
+    external: true
+    name: smartfin_smartfin_mysql_data

@@ -14,6 +14,19 @@ jobs:
       - name: Inject .env from host
         run: cp /DATA/AppData/SmartFin/.env .env
 
+      - name: Backup DB before deploy
+        run: |
+          mkdir -p /DATA/AppData/SmartFin/backups
+          if docker ps --format '{{.Names}}' | grep -q '^smartfin_db$'; then
+            STAMP=$(date +%Y%m%d-%H%M%S)
+            docker exec smartfin_db sh -c \
+              'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers smartfin' \
+              > "/DATA/AppData/SmartFin/backups/smartfin-${STAMP}.sql"
+            ls -1t /DATA/AppData/SmartFin/backups/smartfin-*.sql | tail -n +31 | xargs -r rm --
+          else
+            echo "smartfin_db not running, skipping backup"
+          fi
+
       - name: Deploy stack
         run: docker compose up --build -d
 
