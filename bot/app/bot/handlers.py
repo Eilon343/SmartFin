@@ -10,16 +10,14 @@ from google.api_core import exceptions as google_exceptions
 from app.ai.ai_engine import parse_input
 from app.bot.states import ExpenseFlow, IncomeFlow, SubscriptionFlow
 
-ALLOWED_USER_IDS: set[int] = {int(uid) for uid in os.getenv("TELEGRAM_CHAT_ID", "").split(",") if uid.strip()}
-
 WITTY_UNSUPPORTED = (
     "🧙 I only do financial magic — expenses, income, subscriptions, and savings.\n"
     "Try: `55 NIS shawarma`, `got salary 15000`, or `add Netflix 39.90 monthly`."
 )
 
 
-def _auth(user_id: int) -> bool:
-    return user_id in ALLOWED_USER_IDS
+async def _auth(user_id: int, db_manager) -> bool:
+    return await db_manager.user_exists(user_id)
 
 
 
@@ -92,7 +90,7 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- Any non-command text → AI parse → route by intent ---
     @dp.message(F.text & ~F.text.startswith("/"), StateFilter(None))
     async def handle_text(message: types.Message, state: FSMContext):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
 
         await db_manager.ensure_user(message.from_user.id, message.from_user.username)
@@ -213,7 +211,7 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /input command (alias for backward compat) ---
     @dp.message(Command("input"))
     async def handle_input_command(message: types.Message, state: FSMContext):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         text = message.text.replace("/input", "").strip()
         if not text:
@@ -293,7 +291,7 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(ExpenseFlow.editing_amount)
     async def handle_edit_amount(message: types.Message, state: FSMContext):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         try:
             new_amount = float(message.text.strip())
@@ -314,7 +312,7 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(ExpenseFlow.editing_description)
     async def handle_edit_description(message: types.Message, state: FSMContext):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         data = await state.get_data()
         parsed = data["parsed"]
@@ -431,7 +429,7 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /add_category ---
     @dp.message(Command("add_category"))
     async def handle_add_category(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         name = message.text.replace("/add_category", "").strip()
         if not name:
@@ -447,7 +445,7 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /add_savings goal_name target_amount monthly_allocation ---
     @dp.message(Command("add_savings"))
     async def handle_add_savings(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         parts = message.text.replace("/add_savings", "").strip().split()
         if len(parts) < 2:
@@ -491,7 +489,7 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("list_savings"))
     async def handle_list_savings(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         goals = await db_manager.list_savings_goals(message.from_user.id)
         if not goals:
@@ -514,7 +512,7 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("deposit_savings"))
     async def handle_deposit_savings(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         parts = message.text.replace("/deposit_savings", "").strip().split()
         if len(parts) != 2 or not parts[0].isdigit():
@@ -535,7 +533,7 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /add_subscription ---
     @dp.message(Command("add_subscription"))
     async def handle_add_subscription(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         parts = message.text.replace("/add_subscription", "").strip().split()
         if len(parts) < 4:
@@ -571,7 +569,7 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("list_subscriptions"))
     async def handle_list_subscriptions(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         subs = await db_manager.list_subscriptions(message.from_user.id)
         if not subs:
@@ -588,7 +586,7 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("del_subscription"))
     async def handle_del_subscription(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         arg = message.text.replace("/del_subscription", "").strip()
         if not arg.isdigit():
@@ -600,7 +598,7 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /set_budget ---
     @dp.message(Command("set_budget"))
     async def handle_set_budget(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         parts = message.text.replace("/set_budget", "").strip().rsplit(maxsplit=1)
         if len(parts) != 2:
@@ -629,7 +627,7 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("list_budgets"))
     async def handle_list_budgets(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
             return
         budgets = await db_manager.list_budgets(message.from_user.id)
         if not budgets:
@@ -644,8 +642,6 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /link_google ---
     @dp.message(Command("link_google"))
     async def handle_link_google(message: types.Message):
-        if not _auth(message.from_user.id):
-            return
         email = message.text.replace("/link_google", "").strip()
         if not email or "@" not in email:
             await message.reply("Usage: `/link_google your@email.com`", parse_mode="Markdown")
@@ -665,7 +661,13 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /start ---
     @dp.message(Command("start"))
     async def handle_start(message: types.Message):
-        if not _auth(message.from_user.id):
+        if not await _auth(message.from_user.id, db_manager):
+            await message.reply(
+                "👋 Welcome to *SmartFin*!\n\n"
+                "Link your Google account first:\n"
+                "`/link_google your@email.com`",
+                parse_mode="Markdown",
+            )
             return
         await message.reply(
             "👋 Welcome to *SmartFin*!\n\n"

@@ -123,7 +123,7 @@ async function insertExpense(userId, parsed) {
     );
 }
 
-async function processAndSave(userId, text) {
+async function processAndSave(userId, text, chatId) {
     const items = await callGemini(text);
     const saved = [];
     for (const parsed of items) {
@@ -141,7 +141,8 @@ async function processAndSave(userId, text) {
         const lines = saved.map(p => `• *${p.currency || 'ILS'} ${Number(p.amount).toFixed(2)}* – ${p.merchant || 'Unknown'}`).join('\n');
         message = `✅ Logged ${saved.length} expenses:\n${lines}`;
     }
-    await sendTelegramMessage(userId, message);
+    const notifyChatId = chatId || userId;
+    await sendTelegramMessage(notifyChatId, message);
     return saved;
 }
 
@@ -149,11 +150,11 @@ async function processAndSave(userId, text) {
 async function processQueue() {
     try {
         const [rows] = await db.query(
-            "SELECT * FROM webhook_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 10"
+            "SELECT wq.*, u.telegram_chat_id FROM webhook_queue wq LEFT JOIN users u ON u.user_id = wq.user_id WHERE wq.status = 'pending' ORDER BY wq.created_at ASC LIMIT 10"
         );
         for (const row of rows) {
             try {
-                await processAndSave(row.user_id, row.text);
+                await processAndSave(row.user_id, row.text, row.telegram_chat_id);
                 await db.query("UPDATE webhook_queue SET status = 'processed' WHERE id = ?", [row.id]);
                 console.log(`Queue item ${row.id} processed`);
             } catch (err) {
@@ -194,23 +195,59 @@ exports.handleTelegram = async (req, res) => {
     const chatId = String(message.chat.id);
     const text = (message.text || '').trim();
 
-    // Only respond to the owner
-    if (chatId !== String(TELEGRAM_USER_ID)) return;
+    if (!text) return;
+
+    // Handle /link_google before user lookup
+    const linkMatch = text.match(/^\/link_google\s+(\S+)$/i);
+    if (linkMatch) {
+        const email = linkMatch[1].toLowerCase();
+        const [rows] = await db.query(
+            'SELECT user_id, telegram_chat_id FROM users WHERE google_email = ?',
+            [email]
+        );
+        if (rows.length > 0) {
+            const user = rows[0];
+            if (user.telegram_chat_id && user.telegram_chat_id !== chatId) {
+                await sendTelegramMessage(chatId, `❌ That email is already linked to a different Telegram account.`);
+                return;
+            }
+            await db.query('UPDATE users SET telegram_chat_id = ? WHERE user_id = ?', [chatId, user.user_id]);
+        } else {
+            // New user — Telegram chat ID becomes their user_id
+            await db.query(
+                'INSERT INTO users (user_id, google_email, telegram_chat_id) VALUES (?, ?, ?)',
+                [BigInt(chatId), email, chatId]
+            );
+        }
+        await sendTelegramMessage(chatId, `✅ Linked! Your Telegram is now connected to *${email}*. Start logging expenses anytime.`);
+        return;
+    }
+
+    // Look up user by Telegram chat ID
+    const [userRows] = await db.query(
+        'SELECT user_id FROM users WHERE telegram_chat_id = ?',
+        [chatId]
+    );
+    if (userRows.length === 0) {
+        await sendTelegramMessage(chatId,
+            `👋 Welcome to SmartFin Bot!\n\nLink your account first:\n\`/link_google your@email.com\`\n\nUse the same email you signed in with.`
+        );
+        return;
+    }
+    const userId = userRows[0].user_id;
 
     if (text === '/start' || text === '/help') {
         await sendTelegramMessage(chatId, HELP_TEXT);
         return;
     }
 
-    if (!text) return;
-
     try {
-        await processAndSave(chatId, text);
+        await processAndSave(userId, text, chatId);
     } catch (err) {
         if (err.unavailable) {
             await db.query(
                 "INSERT INTO webhook_queue (user_id, text, status) VALUES (?, ?, 'pending')",
-                [chatId, text]
+                [userId, text]
             );
             await sendTelegramMessage(chatId, `⏳ AI is temporarily unavailable. Queued — will log automatically when it recovers.`);
             return;
@@ -236,14 +273,21 @@ exports.handleApplePay = async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: 'text required' });
 
+    // Resolve owner's DB user_id from their Telegram chat ID
+    const [ownerRows] = await db.query(
+        'SELECT user_id FROM users WHERE telegram_chat_id = ?',
+        [String(TELEGRAM_USER_ID)]
+    );
+    const ownerId = ownerRows.length > 0 ? ownerRows[0].user_id : TELEGRAM_USER_ID;
+
     try {
-        const saved = await processAndSave(TELEGRAM_USER_ID, text);
+        const saved = await processAndSave(ownerId, text, TELEGRAM_USER_ID);
         res.json({ success: true, count: saved.length, parsed: saved });
     } catch (err) {
         if (err.unavailable) {
             await db.query(
                 "INSERT INTO webhook_queue (user_id, text, status) VALUES (?, ?, 'pending')",
-                [TELEGRAM_USER_ID, text]
+                [ownerId, text]
             );
             await sendTelegramMessage(
                 TELEGRAM_USER_ID,
