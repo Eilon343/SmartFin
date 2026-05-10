@@ -44,28 +44,15 @@ def _make_db(categories=None, budget=None, spending=0.0) -> MagicMock:
 
 class TestAuthGuard:
     @pytest.mark.asyncio
-    async def test_unauthorized_user_ignored(self):
-        """Message from user NOT in ALLOWED_USER_IDS must be silently ignored."""
-        from app.bot.handlers import register_handlers
-        from aiogram import Dispatcher
+    async def test_auth_checks_db_for_user_existence(self):
+        """_auth returns True if user exists in DB, False otherwise."""
+        import app.bot.handlers as h
 
-        msg = _make_message("55 coffee", user_id=9999)
-        db = _make_db()
+        db = AsyncMock()
+        db.user_exists = AsyncMock(side_effect=lambda uid: uid == 123456789)
 
-        with patch.dict("os.environ", {"TELEGRAM_CHAT_ID": "123456789"}):
-            # Re-import to pick up the patched env
-            import importlib
-            import app.bot.handlers as h
-            importlib.reload(h)
-
-            state = _make_state()
-            # The handler calls _auth() first — user 9999 not in allowed set
-            # We verify no DB calls were made
-            with patch("app.bot.handlers.parse_input", new_callable=AsyncMock) as mock_parse:
-                mock_parse.return_value = {"intent": "log_expense", "amount": 55}
-                # Directly test the _auth helper
-                assert not h._auth(9999)
-                assert h._auth(123456789)
+        assert await h._auth(123456789, db) is True
+        assert await h._auth(9999, db) is False
 
 
 # ── Intent routing ────────────────────────────────────────────────────────────

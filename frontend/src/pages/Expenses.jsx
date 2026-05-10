@@ -35,8 +35,11 @@ function fmt(n) {
   return `\u200E₪${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u200E`;
 }
 
-function SourceBadge({ source }) {
+function SourceBadge({ source, isVirtual }) {
   const { t } = useI18n();
+  if (isVirtual) {
+    return <span className="vr virtual">VIRTUAL</span>;
+  }
   if (source === 'apple_pay') {
     return (
       <span style={{
@@ -159,7 +162,7 @@ export default function Expenses() {
     }
   }
 
-  const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const total = expenses.filter(e => !e.is_virtual).reduce((s, e) => s + Number(e.amount), 0);
 
   if (loading) return (
     <div className="view-enter">
@@ -290,7 +293,7 @@ export default function Expenses() {
                       {e.currency !== 'ILS' ? `${e.currency} ` : '₪'}{fmt(e.amount)}
                     </td>
                     <td style={{ padding: '11px 16px', textAlign: lang === 'he' ? 'left' : 'right' }}>
-                      <SourceBadge source={e.source} />
+                      <SourceBadge source={e.source} isVirtual={!!e.is_virtual} />
                     </td>
                     <td style={{ padding: '11px 16px', textAlign: lang === 'he' ? 'left' : 'right', whiteSpace: 'nowrap' }}>
                       <button

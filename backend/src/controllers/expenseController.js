@@ -33,7 +33,7 @@ exports.getSummary = async (req, res) => {
             `SELECT COALESCE(c.name, 'Uncategorized') AS category, SUM(e.amount) AS total
              FROM expenses e
              LEFT JOIN categories c ON e.category_id = c.category_id
-             WHERE e.user_id = ? AND DATE_FORMAT(e.created_at, '%Y-%m') = ?
+             WHERE e.user_id = ? AND DATE_FORMAT(e.created_at, '%Y-%m') = ? AND e.is_virtual = FALSE
              GROUP BY e.category_id
              ORDER BY total DESC`,
             [user_id, month]
@@ -72,6 +72,7 @@ exports.getBudgets = async (req, res) => {
              WHERE user_id = ?
                AND created_at >= CONCAT(?, '-01')
                AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
+               AND is_virtual = FALSE
              GROUP BY category_id, mo`,
             [user_id, earliestStart, month]
         );
@@ -317,11 +318,11 @@ exports.getPnL = async (req, res) => {
         const expensesSql = isMTD
             ? `SELECT COALESCE(c.is_fixed, FALSE) AS is_fixed, COALESCE(SUM(e.amount), 0) AS total
                FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
-               WHERE e.user_id = ? AND e.created_at >= CONCAT(?, '-01') AND e.created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL ? DAY)
+               WHERE e.user_id = ? AND e.created_at >= CONCAT(?, '-01') AND e.created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL ? DAY) AND e.is_virtual = FALSE
                GROUP BY COALESCE(c.is_fixed, FALSE)`
             : `SELECT COALESCE(c.is_fixed, FALSE) AS is_fixed, COALESCE(SUM(e.amount), 0) AS total
                FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
-               WHERE e.user_id = ? AND e.created_at >= CONCAT(?, '-01') AND e.created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
+               WHERE e.user_id = ? AND e.created_at >= CONCAT(?, '-01') AND e.created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH) AND e.is_virtual = FALSE
                GROUP BY COALESCE(c.is_fixed, FALSE)`;
         const expensesParams = isMTD ? [user_id, month, month, asOfDay] : [user_id, month, month];
 

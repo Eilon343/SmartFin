@@ -2,8 +2,9 @@ CREATE TABLE IF NOT EXISTS users (
     user_id      BIGINT PRIMARY KEY,
     username     VARCHAR(100),
     pin_hash     VARCHAR(255),
-    google_email VARCHAR(255) UNIQUE,
-    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    google_email      VARCHAR(255) UNIQUE,
+    telegram_chat_id  VARCHAR(50) UNIQUE,
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -23,6 +24,7 @@ CREATE TABLE IF NOT EXISTS expenses (
     description VARCHAR(255),
     category_id INT,
     source      ENUM('bot', 'apple_pay', 'manual', 'web') DEFAULT 'bot',
+    is_virtual  BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     FOREIGN KEY (category_id) REFERENCES categories(category_id)
@@ -99,6 +101,7 @@ SELECT NULL, name, TRUE, is_fixed FROM (
     SELECT 'Housing',           TRUE  UNION ALL
     SELECT 'Entertainment',     FALSE UNION ALL
     SELECT 'Shopping',          FALSE UNION ALL
-    SELECT 'Utilities',         TRUE
+    SELECT 'Utilities',         TRUE  UNION ALL
+    SELECT 'Savings',           TRUE
 ) AS base
 WHERE NOT EXISTS (SELECT 1 FROM categories c2 WHERE c2.user_id IS NULL AND c2.name = base.name);

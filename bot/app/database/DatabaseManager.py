@@ -21,6 +21,13 @@ class DatabaseManager:
             self.pool = await aiomysql.create_pool(**self.config)
         return self.pool
 
+    async def user_exists(self, user_id: int) -> bool:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
+                return await cur.fetchone() is not None
+
     async def ensure_user(self, user_id: int, username: str | None):
         pool = await self.get_pool()
         async with pool.acquire() as conn:
@@ -75,13 +82,23 @@ class DatabaseManager:
                 return cur.lastrowid
 
     async def link_google_account(self, user_id: int, email: str) -> bool:
+        """Returns True on success, 'conflict' if email owned by another user."""
+        clean_email = email.lower().strip()
         try:
             pool = await self.get_pool()
             async with pool.acquire() as conn:
                 async with conn.cursor() as cur:
+                    # Check if email already belongs to a different user
                     await cur.execute(
-                        "UPDATE users SET google_email = %s WHERE user_id = %s",
-                        (email.lower().strip(), user_id),
+                        "SELECT user_id FROM users WHERE google_email = %s",
+                        (clean_email,),
+                    )
+                    row = await cur.fetchone()
+                    if row and row[0] != user_id:
+                        return "conflict"
+                    await cur.execute(
+                        "UPDATE users SET google_email = %s, telegram_chat_id = %s WHERE user_id = %s",
+                        (clean_email, str(user_id), user_id),
                     )
             return True
         except Exception as e:

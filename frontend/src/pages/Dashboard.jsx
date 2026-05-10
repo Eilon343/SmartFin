@@ -471,7 +471,9 @@ function TransactionsTable({ expenses }) {
             −{fmt(e.amount)}
           </div>
           <div className="desktop-only" style={{ textAlign: lang === 'he' ? 'left' : 'right' }}>
-            {e.source === 'apple_pay' ? (
+            {e.is_virtual ? (
+              <span className="vr virtual">VIRTUAL</span>
+            ) : e.source === 'apple_pay' ? (
               <span className="vr" style={{ background: '#1a1a1a', color: '#f5f5f7', fontSize: 10, fontWeight: 600 }}>Apple Pay</span>
             ) : e.source === 'bot' ? (
               <span className="vr" style={{ background: 'var(--indigo-soft)', color: 'var(--indigo)' }}>{t('bot')}</span>
@@ -499,6 +501,7 @@ function buildSpendingSparkline(expenses, month) {
 
   const dailyTotals = new Array(lastDay).fill(0);
   for (const e of expenses) {
+    if (e.is_virtual) continue;
     const d = new Date(e.created_at);
     // Guard: only include expenses that belong to the target month
     if (d.getFullYear() !== y || d.getMonth() + 1 !== m) continue;
