@@ -72,6 +72,12 @@ exports.depositToGoal = async (req, res) => {
         return res.status(400).json({ error: 'amount must be positive' });
     }
     try {
+        const [[goal]] = await db.query(
+            'SELECT name FROM savings_goals WHERE goal_id = ? AND user_id = ?',
+            [id, user_id]
+        );
+        if (!goal) return res.status(404).json({ error: 'Goal not found' });
+
         const [result] = await db.query(
             'UPDATE savings_goals SET saved_amount = saved_amount + ? WHERE goal_id = ? AND user_id = ?',
             [Number(amount), id, user_id]
@@ -79,6 +85,16 @@ exports.depositToGoal = async (req, res) => {
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Goal not found' });
         }
+
+        const [[savingsCat]] = await db.query(
+            "SELECT category_id FROM categories WHERE name = 'Savings' AND (user_id IS NULL OR user_id = ?) ORDER BY user_id IS NULL DESC LIMIT 1",
+            [user_id]
+        );
+        await db.query(
+            'INSERT INTO expenses (user_id, amount, currency, description, category_id, source, is_virtual) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [user_id, Number(amount), 'ILS', `Transfer → ${goal.name}`, savingsCat?.category_id || null, 'web', true]
+        );
+
         res.json({ success: true });
     } catch (err) {
         console.error('depositToGoal error:', err);
