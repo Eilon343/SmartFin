@@ -92,7 +92,7 @@ exports.depositToGoal = async (req, res) => {
         );
         await db.query(
             'INSERT INTO expenses (user_id, amount, currency, description, category_id, source, is_virtual) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [user_id, Number(amount), 'ILS', `Transfer → ${goal.name}`, savingsCat?.category_id || null, 'web', true]
+            [user_id, Number(amount), goal.currency || 'ILS', `Transfer → ${goal.name}`, savingsCat?.category_id || null, 'web', true]
         );
 
         res.json({ success: true });
