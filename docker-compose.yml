@@ -89,3 +89,5 @@ networks:
 
 volumes:
   smartfin_mysql_data:
+    external: true
+    name: smartfin_smartfin_mysql_data
