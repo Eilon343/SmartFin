@@ -222,7 +222,7 @@ exports.handleTelegram = async (req, res) => {
             // New user — Telegram chat ID becomes their user_id
             await db.query(
                 'INSERT INTO users (user_id, google_email, telegram_chat_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE google_email = VALUES(google_email), telegram_chat_id = VALUES(telegram_chat_id)',
-                [BigInt(chatId), email, chatId]
+                [chatId, email, chatId]
             );
         }
         await sendTelegramMessage(chatId, `✅ Linked! Your Telegram is now connected to *${email}*. Start logging expenses anytime.`);
