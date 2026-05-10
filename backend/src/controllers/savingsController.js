@@ -73,7 +73,7 @@ exports.depositToGoal = async (req, res) => {
     }
     try {
         const [[goal]] = await db.query(
-            'SELECT name FROM savings_goals WHERE goal_id = ? AND user_id = ?',
+            'SELECT name, currency FROM savings_goals WHERE goal_id = ? AND user_id = ?',
             [id, user_id]
         );
         if (!goal) return res.status(404).json({ error: 'Goal not found' });
