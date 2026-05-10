@@ -648,8 +648,10 @@ def register_handlers(dp: Dispatcher, db_manager):
             return
 
         await db_manager.ensure_user(message.from_user.id, message.from_user.username)
-        success = await db_manager.link_google_account(message.from_user.id, email)
-        if success:
+        result = await db_manager.link_google_account(message.from_user.id, email)
+        if result == "conflict":
+            await message.reply("❌ That email is already linked to a different Telegram account.")
+        elif result:
             await message.reply(
                 f"✅ Google account `{email}` linked to your Telegram.\n"
                 f"You can now sign in at the dashboard with that Google account.",

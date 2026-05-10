@@ -211,11 +211,17 @@ exports.handleTelegram = async (req, res) => {
                 await sendTelegramMessage(chatId, `❌ That email is already linked to a different Telegram account.`);
                 return;
             }
+            // Guard: this Telegram account already linked to a different email
+            const [chatRows] = await db.query('SELECT user_id FROM users WHERE telegram_chat_id = ?', [chatId]);
+            if (chatRows.length > 0 && String(chatRows[0].user_id) !== String(user.user_id)) {
+                await sendTelegramMessage(chatId, `❌ This Telegram account is already linked to another email.`);
+                return;
+            }
             await db.query('UPDATE users SET telegram_chat_id = ? WHERE user_id = ?', [chatId, user.user_id]);
         } else {
             // New user — Telegram chat ID becomes their user_id
             await db.query(
-                'INSERT INTO users (user_id, google_email, telegram_chat_id) VALUES (?, ?, ?)',
+                'INSERT INTO users (user_id, google_email, telegram_chat_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE google_email = VALUES(google_email), telegram_chat_id = VALUES(telegram_chat_id)',
                 [BigInt(chatId), email, chatId]
             );
         }
@@ -278,7 +284,10 @@ exports.handleApplePay = async (req, res) => {
         'SELECT user_id FROM users WHERE telegram_chat_id = ?',
         [String(TELEGRAM_USER_ID)]
     );
-    const ownerId = ownerRows.length > 0 ? ownerRows[0].user_id : TELEGRAM_USER_ID;
+    if (ownerRows.length === 0) {
+        return res.status(403).json({ error: 'Owner account not linked. Send /link_google to the bot first.' });
+    }
+    const ownerId = ownerRows[0].user_id;
 
     try {
         const saved = await processAndSave(ownerId, text, TELEGRAM_USER_ID);

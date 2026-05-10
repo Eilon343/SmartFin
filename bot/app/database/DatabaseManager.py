@@ -82,13 +82,23 @@ class DatabaseManager:
                 return cur.lastrowid
 
     async def link_google_account(self, user_id: int, email: str) -> bool:
+        """Returns True on success, 'conflict' if email owned by another user."""
+        clean_email = email.lower().strip()
         try:
             pool = await self.get_pool()
             async with pool.acquire() as conn:
                 async with conn.cursor() as cur:
+                    # Check if email already belongs to a different user
+                    await cur.execute(
+                        "SELECT user_id FROM users WHERE google_email = %s",
+                        (clean_email,),
+                    )
+                    row = await cur.fetchone()
+                    if row and row[0] != user_id:
+                        return "conflict"
                     await cur.execute(
                         "UPDATE users SET google_email = %s, telegram_chat_id = %s WHERE user_id = %s",
-                        (email.lower().strip(), str(user_id), user_id),
+                        (clean_email, str(user_id), user_id),
                     )
             return True
         except Exception as e:
