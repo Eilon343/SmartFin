@@ -1,4 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans:wght@400;500;600;700&display=swap');
+
+/* Force-load ₪ (U+20AA) glyph from Noto Sans so currency renders even if
+   Inter latin-ext subset fails to load. */
+@font-face {
+  font-family: 'CurrencyFallback';
+  src: local('Noto Sans'), local('Arial'), local('Segoe UI'), local('Arial Hebrew');
+  unicode-range: U+20AA;
+}
 
 :root, [data-theme="dark"] {
   color-scheme: dark;
@@ -72,7 +80,7 @@
 html, body { margin: 0; padding: 0; }
 /* iOS safe area handled per-component (topbar, drawer) not on body */
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Arial Hebrew', 'David', sans-serif;
+  font-family: 'CurrencyFallback', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Noto Sans', 'Arial Hebrew', 'David', sans-serif;
   background: var(--bg-1);
   color: var(--text-0);
   -webkit-font-smoothing: antialiased;
@@ -84,7 +92,7 @@ body {
   user-select: none;
   -webkit-user-select: none;
 }
-.mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-feature-settings: "tnum"; }
+.mono { font-family: 'CurrencyFallback', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, 'Noto Sans', monospace; font-feature-settings: "tnum"; }
 .tnum { font-variant-numeric: tabular-nums; }
 
 *::-webkit-scrollbar { width: 10px; height: 10px; }
