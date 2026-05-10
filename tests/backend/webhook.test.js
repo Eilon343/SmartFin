@@ -71,9 +71,14 @@ describe('POST /webhook/apple-pay - secret validation', () => {
 
 // ── Successful parse → expense inserted ──────────────────────────────────────
 
+function mockOwner() {
+    db.query.mockResolvedValueOnce([[{ user_id: 123456789 }]]); // owner telegram_chat_id lookup
+}
+
 describe('POST /webhook/apple-pay - successful Gemini parse', () => {
     it('parses transaction, inserts expense, notifies Telegram', async () => {
         mockGeminiSuccess({ amount: 55, currency: 'ILS', merchant: 'Cafe', category: 'Food', source: 'apple_pay' });
+        mockOwner();
         db.query
             .mockResolvedValueOnce([[{ category_id: 1 }]])  // category lookup
             .mockResolvedValueOnce([{ insertId: 100 }]);     // insert expense
@@ -86,11 +91,12 @@ describe('POST /webhook/apple-pay - successful Gemini parse', () => {
 
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
-        expect(res.body.parsed.amount).toBe(55);
+        expect(res.body.parsed[0].amount).toBe(55);
     });
 
     it('creates category when not found then inserts expense', async () => {
         mockGeminiSuccess({ amount: 120, currency: 'ILS', merchant: 'NewPlace', category: 'Shopping', source: 'apple_pay' });
+        mockOwner();
         db.query
             .mockResolvedValueOnce([[]])                     // category not found
             .mockResolvedValueOnce([{ insertId: 50 }])       // category created
@@ -108,6 +114,7 @@ describe('POST /webhook/apple-pay - successful Gemini parse', () => {
 
     it('handles null merchant — uses "Unknown merchant" in notification', async () => {
         mockGeminiSuccess({ amount: 55, currency: 'ILS', merchant: null, category: 'Other', source: 'apple_pay' });
+        mockOwner();
         db.query
             .mockResolvedValueOnce([[{ category_id: 8 }]])
             .mockResolvedValueOnce([{ insertId: 102 }]);
@@ -127,6 +134,7 @@ describe('POST /webhook/apple-pay - successful Gemini parse', () => {
 describe('POST /webhook/apple-pay - Gemini parse edge cases', () => {
     it('returns 500 when Gemini returns null amount', async () => {
         mockGeminiSuccess({ amount: null, currency: 'ILS', merchant: 'Cafe', category: 'Food', source: 'apple_pay' });
+        mockOwner();
 
         const res = await request(app)
             .post('/webhook/apple-pay')
@@ -145,6 +153,7 @@ describe('POST /webhook/apple-pay - Gemini unavailable', () => {
         mockGemini503();
         mockGemini503();
         mockGemini503();
+        mockOwner();
         // queue insert
         db.query.mockResolvedValueOnce([{ insertId: 1 }]);
         // Telegram notification

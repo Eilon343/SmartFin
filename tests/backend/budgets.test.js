@@ -24,13 +24,13 @@ describe('GET /api/budgets', () => {
         db.query
             .mockResolvedValueOnce([[{
                 budget_id: 1, category_id: 3, category: 'Food',
-                monthly_limit: 1500, carry_over: 1, start_month: '2026-04',
+                monthly_limit: 1500, carry_over: 0, start_month: '2026-04',
             }]])
             .mockResolvedValueOnce([[{ category_id: 3, mo: '2026-04', total: 450 }]])
             .mockResolvedValueOnce([[{ category_id: 3, category: 'Food' }]]);
 
         const res = await request(app)
-            .get('/api/budgets')
+            .get('/api/budgets?month=2026-04')
             .set(authHeader());
 
         expect(res.status).toBe(200);

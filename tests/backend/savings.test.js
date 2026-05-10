@@ -91,7 +91,11 @@ describe('POST /api/savings', () => {
 describe('POST /api/savings/:id/deposit', () => {
     it('adds funds to goal and returns 200', async () => {
         authOk();
-        db.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+        db.query
+            .mockResolvedValueOnce([[{ name: 'Tokyo flight' }]])  // SELECT goal
+            .mockResolvedValueOnce([{ affectedRows: 1 }])          // UPDATE saved_amount
+            .mockResolvedValueOnce([[{ category_id: 7 }]])         // SELECT Savings category
+            .mockResolvedValueOnce([{ insertId: 200 }]);           // INSERT virtual expense
 
         const res = await request(app)
             .post('/api/savings/1/deposit')
@@ -126,7 +130,7 @@ describe('POST /api/savings/:id/deposit', () => {
 
     it('returns 404 when goal not found or not owned by user', async () => {
         authOk();
-        db.query.mockResolvedValueOnce([{ affectedRows: 0 }]);
+        db.query.mockResolvedValueOnce([[]]); // SELECT goal returns empty
 
         const res = await request(app)
             .post('/api/savings/999/deposit')
