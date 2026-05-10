@@ -91,11 +91,16 @@ describe('POST /api/savings', () => {
 describe('POST /api/savings/:id/deposit', () => {
     it('adds funds to goal and returns 200', async () => {
         authOk();
+        db.getConnection.mockResolvedValue(db._conn);
+        db._conn.beginTransaction.mockResolvedValue();
+        db._conn.commit.mockResolvedValue();
+        db._conn.rollback.mockResolvedValue();
         db.query
-            .mockResolvedValueOnce([[{ name: 'Tokyo flight' }]])  // SELECT goal
-            .mockResolvedValueOnce([{ affectedRows: 1 }])          // UPDATE saved_amount
-            .mockResolvedValueOnce([[{ category_id: 7 }]])         // SELECT Savings category
-            .mockResolvedValueOnce([{ insertId: 200 }]);           // INSERT virtual expense
+            .mockResolvedValueOnce([[{ name: 'Tokyo flight', currency: 'ILS' }]])  // SELECT goal
+            .mockResolvedValueOnce([[{ category_id: 7 }]]);                         // SELECT Savings category
+        db._conn.query
+            .mockResolvedValueOnce([{ affectedRows: 1 }])   // UPDATE saved_amount (transactional)
+            .mockResolvedValueOnce([{ insertId: 200 }]);     // INSERT virtual expense (transactional)
 
         const res = await request(app)
             .post('/api/savings/1/deposit')
@@ -130,7 +135,7 @@ describe('POST /api/savings/:id/deposit', () => {
 
     it('returns 404 when goal not found or not owned by user', async () => {
         authOk();
-        db.query.mockResolvedValueOnce([[]]); // SELECT goal returns empty
+        db.query.mockResolvedValueOnce([[]]); // SELECT goal returns empty → 404 immediately
 
         const res = await request(app)
             .post('/api/savings/999/deposit')

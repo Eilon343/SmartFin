@@ -71,34 +71,45 @@ exports.depositToGoal = async (req, res) => {
     if (!amount || Number(amount) <= 0) {
         return res.status(400).json({ error: 'amount must be positive' });
     }
-    try {
-        const [[goal]] = await db.query(
-            'SELECT name, currency FROM savings_goals WHERE goal_id = ? AND user_id = ?',
-            [id, user_id]
-        );
-        if (!goal) return res.status(404).json({ error: 'Goal not found' });
 
-        const [result] = await db.query(
+    const [[goal]] = await db.query(
+        'SELECT name, currency FROM savings_goals WHERE goal_id = ? AND user_id = ?',
+        [id, user_id]
+    ).catch(() => [[]]);
+    if (!goal) return res.status(404).json({ error: 'Goal not found' });
+
+    const [[savingsCat]] = await db.query(
+        "SELECT category_id FROM categories WHERE name = 'Savings' AND (user_id IS NULL OR user_id = ?) ORDER BY user_id IS NULL DESC LIMIT 1",
+        [user_id]
+    ).catch(() => [[]]);
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        const [result] = await conn.query(
             'UPDATE savings_goals SET saved_amount = saved_amount + ? WHERE goal_id = ? AND user_id = ?',
             [Number(amount), id, user_id]
         );
         if (result.affectedRows === 0) {
+            await conn.rollback();
+            conn.release();
             return res.status(404).json({ error: 'Goal not found' });
         }
 
-        const [[savingsCat]] = await db.query(
-            "SELECT category_id FROM categories WHERE name = 'Savings' AND (user_id IS NULL OR user_id = ?) ORDER BY user_id IS NULL DESC LIMIT 1",
-            [user_id]
-        );
-        await db.query(
+        await conn.query(
             'INSERT INTO expenses (user_id, amount, currency, description, category_id, source, is_virtual) VALUES (?, ?, ?, ?, ?, ?, ?)',
             [user_id, Number(amount), goal.currency || 'ILS', `Transfer → ${goal.name}`, savingsCat?.category_id || null, 'web', true]
         );
 
+        await conn.commit();
         res.json({ success: true });
     } catch (err) {
+        await conn.rollback();
         console.error('depositToGoal error:', err);
         res.status(500).json({ error: 'Failed to deposit to goal' });
+    } finally {
+        conn.release();
     }
 };
 
