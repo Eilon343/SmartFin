@@ -52,7 +52,7 @@ function getRecentMonths(num, lang) {
 }
 
 /* ---------- Donut ---------- */
-function DonutChart({ slices, activeId, onSelect, size = 220, stroke = 28 }) {
+function DonutChart({ slices, activeId, pinnedId, onHover, onPin, size = 220, stroke = 28 }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const total = slices.reduce((s, x) => s + x.value, 0) || 1;
@@ -85,7 +85,9 @@ function DonutChart({ slices, activeId, onSelect, size = 220, stroke = 28 }) {
               transition: 'opacity .2s, stroke-width .2s',
               filter: isActive ? `drop-shadow(0 0 8px ${s.color}66)` : 'none',
             }}
-            onClick={() => onSelect(isActive ? null : s.id)}
+            onMouseEnter={() => onHover(s.id)}
+            onMouseLeave={() => onHover(null)}
+            onClick={() => onPin(pinnedId === s.id ? null : s.id)}
           />
         );
       })}
@@ -100,8 +102,10 @@ function ExpenseDonutCard({ data, t }) {
     .sort((a, b) => b.value - a.value), [data]);
 
   const total = slices.reduce((s, x) => s + x.value, 0);
-  const [active, setActive] = useState(null);
-  useEffect(() => { setActive(null); }, [data.month]);
+  const [pinned, setPinned] = useState(null);
+  const [hovered, setHovered] = useState(null);
+  const active = pinned ?? hovered;
+  useEffect(() => { setPinned(null); setHovered(null); }, [data.month]);
   const sel = active ? slices.find(s => s.id === active) : null;
   const delta = sel ? sel.value - sel.prev : null;
   const deltaPct = sel && sel.prev ? (delta / sel.prev) * 100 : null;
@@ -121,7 +125,7 @@ function ExpenseDonutCard({ data, t }) {
           {slices.length === 0 ? (
             <div className="muted" style={{ fontSize: 13, padding: 40 }}>{t('ins_donut_empty')}</div>
           ) : (
-            <DonutChart slices={slices} activeId={active} onSelect={setActive} size={220} stroke={28} />
+            <DonutChart slices={slices} activeId={active} pinnedId={pinned} onHover={setHovered} onPin={setPinned} size={220} stroke={28} />
           )}
           {slices.length > 0 && (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
@@ -151,7 +155,9 @@ function ExpenseDonutCard({ data, t }) {
             const isActive = active === s.id;
             return (
               <button key={s.id}
-                onClick={() => setActive(isActive ? null : s.id)}
+                onMouseEnter={() => setHovered(s.id)}
+                onMouseLeave={() => setHovered(null)}
+                onClick={() => setPinned(pinned === s.id ? null : s.id)}
                 style={{
                   display: 'grid', gridTemplateColumns: '12px 1fr auto', gap: 10, alignItems: 'center',
                   padding: '8px 10px', borderRadius: 8,
