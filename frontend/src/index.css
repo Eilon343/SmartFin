@@ -343,7 +343,8 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
   .tx-row.head { display: none; }
   .tx-row .tx-meta-mobile { display: flex; }
   .tx-row .desktop-only { display: none; }
-  .fab { bottom: calc(max(10px, calc(env(safe-area-inset-bottom, 0px) + 4px)) + 76px) !important; right: 16px !important; }
+  .fab { bottom: calc(max(10px, calc(env(safe-area-inset-bottom, 0px) + 4px)) + 76px) !important; right: 16px !important; width: 42px; height: 42px; border-radius: 13px; }
+  .fab svg { width: 18px; height: 18px; }
   /* hide edit/delete on sub rows — only show pause on mobile */
   .sub-row-edit, .sub-row-delete { display: none !important; }
 }
