@@ -441,18 +441,68 @@ function SubscriptionsMini({ subs, onTogglePause }) {
 /* -------- Transactions table -------- */
 function TransactionsTable({ expenses }) {
   const { lang, t } = useI18n();
+  const PAGE_SIZE = 5;
+  const [page, setPage] = useState(0);
+  const [sortBy, setSortBy] = useState('date');
+
+  const sorted = useMemo(() => {
+    const arr = [...expenses];
+    if (sortBy === 'amount') {
+      arr.sort((a, b) => Number(b.amount) - Number(a.amount));
+    } else if (sortBy === 'category') {
+      arr.sort((a, b) => (a.category_name || '').localeCompare(b.category_name || '', lang));
+    } else {
+      arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    }
+    return arr;
+  }, [expenses, sortBy, lang]);
+
+  useEffect(() => { setPage(0); }, [sortBy]);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageItems = sorted.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
+  const onTouchStart = (e) => {
+    const tp = e.touches[0];
+    touchStartX.current = tp.clientX;
+    touchStartY.current = tp.clientY;
+  };
+  const onTouchEnd = (e) => {
+    if (touchStartX.current == null) return;
+    const tp = e.changedTouches[0];
+    const dx = tp.clientX - touchStartX.current;
+    const dy = tp.clientY - touchStartY.current;
+    touchStartX.current = null;
+    if (Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx)) return;
+    const swipeNext = lang === 'he' ? dx > 0 : dx < 0;
+    if (swipeNext) setPage(p => Math.min(totalPages - 1, p + 1));
+    else setPage(p => Math.max(0, p - 1));
+  };
+
   return (
-    <div className="card" style={{ overflow: 'hidden' }}>
+    <div className="card" style={{ overflow: 'hidden', touchAction: 'pan-y' }} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       <div className="between" style={{ padding: '18px 22px 12px' }}>
         <div className="stack">
           <h3 className="h2">{t('dash_recent_tx')}</h3>
           <span className="muted" style={{ fontSize: 12 }}>{t('dash_this_month')}</span>
         </div>
+        <select
+          className="select"
+          style={{ height: 32, padding: '0 8px', fontSize: 12 }}
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value)}
+        >
+          <option value="date">{t('dash_sort_date')}</option>
+          <option value="amount">{t('dash_sort_amount')}</option>
+          <option value="category">{t('dash_sort_category')}</option>
+        </select>
       </div>
       <div className="tx-row head">
         <div>{t('dash_date')}</div><div>{t('dash_desc')}</div><div className="desktop-only">{t('dash_cat')}</div><div style={{ textAlign: lang === 'he' ? 'left' : 'right' }}>{t('dash_amt')}</div><div className="desktop-only" style={{ textAlign: lang === 'he' ? 'left' : 'right' }}>{t('dash_src')}</div>
       </div>
-      {expenses.slice(0, 12).map(e => (
+      {pageItems.map(e => (
         <div key={e.expense_id} className="tx-row">
           <div className="mono muted desktop-only" style={{ fontSize: 12 }}>{formatDate(e.created_at, lang)}</div>
           <div className="stack" style={{ minWidth: 0 }}>
@@ -487,6 +537,34 @@ function TransactionsTable({ expenses }) {
       ))}
       {expenses.length === 0 && (
         <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>{t('dash_no_tx_month')}</div>
+      )}
+      {sorted.length > PAGE_SIZE && (
+        <div className="between" style={{ padding: '12px 22px', borderTop: '1px solid var(--line)' }}>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, sorted.length)} / {sorted.length}
+          </span>
+          <div className="row" style={{ gap: 8 }}>
+            <button
+              className="btn"
+              style={{ height: 30, padding: '0 10px', fontSize: 12, opacity: safePage === 0 ? 0.5 : 1 }}
+              disabled={safePage === 0}
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+            >
+              <Icon name="chevron-left" size={14} />
+            </button>
+            <span className="muted" style={{ fontSize: 12, minWidth: 56, textAlign: 'center' }}>
+              {safePage + 1} / {totalPages}
+            </span>
+            <button
+              className="btn"
+              style={{ height: 30, padding: '0 10px', fontSize: 12, opacity: safePage >= totalPages - 1 ? 0.5 : 1 }}
+              disabled={safePage >= totalPages - 1}
+              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+            >
+              <Icon name="chevron-right" size={14} />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
