@@ -283,7 +283,8 @@ exports.togglePauseSubscription = async (req, res) => {
     }
 };
 
-// P&L = fixed_income + max(variable_actual, variable_avg) - projected_expenses - subscription_total - savings_allocations
+// P&L = fixed_income + max(variable_actual, variable_avg) - projected_expenses - subscription_total - savings_transferred
+// savings_transferred = SUM(amount) of virtual expenses this month (actual moves to savings goals).
 // variable_avg denominator = months with actual data (not always VARIABLE_INCOME_LOOKBACK)
 // projected_expenses scales actual spending to end of month (current month only)
 const VARIABLE_INCOME_LOOKBACK = 3;
@@ -305,8 +306,9 @@ exports.getPnL = async (req, res) => {
         ? Math.max(1, Math.min(daysInMonth, Math.floor(asOfRaw)))
         : null;
     const isMTD = asOfDay != null;
-    // Income, subscriptions, and savings allocations have no per-day granularity in their
-    // tables, so they are pro-rated by (asOfDay / daysInMonth) for fair MTD comparison.
+    // Income and subscriptions have no per-day granularity in their tables, so they are
+    // pro-rated by (asOfDay / daysInMonth) for fair MTD comparison. Savings transfers use
+    // created_at, so they are SQL-clamped instead.
     const proRate = isMTD ? asOfDay / daysInMonth : 1;
 
     try {
@@ -333,8 +335,16 @@ exports.getPnL = async (req, res) => {
                 [user_id, month]
             ),
             db.query(
-                "SELECT COALESCE(SUM(monthly_allocation), 0) AS total FROM savings_goals WHERE user_id = ? AND active = TRUE",
-                [user_id]
+                isMTD
+                    ? `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
+                       WHERE user_id = ? AND is_virtual = TRUE
+                         AND created_at >= CONCAT(?, '-01')
+                         AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL ? DAY)`
+                    : `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
+                       WHERE user_id = ? AND is_virtual = TRUE
+                         AND created_at >= CONCAT(?, '-01')
+                         AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)`,
+                isMTD ? [user_id, month, month, asOfDay] : [user_id, month, month]
             ),
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'fixed' AND month = ?",
@@ -358,7 +368,7 @@ exports.getPnL = async (req, res) => {
         }
         const total_expenses = fixed_sum + variable_sum;
         const subscription_total = Number(subRows[0].total) * proRate;
-        const savings_allocation = Number(savRows[0].total) * proRate;
+        const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total) * proRate;
         const variable_actual = Number(varActualRows[0].total) * proRate;
 

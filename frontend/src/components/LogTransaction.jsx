@@ -32,7 +32,6 @@ export default function LogTransaction({ open, onClose, onSaved }) {
   const [editingAmount, setEditingAmount] = useState(false);
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState('');
-  const [isVirtual, setIsVirtual] = useState(false);
   const [categories, setCategories] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -44,7 +43,6 @@ export default function LogTransaction({ open, onClose, onSaved }) {
       setAmount('');
       setDescription('');
       setCategoryId('');
-      setIsVirtual(false);
       setError('');
       setEditingAmount(false);
       api.get('/categories').then(r => setCategories(r.data)).catch(() => {});
@@ -68,7 +66,6 @@ export default function LogTransaction({ open, onClose, onSaved }) {
           description: description.trim() || undefined,
           category_id: categoryId || undefined,
           source: 'web',
-          is_virtual: isVirtual,
         });
       } else {
         await api.post('/income', {
@@ -175,26 +172,6 @@ export default function LogTransaction({ open, onClose, onSaved }) {
               ))}
             </div>
           </div>
-        )}
-
-        {tab === 'expense' && (
-          <label className="row" style={{ gap: 10, cursor: 'pointer', marginBottom: 16, padding: '12px 0', borderTop: '1px solid var(--line)' }} onClick={() => setIsVirtual(v => !v)}>
-            <div style={{
-              width: 44, height: 24, borderRadius: 999, flexShrink: 0,
-              background: isVirtual ? 'var(--indigo)' : 'var(--track)',
-              position: 'relative', transition: 'background .2s', cursor: 'pointer',
-            }}>
-              <div style={{
-                position: 'absolute', top: 3, left: isVirtual ? 23 : 3,
-                width: 18, height: 18, borderRadius: '50%', background: '#fff',
-                transition: 'left .2s',
-              }} />
-            </div>
-            <div className="stack" style={{ gap: 2 }}>
-              <span style={{ fontSize: 13, fontWeight: 500 }}>Mark as virtual expense</span>
-              <span className="muted-2" style={{ fontSize: 11 }}>Tracked but doesn't reduce real spending</span>
-            </div>
-          </label>
         )}
 
         {error && (

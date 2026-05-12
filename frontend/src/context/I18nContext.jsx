@@ -207,6 +207,9 @@ const translations = {
     sav_toast_upd: "Updated",
     sav_toast_cre: "Created",
     sav_toast_del: "Deleted",
+    sav_history: "History",
+    sav_hide_history: "Hide history",
+    sav_no_history: "No transfers yet.",
 
     // Categories
     cat_title: "Categories",
@@ -226,6 +229,7 @@ const translations = {
     web: "Web",
     manual: "Manual",
     apple_pay: "Apple Pay",
+    tx_savings: "Savings",
 
     // Categories
     Food: "Food",
@@ -520,6 +524,9 @@ const translations = {
     sav_toast_upd: "עודכן",
     sav_toast_cre: "נוצר",
     sav_toast_del: "נמחק",
+    sav_history: "היסטוריה",
+    sav_hide_history: "הסתר היסטוריה",
+    sav_no_history: "עוד לא בוצעו הפקדות.",
 
     // Categories
     cat_title: "קטגוריות",
@@ -539,6 +546,7 @@ const translations = {
     web: "רשת",
     manual: "ידני",
     apple_pay: "Apple Pay",
+    tx_savings: "חיסכון",
 
     // Categories
     Food: "אוכל",

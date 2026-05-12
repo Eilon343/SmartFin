@@ -37,6 +37,7 @@ router.get('/savings', auth, savingsController.getSavingsGoals);
 router.post('/savings', auth, savingsController.addSavingsGoal);
 router.put('/savings/:id', auth, savingsController.updateSavingsGoal);
 router.post('/savings/:id/deposit', auth, savingsController.depositToGoal);
+router.get('/savings/:id/history', auth, savingsController.getGoalHistory);
 router.delete('/savings/:id', auth, savingsController.deleteGoal);
 
 module.exports = router;

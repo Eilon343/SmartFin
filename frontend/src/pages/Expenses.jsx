@@ -38,7 +38,7 @@ function fmt(n) {
 function SourceBadge({ source, isVirtual }) {
   const { t } = useI18n();
   if (isVirtual) {
-    return <span className="vr virtual">VIRTUAL</span>;
+    return <span className="vr virtual">{t('tx_savings')}</span>;
   }
   if (source === 'apple_pay') {
     return (
