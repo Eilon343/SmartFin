@@ -93,7 +93,7 @@ function DonutChart({ slices, activeId, onSelect, size = 220, stroke = 28 }) {
   );
 }
 
-function ExpenseDonutCard({ data }) {
+function ExpenseDonutCard({ data, t }) {
   const slices = useMemo(() => (data.by_category || [])
     .map((c, i) => ({ id: c.category_id, name: c.name, color: catColor(i), value: c.spent, prev: c.prev_spent }))
     .filter(s => s.value > 0)
@@ -110,23 +110,23 @@ function ExpenseDonutCard({ data }) {
     <div className="card card-pad-lg">
       <div className="between" style={{ marginBottom: 14 }}>
         <div className="stack" style={{ gap: 4 }}>
-          <h3 className="h2">Expense Distribution</h3>
-          <span className="muted" style={{ fontSize: 12 }}>Click a slice to compare to previous month</span>
+          <h3 className="h2">{t('ins_donut_title')}</h3>
+          <span className="muted" style={{ fontSize: 12 }}>{t('ins_donut_sub')}</span>
         </div>
-        <span className="chip"><Icon name="pie-chart" size={11} /> {slices.length} categories</span>
+        <span className="chip"><Icon name="pie-chart" size={11} /> {slices.length} {t('ins_donut_cats')}</span>
       </div>
 
       <div className="ins-donut-grid">
         <div className="ins-donut" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
           {slices.length === 0 ? (
-            <div className="muted" style={{ fontSize: 13, padding: 40 }}>No spending data</div>
+            <div className="muted" style={{ fontSize: 13, padding: 40 }}>{t('ins_donut_empty')}</div>
           ) : (
             <DonutChart slices={slices} activeId={active} onSelect={setActive} size={220} stroke={28} />
           )}
           {slices.length > 0 && (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
               <div className="stack" style={{ alignItems: 'center', gap: 2 }}>
-                <span className="meta-label">{sel ? sel.name : 'Total'}</span>
+                <span className="meta-label">{sel ? sel.name : t('ins_donut_total')}</span>
                 <div className="mono tnum ins-donut-center" style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em' }} dir="ltr">
                   {fmt(sel ? sel.value : total)}
                 </div>
@@ -134,11 +134,11 @@ function ExpenseDonutCard({ data }) {
                   deltaPct != null && (
                     <span className={`chip ${delta > 0 ? 'down' : 'up'}`} style={{ marginTop: 4 }}>
                       <Icon name={delta > 0 ? 'trending-up' : 'trending-down'} size={11} />
-                      {delta > 0 ? '+' : ''}{deltaPct.toFixed(0)}% vs prev
+                      {delta > 0 ? '+' : ''}{deltaPct.toFixed(0)}% {t('ins_donut_vs_prev')}
                     </span>
                   )
                 ) : (
-                  <span className="muted" style={{ fontSize: 11.5 }}>spent this month</span>
+                  <span className="muted" style={{ fontSize: 11.5 }}>{t('ins_donut_spent_month')}</span>
                 )}
               </div>
             </div>
@@ -184,7 +184,7 @@ function ExpenseDonutCard({ data }) {
 }
 
 /* ---------- Momentum ---------- */
-function MomentumChart({ data }) {
+function MomentumChart({ data, t }) {
   const target = data.budget_total > 0 ? data.budget_total : data.three_mo_avg_total;
   const cum = [];
   let running = 0;
@@ -226,15 +226,15 @@ function MomentumChart({ data }) {
     <div className="card card-pad-lg">
       <div className="between" style={{ marginBottom: 4 }}>
         <div className="stack" style={{ gap: 4 }}>
-          <h3 className="h2">Daily Spending Momentum</h3>
+          <h3 className="h2">{t('ins_mom_title')}</h3>
           <span className="muted" style={{ fontSize: 12 }} dir="ltr">
-            Cumulative spend vs. ideal pacing line ({fmt(target)} target)
+            {t('ins_mom_sub').replace('{target}', fmt(target))}
           </span>
         </div>
         {target > 0 && (
           <span className={`chip ${isOver ? 'down' : 'up'}`}>
             <Icon name={isOver ? 'trending-up' : 'trending-down'} size={11} />
-            {isOver ? 'Over' : 'Under'} pace by {fmt(Math.abs(overUnder))}
+            {isOver ? t('ins_mom_over') : t('ins_mom_under')} {fmt(Math.abs(overUnder))}
           </span>
         )}
       </div>
@@ -273,7 +273,7 @@ function MomentumChart({ data }) {
               <line x1={idealStart[0]} y1={idealStart[1]} x2={idealEnd[0]} y2={idealEnd[1]}
                     stroke="var(--text-3)" strokeWidth="1.5" strokeDasharray="4 4" />
               <text x={idealEnd[0] - 8} y={idealEnd[1] - 6} textAnchor="end"
-                    fontSize="10.5" fill="var(--text-3)">ideal pace</text>
+                    fontSize="10.5" fill="var(--text-3)">{t('ins_mom_ideal')}</text>
             </>
           )}
 
@@ -309,7 +309,7 @@ function MomentumChart({ data }) {
             padding: '6px 10px', borderRadius: 8, fontSize: 11.5,
             boxShadow: '0 4px 12px rgba(0,0,0,0.08)', whiteSpace: 'nowrap',
           }}>
-            <span className="muted-2">Day {hover.day + 1}</span>
+            <span className="muted-2">{t('ins_mom_day')} {hover.day + 1}</span>
             <span className="mono tnum" style={{ fontWeight: 700, marginLeft: 8 }} dir="ltr">
               {fmt(hover.value)}
             </span>
@@ -318,10 +318,14 @@ function MomentumChart({ data }) {
       </div>
 
       <div className="legend" style={{ marginTop: 14, gap: 16 }}>
-        <div><span className="dot" style={{ background: 'var(--emerald)' }} /> Cumulative spend</div>
-        <div><span style={{ width: 14, height: 1.5, background: 'var(--text-3)', display: 'inline-block' }} /> Ideal pacing</div>
+        <div><span className="dot" style={{ background: 'var(--emerald)' }} /> {t('ins_mom_legend_cum')}</div>
+        <div><span style={{ width: 14, height: 1.5, background: 'var(--text-3)', display: 'inline-block' }} /> {t('ins_mom_legend_ideal')}</div>
         <div className="muted" style={{ marginLeft: 'auto', fontSize: 12 }} dir="ltr">
-          {fmt(todayValue)} of {fmt(target)} · day {data.today_day}/{data.days_in_month}
+          {t('ins_mom_summary')
+            .replace('{v}', fmt(todayValue))
+            .replace('{t}', fmt(target))
+            .replace('{d}', data.today_day)
+            .replace('{n}', data.days_in_month)}
         </div>
       </div>
     </div>
@@ -329,7 +333,7 @@ function MomentumChart({ data }) {
 }
 
 /* ---------- Trend bars ---------- */
-function TrendBars({ data }) {
+function TrendBars({ data, t }) {
   const rows = (data.by_category || [])
     .filter(c => c.spent > 0 || c.three_mo_avg > 0)
     .map((c, i) => {
@@ -342,8 +346,8 @@ function TrendBars({ data }) {
   if (rows.length === 0) {
     return (
       <div className="card card-pad-lg">
-        <h3 className="h2">Category Trends</h3>
-        <div className="muted" style={{ marginTop: 16, fontSize: 13 }}>No data yet — log some expenses first.</div>
+        <h3 className="h2">{t('ins_trend_title')}</h3>
+        <div className="muted" style={{ marginTop: 16, fontSize: 13 }}>{t('ins_trend_empty')}</div>
       </div>
     );
   }
@@ -354,12 +358,12 @@ function TrendBars({ data }) {
     <div className="card card-pad-lg">
       <div className="between" style={{ marginBottom: 14 }}>
         <div className="stack" style={{ gap: 4 }}>
-          <h3 className="h2">Category Trends</h3>
-          <span className="muted" style={{ fontSize: 12 }}>vs. your 3-month average</span>
+          <h3 className="h2">{t('ins_trend_title')}</h3>
+          <span className="muted" style={{ fontSize: 12 }}>{t('ins_trend_sub')}</span>
         </div>
         <div className="legend">
-          <div><span className="dot" style={{ background: 'var(--rose)' }} /> trending up</div>
-          <div><span className="dot" style={{ background: 'var(--emerald)' }} /> trending down</div>
+          <div><span className="dot" style={{ background: 'var(--rose)' }} /> {t('ins_trend_up')}</div>
+          <div><span className="dot" style={{ background: 'var(--emerald)' }} /> {t('ins_trend_down')}</div>
         </div>
       </div>
 
@@ -439,7 +443,7 @@ function TrendBars({ data }) {
 }
 
 /* ---------- Smart insights ---------- */
-function SmartInsights({ data }) {
+function SmartInsights({ data, t, lang }) {
   const totalSpent = data.total_spent;
   const avgTotal = data.three_mo_avg_total || 0;
   const dailyAvg = data.today_day > 0 ? totalSpent / data.today_day : 0;
@@ -461,23 +465,25 @@ function SmartInsights({ data }) {
 
   const cards = [];
 
+  const dayLabel = lang === 'he' ? projectedHitDay : ordinal(projectedHitDay);
+
   if (projectedHitDay) {
     cards.push({
-      tone: 'amb', toneVar: 'amber', icon: 'flame', title: 'Burn Rate Alert',
-      body: <>At your current pace, you'll reach your monthly average spend by the <strong>{ordinal(projectedHitDay)}</strong>. <span className="muted">Consider slowing down.</span></>,
-      stat: <span className="mono tnum">day {projectedHitDay}</span>,
+      tone: 'amb', toneVar: 'amber', icon: 'flame', title: t('ins_burn_title'),
+      body: <>{t('ins_burn_body_pre')} <strong>{dayLabel}</strong>{t('ins_burn_body_post')} <span className="muted">{t('ins_burn_slow')}</span></>,
+      stat: <span className="mono tnum">{t('ins_burn_stat')} {projectedHitDay}</span>,
     });
   }
 
   if (top) {
     cards.push({
       tone: topPct > 0 ? 'down' : 'up', toneVar: topPct > 0 ? 'rose' : 'emerald',
-      icon: catIcon(top.name), title: 'Top Category',
+      icon: catIcon(top.name), title: t('ins_top_title'),
       body: (
-        <>You've spent <strong dir="ltr">{fmt(top.spent)}</strong> on <strong>{top.name}</strong> this month
+        <>{t('ins_top_pre')} <strong dir="ltr">{fmt(top.spent)}</strong> {t('ins_top_on')} <strong>{top.name}</strong> {t('ins_top_this_month')}
         {top.three_mo_avg > 0 && (
-          <>, which is <strong style={{ color: topPct > 0 ? 'var(--rose)' : 'var(--emerald)' }}>
-            {topPct > 0 ? '+' : ''}{topPct.toFixed(0)}%</strong> {topPct > 0 ? 'higher' : 'lower'} than usual</>
+          <>{t('ins_top_which_is')} <strong style={{ color: topPct > 0 ? 'var(--rose)' : 'var(--emerald)' }}>
+            {topPct > 0 ? '+' : ''}{topPct.toFixed(0)}%</strong> {topPct > 0 ? t('ins_top_higher') : t('ins_top_lower')}</>
         )}.</>
       ),
       stat: <span className="mono tnum" dir="ltr">{fmt(top.spent)}</span>,
@@ -486,23 +492,23 @@ function SmartInsights({ data }) {
 
   if (we > 0 || wd > 0) {
     cards.push({
-      tone: 'idg', toneVar: 'indigo', icon: 'calendar-days', title: 'Weekend vs. Weekday',
+      tone: 'idg', toneVar: 'indigo', icon: 'calendar-days', title: t('ins_wknd_title'),
       body: (
-        <>You spend <strong>{Math.abs(wkndPct).toFixed(0)}% {isWkndHigher ? 'more' : 'less'}</strong> on weekends than weekdays.{' '}
-        <span className="muted" dir="ltr">({fmt(we)} vs {fmt(wd)} per day)</span></>
+        <>{t('ins_wknd_pre')} <strong>{Math.abs(wkndPct).toFixed(0)}% {isWkndHigher ? t('ins_wknd_more') : t('ins_wknd_less')}</strong> {t('ins_wknd_post')}{' '}
+        <span className="muted" dir="ltr">({fmt(we)} vs {fmt(wd)} {t('ins_wknd_per_day')})</span></>
       ),
       stat: (
         <div className="row" style={{ gap: 4 }}>
-          <span className="mono tnum" style={{ fontSize: 11 }} dir="ltr">WD {fmt(wd)}</span>
+          <span className="mono tnum" style={{ fontSize: 11 }} dir="ltr">{t('ins_wknd_wd')} {fmt(wd)}</span>
           <span className="muted-2">·</span>
-          <span className="mono tnum" style={{ fontSize: 11, color: 'var(--indigo)' }} dir="ltr">WE {fmt(we)}</span>
+          <span className="mono tnum" style={{ fontSize: 11, color: 'var(--indigo)' }} dir="ltr">{t('ins_wknd_we')} {fmt(we)}</span>
         </div>
       ),
     });
   }
 
   if (cards.length === 0) {
-    return <div className="card card-pad muted" style={{ fontSize: 13 }}>Not enough data this month yet.</div>;
+    return <div className="card card-pad muted" style={{ fontSize: 13 }}>{t('ins_smart_empty')}</div>;
   }
 
   return (
@@ -522,7 +528,7 @@ function SmartInsights({ data }) {
               <div className="stack">
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{c.title}</span>
                 <span className={`chip ${c.tone}`} style={{ alignSelf: 'flex-start', marginTop: 2 }}>
-                  <Icon name="sparkles" size={10} /> insight
+                  <Icon name="sparkles" size={10} /> {t('ins_smart_chip')}
                 </span>
               </div>
             </div>
@@ -536,7 +542,7 @@ function SmartInsights({ data }) {
 }
 
 /* ---------- Export menu ---------- */
-function ExportMenu({ onExport }) {
+function ExportMenu({ onExport, t }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -547,17 +553,17 @@ function ExportMenu({ onExport }) {
   }, [open]);
 
   const opts = [
-    { id: 'pdf', icon: 'file-text', label: 'Monthly PDF report', sub: 'Charts + insights' },
-    { id: 'xlsx', icon: 'file-spreadsheet', label: 'Excel (.xlsx)', sub: 'Raw transactions' },
-    { id: 'csv', icon: 'file', label: 'CSV', sub: 'For spreadsheets' },
+    { id: 'pdf', icon: 'file-text', label: t('ins_export_pdf'), sub: t('ins_export_pdf_sub') },
+    { id: 'xlsx', icon: 'file-spreadsheet', label: t('ins_export_xlsx'), sub: t('ins_export_xlsx_sub') },
+    { id: 'csv', icon: 'file', label: t('ins_export_csv'), sub: t('ins_export_csv_sub') },
   ];
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button className="btn primary" onClick={() => setOpen(o => !o)}>
         <Icon name="download" size={14} />
-        <span className="ins-export-label-long">Download report</span>
-        <span className="ins-export-label-short">Report</span>
+        <span className="ins-export-label-long">{t('ins_export_long')}</span>
+        <span className="ins-export-label-short">{t('ins_export_short')}</span>
         <Icon name="chevron-down" size={12} style={{ marginLeft: 2 }} />
       </button>
       {open && (
@@ -593,7 +599,7 @@ function ExportMenu({ onExport }) {
 
 /* ---------- Page ---------- */
 export default function Insights() {
-  const { lang } = useI18n();
+  const { lang, t } = useI18n();
   const months = useMemo(() => getRecentMonths(4, lang), [lang]);
   const [month, setMonth] = useState(months[0].iso);
   const [data, setData] = useState(null);
@@ -613,7 +619,7 @@ export default function Insights() {
       .catch(err => {
         if (controller.signal.aborted || err.code === 'ERR_CANCELED') return;
         console.error('insights load error:', err);
-        setError(err?.response?.data?.error || 'Failed to load insights');
+        setError(err?.response?.data?.error || t('ins_err_default'));
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
   }, [month]);
@@ -626,7 +632,11 @@ export default function Insights() {
 
   const onExport = (kind) => {
     const sel = months.find(m => m.iso === month);
-    setToast(`Generating ${kind.toUpperCase()} report for ${sel?.longLabel || month}…`);
+    setToast(
+      t('ins_export_toast')
+        .replace('{kind}', kind.toUpperCase())
+        .replace('{label}', sel?.longLabel || month)
+    );
   };
 
   const sel = months.find(m => m.iso === month);
@@ -634,18 +644,18 @@ export default function Insights() {
   return (
     <div className="view-enter ins-page">
       <PageHeader
-        title="Financial Insights"
-        sub={`Deep spending analytics for ${sel?.longLabel || month}`}
+        title={t('ins_title')}
+        sub={`${t('ins_sub')} ${sel?.longLabel || month}`}
         actions={
           <>
-            <div className="seg" role="tablist" aria-label="Select month">
+            <div className="seg" role="tablist" aria-label={t('ins_select_month')}>
               {months.map(m => (
                 <button key={m.iso} className={month === m.iso ? 'on' : ''} onClick={() => setMonth(m.iso)}>
                   {m.label}
                 </button>
               ))}
             </div>
-            <ExportMenu onExport={onExport} />
+            <ExportMenu onExport={onExport} t={t} />
           </>
         }
       />
@@ -654,11 +664,11 @@ export default function Insights() {
         <div className="card card-pad-lg" style={{ textAlign: 'center', padding: '48px 24px' }}>
           <Icon name="wifi-off" size={32} color="var(--text-3)" />
           <div style={{ marginTop: 14, fontSize: 15, fontWeight: 600, color: 'var(--text-1)' }}>
-            Could not load insights
+            {t('ins_err_title')}
           </div>
           <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>{error}</div>
           <button className="btn primary" style={{ marginTop: 20 }} onClick={load}>
-            <Icon name="refresh-cw" size={14} /> Retry
+            <Icon name="refresh-cw" size={14} /> {t('ins_retry')}
           </button>
         </div>
       ) : loading || !data ? (
@@ -676,27 +686,27 @@ export default function Insights() {
         <div className="ins-stack" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           <div className="grid ins-row-1" style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 18 }}>
             <div className="ins-anim" style={{ animationDelay: '0ms' }}>
-              <ExpenseDonutCard data={data} />
+              <ExpenseDonutCard data={data} t={t} />
             </div>
             <div className="ins-anim" style={{ animationDelay: '70ms' }}>
-              <MomentumChart data={data} />
+              <MomentumChart data={data} t={t} />
             </div>
           </div>
 
           <div className="ins-anim" style={{ animationDelay: '140ms' }}>
-            <TrendBars data={data} />
+            <TrendBars data={data} t={t} />
           </div>
 
           <div className="ins-anim" style={{ animationDelay: '210ms' }}>
             <div className="between" style={{ marginBottom: 12 }}>
               <h3 className="h2" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Icon name="sparkles" size={15} color="var(--indigo)" /> Smart Insights
+                <Icon name="sparkles" size={15} color="var(--indigo)" /> {t('ins_smart_title')}
               </h3>
               <span className="muted-2" style={{ fontSize: 11.5 }}>
-                generated {new Date().toLocaleString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                {t('ins_smart_generated')} {new Date().toLocaleString(lang === 'he' ? 'he-IL' : 'en-US', { hour: 'numeric', minute: '2-digit' })}
               </span>
             </div>
-            <SmartInsights data={data} />
+            <SmartInsights data={data} t={t} lang={lang} />
           </div>
         </div>
       )}

@@ -949,7 +949,7 @@ export default function Dashboard() {
     ? new Date(selY, selM, 0).getDate() - today.getDate()
     : null;
 
-  if (loading) {
+  if (loading && !pnl) {
     return (
       <div className="view-enter" style={{ padding: '20px 0' }}>
         {/* PageHeader */}
@@ -1002,7 +1002,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="view-enter">
+    <div className="view-enter" style={{ opacity: loading ? 0.6 : 1, transition: 'opacity 150ms ease' }}>
       <PageHeader
         title={t(today.getHours() < 12 ? 'dash_morning' : today.getHours() < 18 ? 'dash_afternoon' : 'dash_evening')}
         sub={isCurrentMonth
