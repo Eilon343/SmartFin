@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useI18n } from '../context/I18nContext';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
@@ -38,7 +38,7 @@ function fmt(n) {
 function SourceBadge({ source, isVirtual }) {
   const { t } = useI18n();
   if (isVirtual) {
-    return <span className="vr virtual">VIRTUAL</span>;
+    return <span className="vr virtual">{t('tx_savings')}</span>;
   }
   if (source === 'apple_pay') {
     return (
@@ -75,6 +75,16 @@ export default function Expenses() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
+  const [page, setPage] = useState(0);
+  const [sortBy, setSortBy] = useState('date');
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 760px)');
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  const PAGE_SIZE = isMobile ? 5 : 10;
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -164,6 +174,60 @@ export default function Expenses() {
 
   const total = expenses.filter(e => !e.is_virtual).reduce((s, e) => s + Number(e.amount), 0);
 
+  const sortedExpenses = useMemo(() => {
+    const arr = [...expenses];
+    if (sortBy === 'amount') {
+      arr.sort((a, b) => Number(b.amount) - Number(a.amount));
+    } else if (sortBy === 'category') {
+      arr.sort((a, b) => (a.category_name || '').localeCompare(b.category_name || '', lang));
+    } else {
+      arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    }
+    return arr;
+  }, [expenses, sortBy, lang]);
+
+  useEffect(() => { setPage(0); }, [month, sortBy]);
+  const totalPages = Math.max(1, Math.ceil(sortedExpenses.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageItems = sortedExpenses.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
+  const touchScroller = useRef(null);
+  const touchStartScrollLeft = useRef(0);
+  const onTouchStart = (e) => {
+    const tp = e.touches[0];
+    touchStartX.current = tp.clientX;
+    touchStartY.current = tp.clientY;
+    const scroller = e.target.closest('[data-tx-scroll]');
+    if (scroller && scroller.scrollWidth > scroller.clientWidth) {
+      touchScroller.current = scroller;
+      touchStartScrollLeft.current = scroller.scrollLeft;
+    } else {
+      touchScroller.current = null;
+    }
+  };
+  const onTouchEnd = (e) => {
+    if (touchStartX.current == null) return;
+    const tp = e.changedTouches[0];
+    const dx = tp.clientX - touchStartX.current;
+    const dy = tp.clientY - touchStartY.current;
+    const scroller = touchScroller.current;
+    const startScroll = touchStartScrollLeft.current;
+    touchStartX.current = null;
+    touchScroller.current = null;
+    if (Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx)) return;
+    if (scroller) {
+      const scrollDelta = scroller.scrollLeft - startScroll;
+      // If table actually scrolled during gesture → user wanted to scroll table, not paginate
+      if (Math.abs(scrollDelta) > 4) return;
+      // Table didn't move (already at edge or content fits) → paginate
+    }
+    const swipeNext = lang === 'he' ? dx > 0 : dx < 0;
+    if (swipeNext) setPage(p => Math.min(totalPages - 1, p + 1));
+    else setPage(p => Math.max(0, p - 1));
+  };
+
   if (loading) return (
     <div className="view-enter">
       <Sk width="32%" height={28} style={{ marginBottom: 8 }} />
@@ -218,15 +282,14 @@ export default function Expenses() {
         <div className="card card-pad-lg">
           <span className="meta-label">{t('exp_total')}</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
-            <span className="ccy" style={{ fontSize: 20 }}>₪</span>{fmt(total)}
+            {fmt(total)}
           </div>
           <span className="muted" style={{ fontSize: 12 }}>{expenses.length} {t('exp_tx_count')}</span>
         </div>
         <div className="card card-pad-lg">
           <span className="meta-label">{t('exp_avg')}</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
-            <span className="ccy" style={{ fontSize: 20 }}>₪</span>
-            {expenses.length > 0 ? fmt(total / expenses.length) : '0.00'}
+            {expenses.length > 0 ? fmt(total / expenses.length) : '₪0.00'}
           </div>
           <span className="muted" style={{ fontSize: 12 }}>{t('inc_this_month')}</span>
         </div>
@@ -240,12 +303,24 @@ export default function Expenses() {
       </div>
 
       {/* Table */}
-      <div className="card" style={{ overflow: 'hidden' }}>
+      <div className="card" style={{ overflow: 'hidden', touchAction: 'pan-y' }} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <div className="between" style={{ padding: '18px 22px' }}>
-          <h3 className="h2">{t('exp_tx_month')} — {month}</h3>
-          <button className="btn primary" onClick={openAdd}>
-            <Icon name="plus" size={14} /> {t('common_add')}
-          </button>
+          <h3 className="h2">{t('exp_tx_month')} — {new Date(`${month}-01T00:00:00`).toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'long', year: 'numeric' })}</h3>
+          <div className="row" style={{ gap: 8 }}>
+            <select
+              className="select"
+              style={{ height: 32, padding: '0 8px', fontSize: 12 }}
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value)}
+            >
+              <option value="date">{t('dash_sort_date')}</option>
+              <option value="amount">{t('dash_sort_amount')}</option>
+              <option value="category">{t('dash_sort_category')}</option>
+            </select>
+            <button className="btn primary" style={{ height: 32, padding: '0 10px', fontSize: 12 }} onClick={openAdd}>
+              <Icon name="plus" size={12} /> {t('common_add')}
+            </button>
+          </div>
         </div>
 
         {expenses.length === 0 ? (
@@ -253,7 +328,7 @@ export default function Expenses() {
             {t('exp_no_tx')} {month}.
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div data-tx-scroll style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr>
@@ -273,13 +348,13 @@ export default function Expenses() {
                 </tr>
               </thead>
               <tbody>
-                {expenses.map(e => (
+                {pageItems.map(e => (
                   <tr
                     key={e.expense_id}
                     style={{ borderBottom: '1px solid var(--line)' }}
                   >
                     <td style={{ padding: '11px 16px', color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
-                      {e.created_at?.slice(0, 10)}
+                      {e.created_at ? new Date(e.created_at).toLocaleDateString('he-IL') : ''}
                     </td>
                     <td style={{ padding: '11px 16px', color: 'var(--text-1)', maxWidth: 220 }}>
                       {t(e.description || e.category_name) || (e.description || e.category_name) || <span style={{ color: 'var(--text-3)' }}>—</span>}
@@ -290,7 +365,7 @@ export default function Expenses() {
                       </span>
                     </td>
                     <td style={{ padding: '11px 16px', textAlign: lang === 'he' ? 'left' : 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }} dir="ltr">
-                      {e.currency !== 'ILS' ? `${e.currency} ` : '₪'}{fmt(e.amount)}
+                      {e.currency !== 'ILS' ? `${e.currency} ` : ''}{fmt(e.amount)}
                     </td>
                     <td style={{ padding: '11px 16px', textAlign: lang === 'he' ? 'left' : 'right' }}>
                       <SourceBadge source={e.source} isVirtual={!!e.is_virtual} />
@@ -317,6 +392,34 @@ export default function Expenses() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {sortedExpenses.length > PAGE_SIZE && (
+          <div className="between" style={{ padding: '12px 22px', borderTop: '1px solid var(--line)' }}>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, sortedExpenses.length)} / {sortedExpenses.length}
+            </span>
+            <div className="row" style={{ gap: 8 }}>
+              <button
+                className="btn"
+                style={{ height: 30, padding: '0 10px', fontSize: 12, opacity: safePage === 0 ? 0.5 : 1 }}
+                disabled={safePage === 0}
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+              >
+                <Icon name="chevron-left" size={14} />
+              </button>
+              <span className="muted" style={{ fontSize: 12, minWidth: 56, textAlign: 'center' }}>
+                {safePage + 1} / {totalPages}
+              </span>
+              <button
+                className="btn"
+                style={{ height: 30, padding: '0 10px', fontSize: 12, opacity: safePage >= totalPages - 1 ? 0.5 : 1 }}
+                disabled={safePage >= totalPages - 1}
+                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+              >
+                <Icon name="chevron-right" size={14} />
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -401,7 +504,7 @@ export default function Expenses() {
             <strong style={{ color: 'var(--text-0)' }} dir="ltr">
               {t(deleteTarget?.description) || deleteTarget?.description || `₪${fmt(deleteTarget?.amount ?? 0)}`}
             </strong>{' '}
-            {t('dash_from')} {deleteTarget?.created_at?.slice(0, 10)}?
+            {t('dash_from')} {deleteTarget?.created_at ? new Date(deleteTarget.created_at).toLocaleDateString('he-IL') : ''}?
           </p>
           {error && <div style={{ color: 'var(--rose)', fontSize: 13, marginBottom: 15 }}>{error}</div>}
           <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>

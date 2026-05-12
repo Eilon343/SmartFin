@@ -98,8 +98,8 @@ exports.depositToGoal = async (req, res) => {
         }
 
         await conn.query(
-            'INSERT INTO expenses (user_id, amount, currency, description, category_id, source, is_virtual) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [user_id, Number(amount), goal.currency || 'ILS', `Transfer → ${goal.name}`, savingsCat?.category_id || null, 'web', true]
+            'INSERT INTO expenses (user_id, amount, currency, description, category_id, source, is_virtual, goal_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [user_id, Number(amount), goal.currency || 'ILS', `Transfer → ${goal.name}`, savingsCat?.category_id || null, 'web', true, Number(id)]
         );
 
         await conn.commit();
@@ -110,6 +110,25 @@ exports.depositToGoal = async (req, res) => {
         res.status(500).json({ error: 'Failed to deposit to goal' });
     } finally {
         conn.release();
+    }
+};
+
+exports.getGoalHistory = async (req, res) => {
+    const user_id = req.user.user_id;
+    const { id } = req.params;
+    try {
+        const [rows] = await db.query(
+            `SELECT expense_id, amount, currency, description, created_at
+             FROM expenses
+             WHERE user_id = ? AND goal_id = ? AND is_virtual = TRUE
+             ORDER BY created_at DESC
+             LIMIT 100`,
+            [user_id, id]
+        );
+        res.json(rows.map(r => ({ ...r, amount: Number(r.amount) })));
+    } catch (err) {
+        console.error('getGoalHistory error:', err);
+        res.status(500).json({ error: 'Failed to fetch goal history' });
     }
 };
 

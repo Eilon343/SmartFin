@@ -131,6 +131,23 @@ export default function Savings() {
   const [editGoal, setEditGoal] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
   const [toast, setToast] = useState('');
+  const [historyOpen, setHistoryOpen] = useState({});
+  const [history, setHistory] = useState({});
+  const [historyLoading, setHistoryLoading] = useState({});
+
+  const toggleHistory = (goalId) => {
+    setHistoryOpen(prev => {
+      const next = { ...prev, [goalId]: !prev[goalId] };
+      if (next[goalId] && history[goalId] === undefined) {
+        setHistoryLoading(l => ({ ...l, [goalId]: true }));
+        api.get(`/savings/${goalId}/history`)
+          .then(r => setHistory(h => ({ ...h, [goalId]: r.data })))
+          .catch(() => setHistory(h => ({ ...h, [goalId]: [] })))
+          .finally(() => setHistoryLoading(l => ({ ...l, [goalId]: false })));
+      }
+      return next;
+    });
+  };
 
   const load = useCallback(() => {
     api.get('/savings').then(r => setGoals(r.data)).finally(() => setLoading(false));
@@ -144,6 +161,13 @@ export default function Savings() {
   const handleContribute = async (goalId, amount) => {
     await api.post(`/savings/${goalId}/deposit`, { amount });
     setToast(`${t('sav_toast_contrib')} ₪${amount.toLocaleString()} ${t('sav_toast_to')}`);
+    setHistory(h => { const n = { ...h }; delete n[goalId]; return n; });
+    if (historyOpen[goalId]) {
+      setHistoryLoading(l => ({ ...l, [goalId]: true }));
+      api.get(`/savings/${goalId}/history`)
+        .then(r => setHistory(h => ({ ...h, [goalId]: r.data })))
+        .finally(() => setHistoryLoading(l => ({ ...l, [goalId]: false })));
+    }
     load();
   };
 
@@ -273,6 +297,11 @@ export default function Savings() {
                       <span className="muted-2" style={{ fontSize: 11 }}>{t('sav_due')} {calcDue(g, t, lang)}</span>
                       <div className="row" style={{ gap: 2 }}>
                         <button className="btn ghost icon" style={{ width: 24, height: 24, color: 'var(--text-2)' }}
+                                title={historyOpen[g.goal_id] ? t('sav_hide_history') : t('sav_history')}
+                                onClick={() => toggleHistory(g.goal_id)}>
+                          <Icon name={historyOpen[g.goal_id] ? 'chevron-up' : 'history'} size={11} />
+                        </button>
+                        <button className="btn ghost icon" style={{ width: 24, height: 24, color: 'var(--text-2)' }}
                                 onClick={() => { setEditGoal(g); setNewOpen(true); }}>
                           <Icon name="edit-2" size={11} />
                         </button>
@@ -284,6 +313,31 @@ export default function Savings() {
                     </div>
                   </div>
                 </div>
+                {historyOpen[g.goal_id] && (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+                    {historyLoading[g.goal_id] ? (
+                      <div className="stack" style={{ gap: 6 }}>
+                        <Sk height={14} />
+                        <Sk height={14} width="80%" />
+                      </div>
+                    ) : (history[g.goal_id]?.length ? (
+                      <div className="stack" style={{ gap: 6 }}>
+                        {history[g.goal_id].map(h => (
+                          <div key={h.expense_id} className="between" style={{ fontSize: 12 }}>
+                            <span className="muted">
+                              {new Date(h.created_at).toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            </span>
+                            <span className="mono" style={{ fontWeight: 600, color: color }} dir="ltr">
+                              +{fmt(h.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="muted-2" style={{ fontSize: 12 }}>{t('sav_no_history')}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}

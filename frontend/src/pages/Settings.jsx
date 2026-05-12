@@ -48,12 +48,6 @@ export default function Settings() {
       ),
     },
     {
-      icon: 'message-circle',
-      name: t('settings_tg'),
-      sub: t('settings_tg_sub'),
-      val: <span className="chip up"><span className="dot" style={{ background: 'var(--emerald)' }} /> {t('settings_tg_connected')}</span>,
-    },
-    {
       icon: 'banknote',
       name: t('settings_currency'),
       sub: t('settings_currency_sub'),
