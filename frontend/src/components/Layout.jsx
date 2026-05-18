@@ -23,7 +23,7 @@ const BOTTOM_NAV = [
   { id: 'dashboard',     label: 'Home',  icon: 'layout-dashboard', path: '/' },
   { id: 'categories',    label: 'Cats',  icon: 'grid-2x2',         path: '/categories' },
   { id: 'subscriptions', label: 'Subs',  icon: 'repeat',           path: '/subscriptions' },
-  { id: 'savings',       label: 'Save',  icon: 'piggy-bank',       path: '/savings' },
+  { id: 'savings',       label: 'Invest', icon: 'piggy-bank',       path: '/savings' },
 ];
 
 function ThemeToggle({ compact }) {
