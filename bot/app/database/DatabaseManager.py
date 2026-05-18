@@ -405,6 +405,17 @@ class DatabaseManager:
             "WHERE b.user_id = %s"
         )
 
+        need_trend = timeframe not in ("current_month", "last_month")
+        if need_trend:
+            trend_query = (
+                "SELECT DATE_FORMAT(e.created_at, '%%Y-%%m') AS month_period, "
+                "COALESCE(SUM(e.amount), 0) "
+                "FROM expenses e "
+                f"WHERE {base_where}{date_clause} "
+                "GROUP BY month_period ORDER BY month_period ASC"
+            )
+            trend_params = base_params + date_params
+
         pool = await self.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
@@ -417,8 +428,15 @@ class DatabaseManager:
                 await cur.execute(budgets_query, (user_id,))
                 budget_rows = await cur.fetchall()
 
+                if need_trend:
+                    await cur.execute(trend_query, trend_params)
+                    trend_rows = await cur.fetchall()
+                else:
+                    trend_rows = []
+
         spending_by_category = {row[0] or "Uncategorized": float(row[1]) for row in cat_rows}
         all_active_budgets = {row[0]: float(row[1]) for row in budget_rows}
+        monthly_history = {row[0]: float(row[1]) for row in trend_rows}
 
         period = (
             f"{start_date} to {end_date}"
@@ -432,6 +450,7 @@ class DatabaseManager:
             "spending_by_category": spending_by_category,
             "total_spending": float(total_spent),
             "all_active_budgets": all_active_budgets,
+            "monthly_history": monthly_history,
         }
 
     async def add_expense(

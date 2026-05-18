@@ -111,6 +111,19 @@ def register_handlers(dp: Dispatcher, db_manager):
             await message.reply("Sorry, I couldn't find any financial intents in that.")
             return
 
+        _FINANCE_KEYWORDS = ["בזבוז", "הוצאתי", "כמה הלך", "תקציב", "בזבזתי", "מצב", "הוצאות"]
+        if (
+            len(parsed_list) == 1
+            and parsed_list[0].get("intent") == "ERROR_UNSUPPORTED"
+            and any(kw in message.text.lower() for kw in _FINANCE_KEYWORDS)
+        ):
+            parsed_list[0] = {
+                "intent": "financial_advice",
+                "question": message.text,
+                "timeframe": "current_month",
+                "category": None,
+            }
+
         if len(parsed_list) > 1:
             expenses = [p for p in parsed_list if p.get("intent", "log_expense") == "log_expense"]
             if len(expenses) > 1:

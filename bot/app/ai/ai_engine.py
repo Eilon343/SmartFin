@@ -39,7 +39,8 @@ def _build_prompt(user_input: str, categories: list[str]) -> str:
         f"  {{\"intent\":\"financial_advice\",\"question\":\"Can I spend more on food?\",\"timeframe\":\"current_month\",\"category\":\"Food\"}}\n"
         f"  timeframe options: current_month (default), last_month, last_3_months, this_year, all_time\n"
         f"  category: specific category name from the valid list if mentioned, else null\n"
-        f"  IMPORTANT: any financial question (budgets, spending habits, can I afford X, how much did I spend) → financial_advice, NOT ERROR_UNSUPPORTED\n\n"
+        f"  IMPORTANT: any financial question (budgets, spending habits, can I afford X, how much did I spend) → financial_advice, NOT ERROR_UNSUPPORTED\n"
+        f"  IMPORTANT: Any financial question, status check, or casual query in Hebrew regarding expenses, budget, or spending (e.g., 'מה נסגר עם הבזבוזים', 'כמה הלך לי החודש', 'איך אני עומד', 'כמה בזבזתי') MUST be classified as financial_advice. Do NOT classify these as ERROR_UNSUPPORTED.\n\n"
         f"ERROR_UNSUPPORTED:\n"
         f"  {{\"intent\":\"ERROR_UNSUPPORTED\"}}\n\n"
         f"Use null for any field that cannot be determined. "
@@ -65,7 +66,7 @@ async def generate_financial_advice(question: str, context_data: dict) -> str:
 
     def _call():
         return _get_client().models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-1.5-flash-002",
             contents=[
                 types.Content(role="user", parts=[types.Part(text=user_message)]),
             ],
@@ -95,7 +96,7 @@ async def parse_input(user_input: str, categories: list[str]) -> list[dict]:
 
     def _call():
         return _get_client().models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-1.5-flash-002",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
