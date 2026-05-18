@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from google.api_core import exceptions as google_exceptions
 
-from app.ai.ai_engine import parse_input
+from app.ai.ai_engine import parse_input, generate_financial_advice
 from app.bot.states import ExpenseFlow, IncomeFlow, SubscriptionFlow
 
 WITTY_UNSUPPORTED = (
@@ -192,6 +192,26 @@ def register_handlers(dp: Dispatcher, db_manager):
                 parse_mode="Markdown",
                 reply_markup=_simple_confirm_keyboard("confirm_subscription", "cancel_subscription"),
             )
+            return
+
+        if intent == "financial_advice":
+            question = parsed.get("question") or message.text
+            timeframe = parsed.get("timeframe") or "current_month"
+            category = parsed.get("category")
+
+            thinking_msg = await message.reply("🤔 מנתח את הנתונים שלך...")
+            try:
+                context = await db_manager.get_dynamic_financial_context(
+                    message.from_user.id, timeframe, category
+                )
+                import json as _json
+                print("[financial_advice] payload sent to Gemini:")
+                print(_json.dumps({"question": question, "category": category, "context": context}, ensure_ascii=False, indent=2))
+                advice = await generate_financial_advice(question, context)
+                await thinking_msg.edit_text(advice)
+            except Exception as e:
+                logging.error(f"Financial advice error: {e}", exc_info=True)
+                await thinking_msg.edit_text("❌ לא הצלחתי לנתח את הנתונים. נסה שוב.")
             return
 
         # Default: log_expense

@@ -1,5 +1,6 @@
 import aiomysql
 import logging
+from datetime import date, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -334,6 +335,104 @@ class DatabaseManager:
         except Exception as e:
             logging.error(f"deposit_to_savings_goal error: {e}")
             return False
+
+    async def get_dynamic_financial_context(
+        self,
+        user_id: int,
+        timeframe: str,
+        specific_category: str | None = None,
+    ) -> dict:
+        today = date.today()
+
+        if timeframe == "current_month":
+            start_date = today.replace(day=1)
+            end_date = today
+        elif timeframe == "last_month":
+            first_of_this = today.replace(day=1)
+            end_date = first_of_this - timedelta(days=1)
+            start_date = end_date.replace(day=1)
+        elif timeframe == "last_3_months":
+            # go back ~3 months from 1st of current month
+            first_of_this = today.replace(day=1)
+            y, m = first_of_this.year, first_of_this.month - 3
+            if m <= 0:
+                m += 12
+                y -= 1
+            start_date = date(y, m, 1)
+            end_date = today
+        elif timeframe == "this_year":
+            start_date = date(today.year, 1, 1)
+            end_date = today
+        else:  # all_time
+            start_date = None
+            end_date = None
+
+        base_where = "e.user_id = %s AND e.is_virtual = FALSE"
+        base_params: list = [user_id]
+        date_clause = ""
+        date_params: list = []
+        if start_date and end_date:
+            date_clause = " AND e.created_at BETWEEN %s AND %s"
+            date_params = [start_date, end_date]
+        elif start_date:
+            date_clause = " AND e.created_at >= %s"
+            date_params = [start_date]
+
+        # Query 1: category breakdown (optionally filtered to one category)
+        cat_query = (
+            "SELECT c.name, COALESCE(SUM(e.amount), 0) "
+            "FROM expenses e "
+            "LEFT JOIN categories c ON e.category_id = c.category_id "
+            f"WHERE {base_where}{date_clause}"
+        )
+        cat_params = base_params + date_params
+        if specific_category:
+            cat_query += " AND c.name = %s"
+            cat_params = cat_params + [specific_category]
+        cat_query += " GROUP BY c.name"
+
+        # Query 2: total spending across all categories for the period
+        total_query = (
+            "SELECT COALESCE(SUM(e.amount), 0) "
+            "FROM expenses e "
+            f"WHERE {base_where}{date_clause}"
+        )
+        total_params = base_params + date_params
+
+        budgets_query = (
+            "SELECT c.name, b.monthly_limit "
+            "FROM budgets b JOIN categories c ON b.category_id = c.category_id "
+            "WHERE b.user_id = %s"
+        )
+
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(cat_query, cat_params)
+                cat_rows = await cur.fetchall()
+
+                await cur.execute(total_query, total_params)
+                (total_spent,) = await cur.fetchone()
+
+                await cur.execute(budgets_query, (user_id,))
+                budget_rows = await cur.fetchall()
+
+        spending_by_category = {row[0] or "Uncategorized": float(row[1]) for row in cat_rows}
+        all_active_budgets = {row[0]: float(row[1]) for row in budget_rows}
+
+        period = (
+            f"{start_date} to {end_date}"
+            if start_date
+            else "all time"
+        )
+
+        return {
+            "timeframe": timeframe,
+            "period": period,
+            "spending_by_category": spending_by_category,
+            "total_spending": float(total_spent),
+            "all_active_budgets": all_active_budgets,
+        }
 
     async def add_expense(
         self,
