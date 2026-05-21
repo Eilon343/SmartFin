@@ -5,9 +5,7 @@ from aiogram import Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from google.api_core import exceptions as google_exceptions
-
-from app.ai.ai_engine import parse_input, generate_financial_advice
+from app.ai.ai_engine import parse_input, generate_financial_advice, AIEngineError
 from app.bot.states import ExpenseFlow, IncomeFlow, SubscriptionFlow
 
 WITTY_UNSUPPORTED = (
@@ -98,13 +96,20 @@ def register_handlers(dp: Dispatcher, db_manager):
 
         try:
             parsed_list = await parse_input(message.text, categories)
-        except (google_exceptions.ResourceExhausted, google_exceptions.ServiceUnavailable) as e:
-            logging.error(f"AI service unavailable after retries: {e}", exc_info=True)
-            await message.reply("⚠️ AI service is temporarily unavailable (Gemini overloaded). Try again in a minute.")
+        except AIEngineError as e:
+            logging.error("AI parse failed (%s): %s", e.category, e.detail, exc_info=e.original)
+            await message.reply(e.telegram_message(), parse_mode="Markdown")
             return
         except Exception as e:
             logging.error(f"AI parse error: {e}", exc_info=True)
-            await message.reply("Sorry, I couldn't understand that. Try: '55 NIS for Shawarma'")
+            await message.reply(
+                "*❌ Unexpected error parsing your message*\n"
+                "━━━━━━━━━━━━━━\n"
+                f"• `{type(e).__name__}`: {e}\n"
+                "━━━━━━━━━━━━━━\n"
+                "_Try a simpler phrasing like_ `55 NIS for Shawarma`.",
+                parse_mode="Markdown",
+            )
             return
 
         if not parsed_list:
@@ -222,9 +227,20 @@ def register_handlers(dp: Dispatcher, db_manager):
                 print(_json.dumps({"question": question, "category": category, "context": context}, ensure_ascii=False, indent=2))
                 advice = await generate_financial_advice(question, context)
                 await thinking_msg.edit_text(advice)
+            except AIEngineError as e:
+                logging.error("Financial advice failed (%s): %s", e.category, e.detail,
+                              exc_info=e.original)
+                await thinking_msg.edit_text(e.telegram_message(), parse_mode="Markdown")
             except Exception as e:
                 logging.error(f"Financial advice error: {e}", exc_info=True)
-                await thinking_msg.edit_text("❌ לא הצלחתי לנתח את הנתונים. נסה שוב.")
+                await thinking_msg.edit_text(
+                    "*❌ Unexpected error generating advice*\n"
+                    "━━━━━━━━━━━━━━\n"
+                    f"• `{type(e).__name__}`: {e}\n"
+                    "━━━━━━━━━━━━━━\n"
+                    "_See bot logs for the traceback._",
+                    parse_mode="Markdown",
+                )
             return
 
         # Default: log_expense
