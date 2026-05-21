@@ -5,9 +5,7 @@ from aiogram import Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from google.api_core import exceptions as google_exceptions
-
-from app.ai.ai_engine import parse_input
+from app.ai.ai_engine import parse_input, generate_financial_advice, AIEngineError
 from app.bot.states import ExpenseFlow, IncomeFlow, SubscriptionFlow
 
 WITTY_UNSUPPORTED = (
@@ -98,18 +96,37 @@ def register_handlers(dp: Dispatcher, db_manager):
 
         try:
             parsed_list = await parse_input(message.text, categories)
-        except (google_exceptions.ResourceExhausted, google_exceptions.ServiceUnavailable) as e:
-            logging.error(f"AI service unavailable after retries: {e}", exc_info=True)
-            await message.reply("⚠️ AI service is temporarily unavailable (Gemini overloaded). Try again in a minute.")
+        except AIEngineError as e:
+            logging.error("AI parse failed (%s): %s", e.category, e.detail, exc_info=e.original)
+            await message.reply(e.telegram_message())
             return
         except Exception as e:
             logging.error(f"AI parse error: {e}", exc_info=True)
-            await message.reply("Sorry, I couldn't understand that. Try: '55 NIS for Shawarma'")
+            await message.reply(
+                "❌ Unexpected error parsing your message\n"
+                "━━━━━━━━━━━━━━\n"
+                f"• {type(e).__name__}: {e}\n"
+                "━━━━━━━━━━━━━━\n"
+                "Try a simpler phrasing like: 55 NIS for Shawarma"
+            )
             return
 
         if not parsed_list:
             await message.reply("Sorry, I couldn't find any financial intents in that.")
             return
+
+        _FINANCE_KEYWORDS = ["בזבוז", "הוצאתי", "כמה הלך", "תקציב", "בזבזתי", "מצב", "הוצאות"]
+        if (
+            len(parsed_list) == 1
+            and parsed_list[0].get("intent") == "ERROR_UNSUPPORTED"
+            and any(kw in message.text.lower() for kw in _FINANCE_KEYWORDS)
+        ):
+            parsed_list[0] = {
+                "intent": "financial_advice",
+                "question": message.text,
+                "timeframe": "current_month",
+                "category": None,
+            }
 
         if len(parsed_list) > 1:
             expenses = [p for p in parsed_list if p.get("intent", "log_expense") == "log_expense"]
@@ -192,6 +209,36 @@ def register_handlers(dp: Dispatcher, db_manager):
                 parse_mode="Markdown",
                 reply_markup=_simple_confirm_keyboard("confirm_subscription", "cancel_subscription"),
             )
+            return
+
+        if intent == "financial_advice":
+            question = parsed.get("question") or message.text
+            timeframe = parsed.get("timeframe") or "current_month"
+            category = parsed.get("category")
+
+            thinking_msg = await message.reply("🤔 מנתח את הנתונים שלך...")
+            try:
+                context = await db_manager.get_dynamic_financial_context(
+                    message.from_user.id, timeframe, category
+                )
+                import json as _json
+                print("[financial_advice] payload sent to Gemini:")
+                print(_json.dumps({"question": question, "category": category, "context": context}, ensure_ascii=False, indent=2))
+                advice = await generate_financial_advice(question, context)
+                await thinking_msg.edit_text(advice)
+            except AIEngineError as e:
+                logging.error("Financial advice failed (%s): %s", e.category, e.detail,
+                              exc_info=e.original)
+                await thinking_msg.edit_text(e.telegram_message())
+            except Exception as e:
+                logging.error(f"Financial advice error: {e}", exc_info=True)
+                await thinking_msg.edit_text(
+                    "❌ Unexpected error generating advice\n"
+                    "━━━━━━━━━━━━━━\n"
+                    f"• {type(e).__name__}: {e}\n"
+                    "━━━━━━━━━━━━━━\n"
+                    "See bot logs for the traceback."
+                )
             return
 
         # Default: log_expense

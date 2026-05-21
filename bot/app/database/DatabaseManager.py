@@ -1,5 +1,6 @@
 import aiomysql
 import logging
+from datetime import date, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -334,6 +335,160 @@ class DatabaseManager:
         except Exception as e:
             logging.error(f"deposit_to_savings_goal error: {e}")
             return False
+
+    async def get_dynamic_financial_context(
+        self,
+        user_id: int,
+        timeframe: str,
+        specific_category: str | None = None,
+    ) -> dict:
+        today = date.today()
+
+        if timeframe == "current_month":
+            start_date = today.replace(day=1)
+            end_date = today
+        elif timeframe == "last_month":
+            first_of_this = today.replace(day=1)
+            end_date = first_of_this - timedelta(days=1)
+            start_date = end_date.replace(day=1)
+        elif timeframe == "last_3_months":
+            # go back ~3 months from 1st of current month
+            first_of_this = today.replace(day=1)
+            y, m = first_of_this.year, first_of_this.month - 3
+            if m <= 0:
+                m += 12
+                y -= 1
+            start_date = date(y, m, 1)
+            end_date = today
+        elif timeframe == "this_year":
+            start_date = date(today.year, 1, 1)
+            end_date = today
+        else:  # all_time
+            start_date = None
+            end_date = None
+
+        base_where = "e.user_id = %s AND e.is_virtual = FALSE"
+        base_params: list = [user_id]
+        date_clause = ""
+        date_params: list = []
+        if start_date and end_date:
+            date_clause = " AND e.created_at BETWEEN %s AND %s"
+            date_params = [start_date, end_date]
+        elif start_date:
+            date_clause = " AND e.created_at >= %s"
+            date_params = [start_date]
+
+        # Query 1: category breakdown (optionally filtered to one category)
+        cat_query = (
+            "SELECT c.name, COALESCE(SUM(e.amount), 0) "
+            "FROM expenses e "
+            "LEFT JOIN categories c ON e.category_id = c.category_id "
+            f"WHERE {base_where}{date_clause}"
+        )
+        cat_params = base_params + date_params
+        if specific_category:
+            cat_query += " AND c.name = %s"
+            cat_params = cat_params + [specific_category]
+        cat_query += " GROUP BY c.name"
+
+        # Query 2: total spending across all categories for the period
+        total_query = (
+            "SELECT COALESCE(SUM(e.amount), 0) "
+            "FROM expenses e "
+            f"WHERE {base_where}{date_clause}"
+        )
+        total_params = base_params + date_params
+
+        # When the user's question is about one specific category, only ship that
+        # category's budget — everything else is noise that bloats the LLM payload.
+        budgets_query = (
+            "SELECT c.name, b.monthly_limit "
+            "FROM budgets b JOIN categories c ON b.category_id = c.category_id "
+            "WHERE b.user_id = %s"
+        )
+        budgets_params: list = [user_id]
+        if specific_category:
+            budgets_query += " AND c.name = %s"
+            budgets_params.append(specific_category)
+
+        need_trend = timeframe not in ("current_month", "last_month")
+        if need_trend:
+            trend_query = (
+                "SELECT DATE_FORMAT(e.created_at, '%%Y-%%m') AS month_period, "
+                "COALESCE(SUM(e.amount), 0) "
+                "FROM expenses e "
+                f"WHERE {base_where}{date_clause} "
+                "GROUP BY month_period ORDER BY month_period ASC"
+            )
+            trend_params = base_params + date_params
+
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(cat_query, cat_params)
+                cat_rows = await cur.fetchall()
+
+                await cur.execute(total_query, total_params)
+                (total_spent,) = await cur.fetchone()
+
+                await cur.execute(budgets_query, budgets_params)
+                budget_rows = await cur.fetchall()
+
+                if need_trend:
+                    await cur.execute(trend_query, trend_params)
+                    trend_rows = await cur.fetchall()
+                else:
+                    trend_rows = []
+
+        # --- Shrink the LLM payload --------------------------------------
+        # 1. Drop zero-spend categories (they tell the model nothing).
+        # 2. Sort descending so the most-relevant rows are first — matters if
+        #    the model truncates, and helps a human eyeballing the log.
+        # 3. Round to 2 decimals (Gemini doesn't need 12-digit floats).
+        # 4. Cap monthly_history to the last _MAX_RECENT_MONTHS entries and
+        #    collapse anything older into a single previous_months_avg field.
+        _MAX_RECENT_MONTHS = 6
+
+        spending_pairs = [
+            (row[0] or "Uncategorized", round(float(row[1]), 2))
+            for row in cat_rows
+            if float(row[1]) > 0
+        ]
+        spending_pairs.sort(key=lambda kv: kv[1], reverse=True)
+        spending_by_category = dict(spending_pairs)
+
+        all_active_budgets = {row[0]: round(float(row[1]), 2) for row in budget_rows}
+
+        history_pairs = [(row[0], round(float(row[1]), 2)) for row in trend_rows]
+        previous_months_avg: float | None = None
+        if len(history_pairs) > _MAX_RECENT_MONTHS:
+            older = history_pairs[:-_MAX_RECENT_MONTHS]
+            history_pairs = history_pairs[-_MAX_RECENT_MONTHS:]
+            previous_months_avg = round(
+                sum(v for _, v in older) / len(older), 2
+            )
+        monthly_history = dict(history_pairs)
+
+        period = (
+            f"{start_date} to {end_date}"
+            if start_date
+            else "all time"
+        )
+
+        payload: dict = {
+            "timeframe": timeframe,
+            "period": period,
+            "spending_by_category": spending_by_category,
+            "total_spending": round(float(total_spent), 2),
+            "all_active_budgets": all_active_budgets,
+            "monthly_history": monthly_history,
+        }
+        if previous_months_avg is not None:
+            payload["previous_months_avg"] = previous_months_avg
+            payload["previous_months_count"] = len(older)
+        if specific_category:
+            payload["scoped_to_category"] = specific_category
+        return payload
 
     async def add_expense(
         self,

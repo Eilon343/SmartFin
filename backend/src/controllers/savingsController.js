@@ -9,10 +9,11 @@ exports.getSavingsGoals = async (req, res) => {
         );
         res.json(rows.map(r => ({
             ...r,
-            target_amount: Number(r.target_amount),
+            target_amount: r.target_amount != null ? Number(r.target_amount) : null,
             saved_amount: Number(r.saved_amount),
             monthly_allocation: Number(r.monthly_allocation),
-            pct_complete: Number(r.target_amount) > 0
+            is_ongoing: Boolean(r.is_ongoing),
+            pct_complete: (!r.is_ongoing && Number(r.target_amount) > 0)
                 ? Math.round((Number(r.saved_amount) / Number(r.target_amount)) * 100)
                 : 0,
         })));
@@ -24,14 +25,22 @@ exports.getSavingsGoals = async (req, res) => {
 
 exports.addSavingsGoal = async (req, res) => {
     const user_id = req.user.user_id;
-    const { name, target_amount, monthly_allocation, currency } = req.body;
-    if (!name || !target_amount) {
-        return res.status(400).json({ error: 'name and target_amount are required' });
+    const { name, target_amount, monthly_allocation, currency, is_ongoing } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    if (!is_ongoing && (!target_amount || Number(target_amount) <= 0)) {
+        return res.status(400).json({ error: 'target_amount is required for non-ongoing goals' });
     }
     try {
         const [result] = await db.query(
-            'INSERT INTO savings_goals (user_id, name, target_amount, monthly_allocation, currency) VALUES (?, ?, ?, ?, ?)',
-            [user_id, name, Number(target_amount), Number(monthly_allocation) || 0, currency || 'ILS']
+            'INSERT INTO savings_goals (user_id, name, target_amount, monthly_allocation, is_ongoing, currency) VALUES (?, ?, ?, ?, ?, ?)',
+            [
+                user_id,
+                name,
+                is_ongoing ? null : Number(target_amount),
+                Number(monthly_allocation) || 0,
+                is_ongoing ? 1 : 0,
+                currency || 'ILS',
+            ]
         );
         res.json({ goal_id: result.insertId });
     } catch (err) {
@@ -43,18 +52,29 @@ exports.addSavingsGoal = async (req, res) => {
 exports.updateSavingsGoal = async (req, res) => {
     const user_id = req.user.user_id;
     const { id } = req.params;
-    const { name, target_amount, monthly_allocation, currency } = req.body;
+    const { name, target_amount, monthly_allocation, currency, is_ongoing } = req.body;
 
-    if (!name || target_amount == null || isNaN(Number(target_amount)) || Number(target_amount) <= 0) {
-        return res.status(400).json({ error: 'name and a valid positive target_amount are required' });
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    if (!is_ongoing) {
+        if (target_amount == null || isNaN(Number(target_amount)) || Number(target_amount) <= 0) {
+            return res.status(400).json({ error: 'target_amount must be a positive number for non-ongoing goals' });
+        }
     }
     if (monthly_allocation != null && (isNaN(Number(monthly_allocation)) || Number(monthly_allocation) < 0)) {
         return res.status(400).json({ error: 'monthly_allocation must be a non-negative number' });
     }
     try {
         const [result] = await db.query(
-            'UPDATE savings_goals SET name = ?, target_amount = ?, monthly_allocation = ?, currency = ? WHERE goal_id = ? AND user_id = ?',
-            [name, Number(target_amount), Number(monthly_allocation) || 0, currency || 'ILS', id, user_id]
+            'UPDATE savings_goals SET name = ?, target_amount = ?, monthly_allocation = ?, is_ongoing = ?, currency = ? WHERE goal_id = ? AND user_id = ?',
+            [
+                name,
+                is_ongoing ? null : Number(target_amount),
+                Number(monthly_allocation) || 0,
+                is_ongoing ? 1 : 0,
+                currency || 'ILS',
+                id,
+                user_id,
+            ]
         );
         if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
         res.json({ success: true });
