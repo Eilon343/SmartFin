@@ -17,7 +17,7 @@ async def main():
     db = DatabaseManager(
         host="localhost",
         user="root",
-        password="7549649Ee",
+        password=os.getenv("DB_PASSWORD"),
         db="smartfin",
     )
     # aiomysql needs port kwarg separately
