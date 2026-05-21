@@ -399,11 +399,17 @@ class DatabaseManager:
         )
         total_params = base_params + date_params
 
+        # When the user's question is about one specific category, only ship that
+        # category's budget — everything else is noise that bloats the LLM payload.
         budgets_query = (
             "SELECT c.name, b.monthly_limit "
             "FROM budgets b JOIN categories c ON b.category_id = c.category_id "
             "WHERE b.user_id = %s"
         )
+        budgets_params: list = [user_id]
+        if specific_category:
+            budgets_query += " AND c.name = %s"
+            budgets_params.append(specific_category)
 
         need_trend = timeframe not in ("current_month", "last_month")
         if need_trend:
@@ -425,7 +431,7 @@ class DatabaseManager:
                 await cur.execute(total_query, total_params)
                 (total_spent,) = await cur.fetchone()
 
-                await cur.execute(budgets_query, (user_id,))
+                await cur.execute(budgets_query, budgets_params)
                 budget_rows = await cur.fetchall()
 
                 if need_trend:
@@ -434,9 +440,34 @@ class DatabaseManager:
                 else:
                     trend_rows = []
 
-        spending_by_category = {row[0] or "Uncategorized": float(row[1]) for row in cat_rows}
-        all_active_budgets = {row[0]: float(row[1]) for row in budget_rows}
-        monthly_history = {row[0]: float(row[1]) for row in trend_rows}
+        # --- Shrink the LLM payload --------------------------------------
+        # 1. Drop zero-spend categories (they tell the model nothing).
+        # 2. Sort descending so the most-relevant rows are first — matters if
+        #    the model truncates, and helps a human eyeballing the log.
+        # 3. Round to 2 decimals (Gemini doesn't need 12-digit floats).
+        # 4. Cap monthly_history to the last _MAX_RECENT_MONTHS entries and
+        #    collapse anything older into a single previous_months_avg field.
+        _MAX_RECENT_MONTHS = 6
+
+        spending_pairs = [
+            (row[0] or "Uncategorized", round(float(row[1]), 2))
+            for row in cat_rows
+            if float(row[1]) > 0
+        ]
+        spending_pairs.sort(key=lambda kv: kv[1], reverse=True)
+        spending_by_category = dict(spending_pairs)
+
+        all_active_budgets = {row[0]: round(float(row[1]), 2) for row in budget_rows}
+
+        history_pairs = [(row[0], round(float(row[1]), 2)) for row in trend_rows]
+        previous_months_avg: float | None = None
+        if len(history_pairs) > _MAX_RECENT_MONTHS:
+            older = history_pairs[:-_MAX_RECENT_MONTHS]
+            history_pairs = history_pairs[-_MAX_RECENT_MONTHS:]
+            previous_months_avg = round(
+                sum(v for _, v in older) / len(older), 2
+            )
+        monthly_history = dict(history_pairs)
 
         period = (
             f"{start_date} to {end_date}"
@@ -444,14 +475,20 @@ class DatabaseManager:
             else "all time"
         )
 
-        return {
+        payload: dict = {
             "timeframe": timeframe,
             "period": period,
             "spending_by_category": spending_by_category,
-            "total_spending": float(total_spent),
+            "total_spending": round(float(total_spent), 2),
             "all_active_budgets": all_active_budgets,
             "monthly_history": monthly_history,
         }
+        if previous_months_avg is not None:
+            payload["previous_months_avg"] = previous_months_avg
+            payload["previous_months_count"] = len(older)
+        if specific_category:
+            payload["scoped_to_category"] = specific_category
+        return payload
 
     async def add_expense(
         self,

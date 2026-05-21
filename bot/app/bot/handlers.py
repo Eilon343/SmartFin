@@ -98,17 +98,16 @@ def register_handlers(dp: Dispatcher, db_manager):
             parsed_list = await parse_input(message.text, categories)
         except AIEngineError as e:
             logging.error("AI parse failed (%s): %s", e.category, e.detail, exc_info=e.original)
-            await message.reply(e.telegram_message(), parse_mode="Markdown")
+            await message.reply(e.telegram_message())
             return
         except Exception as e:
             logging.error(f"AI parse error: {e}", exc_info=True)
             await message.reply(
-                "*❌ Unexpected error parsing your message*\n"
+                "❌ Unexpected error parsing your message\n"
                 "━━━━━━━━━━━━━━\n"
-                f"• `{type(e).__name__}`: {e}\n"
+                f"• {type(e).__name__}: {e}\n"
                 "━━━━━━━━━━━━━━\n"
-                "_Try a simpler phrasing like_ `55 NIS for Shawarma`.",
-                parse_mode="Markdown",
+                "Try a simpler phrasing like: 55 NIS for Shawarma"
             )
             return
 
@@ -230,16 +229,15 @@ def register_handlers(dp: Dispatcher, db_manager):
             except AIEngineError as e:
                 logging.error("Financial advice failed (%s): %s", e.category, e.detail,
                               exc_info=e.original)
-                await thinking_msg.edit_text(e.telegram_message(), parse_mode="Markdown")
+                await thinking_msg.edit_text(e.telegram_message())
             except Exception as e:
                 logging.error(f"Financial advice error: {e}", exc_info=True)
                 await thinking_msg.edit_text(
-                    "*❌ Unexpected error generating advice*\n"
+                    "❌ Unexpected error generating advice\n"
                     "━━━━━━━━━━━━━━\n"
-                    f"• `{type(e).__name__}`: {e}\n"
+                    f"• {type(e).__name__}: {e}\n"
                     "━━━━━━━━━━━━━━\n"
-                    "_See bot logs for the traceback._",
-                    parse_mode="Markdown",
+                    "See bot logs for the traceback."
                 )
             return
 
