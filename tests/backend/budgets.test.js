@@ -90,6 +90,7 @@ describe('GET /api/budgets', () => {
 describe('POST /api/budgets', () => {
     it('creates budget and returns success', async () => {
         authOk();
+        db.query.mockResolvedValueOnce([[{ 1: 1 }]]);  // category ownership check
         db.query.mockResolvedValueOnce([{ insertId: 1, affectedRows: 1 }]);
 
         const res = await request(app)
@@ -103,6 +104,7 @@ describe('POST /api/budgets', () => {
 
     it('updates existing budget (upsert)', async () => {
         authOk();
+        db.query.mockResolvedValueOnce([[{ 1: 1 }]]);  // category ownership check
         db.query.mockResolvedValueOnce([{ insertId: 0, affectedRows: 2 }]);
 
         const res = await request(app)

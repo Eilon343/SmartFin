@@ -1,5 +1,6 @@
 import aiomysql
 import logging
+import secrets
 from datetime import date, timedelta
 from dotenv import load_dotenv
 
@@ -28,6 +29,20 @@ class DatabaseManager:
             async with conn.cursor() as cur:
                 await cur.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
                 return await cur.fetchone() is not None
+
+    async def get_notifiable_user_ids(self) -> list[int]:
+        """Every user reachable on Telegram — the audience for scheduled jobs."""
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT user_id FROM users WHERE telegram_chat_id IS NOT NULL"
+                    )
+                    return [row[0] for row in await cur.fetchall()]
+        except Exception as e:
+            logging.error(f"get_notifiable_user_ids error: {e}")
+            return []
 
     async def ensure_user(self, user_id: int, username: str | None):
         pool = await self.get_pool()
@@ -105,6 +120,31 @@ class DatabaseManager:
         except Exception as e:
             logging.error(f"link_google_account error: {e}")
             return False
+
+    async def get_or_create_webhook_token(self, user_id: int) -> str | None:
+        """Return this user's Apple Pay webhook token, generating one on first use."""
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT webhook_token FROM users WHERE user_id = %s",
+                        (user_id,),
+                    )
+                    row = await cur.fetchone()
+                    if row and row[0]:
+                        return row[0]
+                    # hex, not urlsafe: no "_" or "-" to break Telegram Markdown
+                    # or get mangled when copied into a Shortcuts header field
+                    token = secrets.token_hex(24)
+                    await cur.execute(
+                        "UPDATE users SET webhook_token = %s WHERE user_id = %s",
+                        (token, user_id),
+                    )
+                    return token
+        except Exception as e:
+            logging.error(f"get_or_create_webhook_token error: {e}")
+            return None
 
     async def add_user_category(self, user_id: int, name: str) -> bool:
         try:

@@ -1,13 +1,32 @@
 const db = require('../config/db');
 
+/**
+ * A category may be used by a caller only if it is a shared base category
+ * (user_id IS NULL) or one they own. The FK alone only proves the category
+ * exists — without this check a user could attach their own row to another
+ * user's private category and read that category's name back out through the
+ * joins in getAllExpenses / getSummary / getBudgets.
+ * Returns true when category_id is absent (it is optional on every caller).
+ */
+async function categoryAllowed(category_id, user_id) {
+    if (category_id == null) return true;
+    const [rows] = await db.query(
+        'SELECT 1 FROM categories WHERE category_id = ? AND (user_id IS NULL OR user_id = ?)',
+        [category_id, user_id]
+    );
+    return rows.length > 0;
+}
+
 exports.getAllExpenses = async (req, res) => {
     const user_id = req.user.user_id;
     const { month } = req.query; // optional: "2025-04"
     if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
-        let query = 'SELECT e.*, c.name AS category_name, e.source FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id WHERE e.user_id = ?';
-        const params = [user_id];
+        // The category join is scoped too: a row already pointing at a foreign
+        // category yields a NULL name rather than leaking someone else's label.
+        let query = 'SELECT e.*, c.name AS category_name, e.source FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id AND (c.user_id IS NULL OR c.user_id = ?) WHERE e.user_id = ?';
+        const params = [user_id, user_id];
 
         if (month) {
             query += ' AND DATE_FORMAT(e.created_at, "%Y-%m") = ?';
@@ -32,11 +51,11 @@ exports.getSummary = async (req, res) => {
         const [rows] = await db.query(
             `SELECT COALESCE(c.name, 'Uncategorized') AS category, SUM(e.amount) AS total
              FROM expenses e
-             LEFT JOIN categories c ON e.category_id = c.category_id
+             LEFT JOIN categories c ON e.category_id = c.category_id AND (c.user_id IS NULL OR c.user_id = ?)
              WHERE e.user_id = ? AND DATE_FORMAT(e.created_at, '%Y-%m') = ? AND e.is_virtual = FALSE
              GROUP BY e.category_id
              ORDER BY total DESC`,
-            [user_id, month]
+            [user_id, user_id, month]
         );
         const grand_total = rows.reduce((sum, r) => sum + Number(r.total), 0);
         res.json({ month, grand_total, by_category: rows });
@@ -57,8 +76,9 @@ exports.getBudgets = async (req, res) => {
                     b.monthly_limit, b.carry_over,
                     DATE_FORMAT(b.created_at, '%Y-%m') AS start_month
              FROM budgets b JOIN categories c ON b.category_id = c.category_id
+                  AND (c.user_id IS NULL OR c.user_id = ?)
              WHERE b.user_id = ?`,
-            [user_id]
+            [user_id, user_id]
         );
 
         // Fetch all expense totals per category per month in one query
@@ -215,6 +235,7 @@ exports.addSubscription = async (req, res) => {
     const day = parseInt(day_of_month, 10);
     if (day < 1 || day > 28) return res.status(400).json({ error: 'day_of_month must be 1–28' });
     try {
+        if (!await categoryAllowed(category_id, user_id)) return res.status(400).json({ error: 'Invalid category' });
         const [result] = await db.query(
             `INSERT INTO subscriptions (user_id, name, amount, currency, category_id, day_of_month)
              VALUES (?, ?, ?, ?, ?, ?)`,
@@ -237,6 +258,7 @@ exports.updateSubscription = async (req, res) => {
     const day = parseInt(day_of_month, 10);
     if (day < 1 || day > 28) return res.status(400).json({ error: 'day_of_month must be 1–28' });
     try {
+        if (!await categoryAllowed(category_id, user_id)) return res.status(400).json({ error: 'Invalid category' });
         const [result] = await db.query(
             `UPDATE subscriptions SET name=?, amount=?, currency=?, category_id=?, day_of_month=?
              WHERE subscription_id=? AND user_id=?`,
@@ -459,6 +481,7 @@ exports.upsertBudget = async (req, res) => {
         return res.status(400).json({ error: 'category_id and monthly_limit required' });
     }
     try {
+        if (!await categoryAllowed(category_id, user_id)) return res.status(400).json({ error: 'Invalid category' });
         await db.query(
             `INSERT INTO budgets (user_id, category_id, monthly_limit, carry_over)
              VALUES (?, ?, ?, ?)
@@ -477,6 +500,7 @@ exports.addExpense = async (req, res) => {
     const { amount, currency = 'ILS', description, category_id } = req.body;
     if (amount == null || isNaN(Number(amount)) || Number(amount) <= 0) return res.status(400).json({ error: 'Valid amount required' });
     try {
+        if (!await categoryAllowed(category_id, user_id)) return res.status(400).json({ error: 'Invalid category' });
         const [result] = await db.query(
             'INSERT INTO expenses (user_id, amount, currency, description, category_id, source) VALUES (?, ?, ?, ?, ?, ?)',
             [user_id, Number(amount), currency, description?.trim() || null, category_id || null, 'web']
@@ -498,6 +522,7 @@ exports.updateExpense = async (req, res) => {
     }
 
     try {
+        if (!await categoryAllowed(category_id, user_id)) return res.status(400).json({ error: 'Invalid category' });
         const [result] = await db.query(
             'UPDATE expenses SET amount = ?, currency = ?, description = ?, category_id = ?, source = ? WHERE expense_id = ? AND user_id = ?',
             [Number(amount), currency, description?.trim() || null, category_id || null, source || 'web', id, user_id]

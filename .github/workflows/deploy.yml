@@ -27,6 +27,18 @@ jobs:
             echo "smartfin_db not running, skipping backup"
           fi
 
+      - name: Apply DB migrations
+        run: |
+          if docker ps --format '{{.Names}}' | grep -q '^smartfin_db$'; then
+            for f in $(ls -1 db/migrate_*.sql | sort); do
+              echo "Applying $f"
+              docker exec -i smartfin_db sh -c \
+                'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" smartfin' < "$f"
+            done
+          else
+            echo "smartfin_db not running — fresh volume will be built from init.sql"
+          fi
+
       - name: Deploy stack
         run: docker compose up --build -d
 
