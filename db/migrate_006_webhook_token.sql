@@ -1,6 +1,6 @@
--- Migration 003: add users.telegram_chat_id — links a web account to a Telegram chat
--- Rewritten to be safe to re-run (INFORMATION_SCHEMA check) so the deploy workflow
--- can apply every migration on each run. MySQL 5.7+ compatible.
+-- Migration 006: add users.webhook_token — per-user secret for the Apple Pay webhook
+-- Replaces the single shared WEBHOOK_SECRET, which could not tell users apart.
+-- Safe to re-run (INFORMATION_SCHEMA check). MySQL 5.7+ compatible.
 -- New installs: init.sql already includes this column.
 
 SET @dbname = DATABASE();
@@ -10,9 +10,9 @@ SET @addCol = (
         (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = @dbname
            AND TABLE_NAME   = 'users'
-           AND COLUMN_NAME  = 'telegram_chat_id') > 0,
+           AND COLUMN_NAME  = 'webhook_token') > 0,
         'SELECT ''column already exists''',
-        'ALTER TABLE users ADD COLUMN telegram_chat_id VARCHAR(50) UNIQUE'
+        'ALTER TABLE users ADD COLUMN webhook_token VARCHAR(64) UNIQUE'
     )
 );
 PREPARE stmt FROM @addCol;

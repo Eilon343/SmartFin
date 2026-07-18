@@ -56,6 +56,7 @@ describe('GET /api/expenses', () => {
 describe('POST /api/expenses', () => {
     it('creates expense and returns 200 with expense_id', async () => {
         authOk();
+        db.query.mockResolvedValueOnce([[{ 1: 1 }]]);  // category ownership check
         db.query.mockResolvedValueOnce([{ insertId: 99 }]);
 
         const res = await request(app)

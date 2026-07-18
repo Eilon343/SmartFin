@@ -177,7 +177,7 @@ const HELP_TEXT =
     `*Multiple expenses in one message:*\n` +
     `Separate with commas or "and/ו". Up to 10 per message.\n\n` +
     `*Auto-logging:*\n` +
-    `Apple Pay notifications are logged automatically via iOS Shortcut — no action needed.\n\n` +
+    `Send /setup_applepay for a step-by-step guide to logging payments automatically from your phone.\n\n` +
     `*Categories detected automatically:*\n` +
     `Food · Transport · Shopping · Housing · Entertainment · Utilities · Health · Other\n\n` +
     `*Commands:*\n` +
@@ -270,36 +270,61 @@ exports.startQueueProcessor = () => {
     run();
 };
 
-exports.handleApplePay = async (req, res) => {
-    const secret = req.headers['x-webhook-secret'];
-    if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) {
-        return res.status(401).json({ error: 'Unauthorized' });
+/**
+ * Resolve which user a webhook call belongs to.
+ *
+ * Preferred: a per-user X-Webhook-Token, issued by the bot's /webhook_token
+ * command. Each shortcut carries its owner's token, so transactions land in
+ * that user's account and notifications go to that user's chat.
+ *
+ * Legacy: the shared X-Webhook-Secret, which carries no identity and always
+ * resolves to TELEGRAM_CHAT_ID (the instance owner). Kept only so existing
+ * shortcuts keep working until they are migrated — remove once they are.
+ */
+async function resolveWebhookUser(req) {
+    const token = req.headers['x-webhook-token'];
+    if (token) {
+        const [rows] = await db.query(
+            'SELECT user_id, telegram_chat_id FROM users WHERE webhook_token = ?',
+            [String(token)]
+        );
+        if (rows.length === 0) return { error: 'unauthorized' };
+        return { userId: rows[0].user_id, chatId: rows[0].telegram_chat_id };
     }
 
+    const secret = req.headers['x-webhook-secret'];
+    if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) return { error: 'unauthorized' };
+
+    console.warn('Apple Pay webhook used the legacy shared secret — attributing to the instance owner. Update this shortcut to send X-Webhook-Token.');
+    const [rows] = await db.query(
+        'SELECT user_id, telegram_chat_id FROM users WHERE telegram_chat_id = ?',
+        [String(TELEGRAM_USER_ID)]
+    );
+    if (rows.length === 0) return { error: 'unlinked' };
+    return { userId: rows[0].user_id, chatId: rows[0].telegram_chat_id };
+}
+
+exports.handleApplePay = async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: 'text required' });
 
-    // Resolve owner's DB user_id from their Telegram chat ID
-    const [ownerRows] = await db.query(
-        'SELECT user_id FROM users WHERE telegram_chat_id = ?',
-        [String(TELEGRAM_USER_ID)]
-    );
-    if (ownerRows.length === 0) {
-        return res.status(403).json({ error: 'Owner account not linked. Send /link_google to the bot first.' });
+    const { userId, chatId, error } = await resolveWebhookUser(req);
+    if (error === 'unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (error === 'unlinked') {
+        return res.status(403).json({ error: 'Account not linked. Send /link_google to the bot first.' });
     }
-    const ownerId = ownerRows[0].user_id;
 
     try {
-        const saved = await processAndSave(ownerId, text, TELEGRAM_USER_ID);
+        const saved = await processAndSave(userId, text, chatId);
         res.json({ success: true, count: saved.length, parsed: saved });
     } catch (err) {
         if (err.unavailable) {
             await db.query(
                 "INSERT INTO webhook_queue (user_id, text, status) VALUES (?, ?, 'pending')",
-                [ownerId, text]
+                [userId, text]
             );
             await sendTelegramMessage(
-                TELEGRAM_USER_ID,
+                chatId,
                 `⏳ AI is temporarily unavailable. Your transaction has been queued and will be logged automatically when it recovers.`
             );
             return res.json({ success: false, queued: true });

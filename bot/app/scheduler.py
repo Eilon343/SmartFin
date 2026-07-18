@@ -1,4 +1,3 @@
-import os
 import logging
 from datetime import datetime, timedelta, date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -105,14 +104,10 @@ async def _charge_due_subscriptions(bot: Bot, db_manager):
 def setup_scheduler(bot: Bot, db_manager) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
 
-    allowed_ids = [
-        int(uid)
-        for uid in os.getenv("TELEGRAM_CHAT_ID", "").split(",")
-        if uid.strip()
-    ]
-
     async def send_spending_scores():
-        for user_id in allowed_ids:
+        # Resolved per run, not captured at setup: a user who links their account
+        # after the bot starts must still get their weekly score.
+        for user_id in await db_manager.get_notifiable_user_ids():
             try:
                 data = await _compute_spending_score(db_manager, user_id)
                 text = _format_score_message(data)

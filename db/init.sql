@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
     pin_hash     VARCHAR(255),
     google_email      VARCHAR(255) UNIQUE,
     telegram_chat_id  VARCHAR(50) UNIQUE,
+    webhook_token     VARCHAR(64) UNIQUE,
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

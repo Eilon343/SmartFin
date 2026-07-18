@@ -69,6 +69,46 @@ describe('POST /webhook/apple-pay - secret validation', () => {
     });
 });
 
+// ── Per-user token routing ───────────────────────────────────────────────────
+
+describe('POST /webhook/apple-pay - per-user token routing', () => {
+    it('attributes the expense and the notification to the token owner, not the instance owner', async () => {
+        const SECOND_USER = 555000111;
+        mockGeminiSuccess({ amount: 42, currency: 'ILS', merchant: 'Bakery', category: 'Food', source: 'apple_pay' });
+        db.query
+            .mockResolvedValueOnce([[{ user_id: SECOND_USER, telegram_chat_id: String(SECOND_USER) }]]) // token lookup
+            .mockResolvedValueOnce([[{ category_id: 1 }]])   // category lookup
+            .mockResolvedValueOnce([{ insertId: 200 }]);     // insert expense
+        mockTelegram();
+
+        const res = await request(app)
+            .post('/webhook/apple-pay')
+            .set('X-Webhook-Token', 'second-user-token')
+            .send({ text: 'Apple Pay 42 ILS at Bakery' });
+
+        expect(res.status).toBe(200);
+
+        // Expense rows must carry the second user's id
+        const insertCall = db.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO expenses'));
+        expect(insertCall[1][0]).toBe(SECOND_USER);
+
+        // Telegram notification must go to the second user's chat
+        const telegramCall = global.fetch.mock.calls.find(([url]) => url.includes('api.telegram.org'));
+        expect(JSON.parse(telegramCall[1].body).chat_id).toBe(String(SECOND_USER));
+    });
+
+    it('returns 401 for an unrecognized token', async () => {
+        db.query.mockResolvedValueOnce([[]]); // no user matches the token
+
+        const res = await request(app)
+            .post('/webhook/apple-pay')
+            .set('X-Webhook-Token', 'bogus-token')
+            .send({ text: 'Apple Pay 42 ILS at Bakery' });
+
+        expect(res.status).toBe(401);
+    });
+});
+
 // ── Successful parse → expense inserted ──────────────────────────────────────
 
 function mockOwner() {
