@@ -862,6 +862,13 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /help ---
     @dp.message(Command("help"))
     async def handle_help(message: types.Message):
+        if not await _auth(message.from_user.id, db_manager):
+            await message.reply(
+                "👋 Welcome to *SmartFin*!\n\nLink your Google account first:\n/link_google your@email.com",
+                parse_mode="Markdown",
+            )
+            return
+
         await message.reply(
             "🤖 *SmartFin Bot — Commands*\n\n"
             "/start — show the welcome message and quick usage guide.\n"
