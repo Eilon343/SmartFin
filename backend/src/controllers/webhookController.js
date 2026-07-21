@@ -208,7 +208,12 @@ exports.handleTelegram = async (req, res) => {
     try {
         await handleTelegramMessage(chatId, text);
     } catch (err) {
-        console.error('Failed to handle Telegram message:', err.message);
+        await sendErrorToTelegram('Telegram message handler', err, { input: text });
+        try {
+            await sendTelegramMessage(chatId, "❌ An unexpected error occurred. Please try again later.");
+        } catch (notifyErr) {
+            console.error('Failed to send error notification:', notifyErr.message);
+        }
     }
 };
 
