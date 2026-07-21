@@ -858,3 +858,34 @@ def register_handlers(dp: Dispatcher, db_manager):
             "/link\\_google `<email>`",
             parse_mode="Markdown",
         )
+
+    # --- /help ---
+    @dp.message(Command("help"))
+    async def handle_help(message: types.Message):
+        if not await _auth(message.from_user.id, db_manager):
+            await message.reply(
+                "👋 Welcome to *SmartFin*!\n\nLink your Google account first:\n/link_google your@email.com",
+                parse_mode="Markdown",
+            )
+            return
+
+        await message.reply(
+            "🤖 *SmartFin Bot — Commands*\n\n"
+            "/start — show the welcome message and quick usage guide.\n"
+            "/help — show this list of commands.\n"
+            "/input `<text>` — log an expense from text without free-form parsing ambiguity.\n"
+            "/add\\_category `<name>` — create a new expense category.\n"
+            "/add\\_subscription `<name> <amount> <category> <day>` — add a recurring monthly charge.\n"
+            "/list\\_subscriptions — list all your active subscriptions.\n"
+            "/del\\_subscription `<id>` — remove a subscription by its id.\n"
+            "/set\\_budget `<category> <limit>` — set a monthly spending limit for a category.\n"
+            "/list\\_budgets — show all your category budgets and usage.\n"
+            "/add\\_savings `<name> <target> [monthly_allocation]` — create a savings goal.\n"
+            "/list\\_savings — list all your savings goals and progress.\n"
+            "/deposit\\_savings `<goal_id> <amount>` — add money toward a savings goal.\n"
+            "/setup\\_applepay — get instructions to auto-log Apple Pay transactions.\n"
+            "/webhook\\_token — show your personal Apple Pay webhook token.\n"
+            "/link\\_google `<email>` — link this Telegram account to your SmartFin web account.\n\n"
+            "_You can also just type naturally, e.g. \"55 nis shawarma\" or \"got salary 15000\"._",
+            parse_mode="Markdown",
+        )
