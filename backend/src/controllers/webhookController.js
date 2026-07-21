@@ -142,7 +142,11 @@ async function processAndSave(userId, text, chatId) {
         message = `✅ Logged ${saved.length} expenses:\n${lines}`;
     }
     const notifyChatId = chatId || userId;
-    await sendTelegramMessage(notifyChatId, message);
+    try {
+        await sendTelegramMessage(notifyChatId, message);
+    } catch (err) {
+        console.error('Failed to send confirmation message:', err.message);
+    }
     return saved;
 }
 
