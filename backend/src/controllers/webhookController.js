@@ -73,11 +73,15 @@ async function callGemini(text) {
 }
 
 async function sendTelegramMessage(chatId, text) {
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
     });
+    if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(`Telegram API error ${res.status}: ${errText}`);
+    }
 }
 
 async function sendErrorToTelegram(context, err, extra = {}) {
@@ -201,6 +205,14 @@ exports.handleTelegram = async (req, res) => {
 
     if (!text) return;
 
+    try {
+        await handleTelegramMessage(chatId, text);
+    } catch (err) {
+        console.error('Failed to handle Telegram message:', err.message);
+    }
+};
+
+async function handleTelegramMessage(chatId, text) {
     // Handle /link_google before user lookup
     const linkMatch = text.match(/^\/link_google\s+(\S+)$/i);
     if (linkMatch) {
@@ -327,10 +339,14 @@ exports.handleApplePay = async (req, res) => {
                 "INSERT INTO webhook_queue (user_id, text, status) VALUES (?, ?, 'pending')",
                 [userId, text]
             );
-            await sendTelegramMessage(
-                chatId,
-                `⏳ AI is temporarily unavailable. Your transaction has been queued and will be logged automatically when it recovers.`
-            );
+            try {
+                await sendTelegramMessage(
+                    chatId,
+                    `⏳ AI is temporarily unavailable. Your transaction has been queued and will be logged automatically when it recovers.`
+                );
+            } catch (notifyErr) {
+                console.error('Failed to send queued notification:', notifyErr.message);
+            }
             return res.json({ success: false, queued: true });
         }
         await sendErrorToTelegram('Apple Pay webhook', err, { input: text });
