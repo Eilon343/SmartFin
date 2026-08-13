@@ -575,8 +575,9 @@ class DatabaseManager:
                 # Skipped credit-card settlements have no expense_id and must not count
                 # as a counterpart — they are a lump bill, not the purchase.
                 await cur.execute(
-                    "SELECT t.expense_id, ABS(t.charged_amount), t.txn_date "
+                    "SELECT t.expense_id, e.amount, t.txn_date "
                     "FROM bank_transactions_raw t "
+                    "JOIN expenses e ON e.expense_id = t.expense_id "
                     "WHERE t.user_id = %s AND t.import_status = 'imported' "
                     "AND t.expense_id IS NOT NULL",
                     (user_id,),

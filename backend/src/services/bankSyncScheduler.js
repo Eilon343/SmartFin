@@ -511,7 +511,7 @@ async function runCategorizationDrain() {
         // Which card issuers this user has connected — a bank settlement row is only
         // safe to skip if its purchases are arriving from somewhere else.
         const [cardConns] = await db.query(
-            "SELECT DISTINCT user_id, company_id FROM bank_connections WHERE status <> 'disabled'"
+            "SELECT DISTINCT user_id, company_id FROM bank_connections WHERE status = 'active'"
         );
         const connectedCards = new Set(
             cardConns
