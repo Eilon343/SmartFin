@@ -5,10 +5,17 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const expenseRoutes = require('./routes/expenseRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
+const bankConnectionRoutes = require('./routes/bankConnectionRoutes');
 const { startQueueProcessor } = require('./controllers/webhookController');
+const bankSyncScheduler = require('./services/bankSyncScheduler');
 
 if (!process.env.JWT_SECRET) {
     console.error('FATAL: JWT_SECRET environment variable is not set');
+    process.exit(1);
+}
+
+if (!process.env.BANK_CREDENTIALS_KEY) {
+    console.error('FATAL: BANK_CREDENTIALS_KEY environment variable is not set');
     process.exit(1);
 }
 
@@ -52,6 +59,7 @@ app.use('/api', apiLimiter);
 app.use('/webhook', webhookLimiter);
 
 app.use('/api', expenseRoutes);
+app.use('/api', bankConnectionRoutes);
 app.use('/webhook', webhookRoutes);
 
 app.get('/health', (_req, res) => {
@@ -61,4 +69,5 @@ app.get('/health', (_req, res) => {
 app.listen(PORT, () => {
     console.log(`SmartFin API listening on port ${PORT}`);
     startQueueProcessor();
+    bankSyncScheduler.start();
 });

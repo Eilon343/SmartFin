@@ -18,7 +18,7 @@ services:
     mem_limit: 1g
     command:
       - --innodb-buffer-pool-size=256M
-      - --innodb-log-file-size=64M
+      - --innodb-redo-log-capacity=128M
       - --max-connections=50
       - --performance-schema=OFF
     healthcheck:
@@ -43,9 +43,6 @@ services:
     networks:
       - smartfin-network
     mem_limit: 256m
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
 
   backend:
     build:
@@ -62,10 +59,12 @@ services:
       - PORT=3000
     networks:
       - smartfin-network
-    mem_limit: 256m
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    mem_limit: 1g
+    # Chromium's zygote and crashpad children are re-parented to PID 1 when a scrape
+    # ends. Node is PID 1 here and never reaps them, so every bank sync left ~4 zombie
+    # processes behind until the container ran out of PIDs. `init` runs tini as PID 1,
+    # which reaps orphans properly.
+    init: true
 
   frontend:
     build:

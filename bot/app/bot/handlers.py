@@ -1,4 +1,3 @@
-import os
 import logging
 from datetime import datetime
 from aiogram import Dispatcher, types, F
@@ -7,12 +6,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.ai.ai_engine import parse_input, generate_financial_advice, AIEngineError
 from app.bot.states import ExpenseFlow, IncomeFlow, SubscriptionFlow
-
-# Public URL phones post Apple Pay / payment notifications to.
-WEBHOOK_URL = os.getenv(
-    "WEBHOOK_PUBLIC_URL",
-    "https://mac-mini-home.tail61d766.ts.net/webhook/apple-pay",
-)
 
 WITTY_UNSUPPORTED = (
     "🧙 I only do financial magic — expenses, income, subscriptions, and savings.\n"
@@ -713,117 +706,87 @@ def register_handlers(dp: Dispatcher, db_manager):
         else:
             await message.reply("❌ Failed to link account. Try again.")
 
-    async def _issue_token(message: types.Message):
-        """Shared guard + token issuing for the Apple Pay setup commands."""
+    # --- /clean_dupes ---
+    # Once bank and card sync is connected it imports the same purchases you logged by
+    # hand — through Apple Pay, the bot, or the web app. This removes only the ones that
+    # provably arrived twice, and never touches spending nothing else recorded (cash,
+    # Bit, PayBox, a card that isn't connected).
+    @dp.message(Command("clean_dupes", "clean_applepay"))
+    async def handle_clean_dupes(message: types.Message):
         if not await _auth(message.from_user.id, db_manager):
             await message.reply(
                 "Link your Google account first:\n`/link_google your@email.com`",
                 parse_mode="Markdown",
             )
-            return None
-        token = await db_manager.get_or_create_webhook_token(message.from_user.id)
-        if not token:
-            await message.reply("❌ Failed to generate your token. Try again in a moment.")
-            return None
-        return token
-
-    @dp.message(Command("webhook_token"))
-    async def handle_webhook_token(message: types.Message):
-        token = await _issue_token(message)
-        if not token:
-            return
-        await message.reply(
-            "🔑 *Your personal webhook token*\n\n"
-            f"`{token}`\n\n"
-            "Tap it to copy. Use it as the `X-Webhook-Token` header in your shortcut.\n\n"
-            "Need the full walkthrough? Send /setup\\_applepay\n\n"
-            "⚠️ Keep it private — anyone with this token can log expenses to your account.",
-            parse_mode="Markdown",
-        )
-
-    @dp.message(Command("setup_applepay"))
-    async def handle_setup_applepay(message: types.Message):
-        token = await _issue_token(message)
-        if not token:
             return
 
-        await message.answer(
-            "🍎 *Automatic expense logging — setup guide*\n\n"
-            "Your phone will watch for payment notifications and send them here "
-            "automatically. Every expense lands in *your* account and the confirmation "
-            "comes back to *this* chat.\n\n"
-            "Takes about 5 minutes. Three steps:\n"
-            "1️⃣ Copy your token\n"
-            "2️⃣ Build the shortcut/macro\n"
-            "3️⃣ Test it\n\n"
-            "_Scroll down — the next messages walk you through each one._",
-            parse_mode="Markdown",
-        )
+        arg = message.text.split(maxsplit=1)[1].strip().lower() if len(message.text.split()) > 1 else ""
+        summary = await db_manager.get_duplicate_cleanup_summary(message.from_user.id)
 
-        await message.answer(
-            "*STEP 1 — Your token*\n\n"
-            f"`{token}`\n\n"
-            "Tap the token above to copy it. You'll paste it in Step 2.\n\n"
-            "This token identifies you. Don't share it, don't post it in a group. "
-            "If it ever leaks, send /setup\\_applepay again after asking the admin "
-            "to reset it.",
-            parse_mode="Markdown",
-        )
+        if summary["total_count"] == 0:
+            await message.reply("✅ You have no hand-logged expenses — nothing to clean.")
+            return
 
-        await message.answer(
-            "*STEP 2a — iPhone (Shortcuts app)*\n\n"
-            "1. Open *Shortcuts* → *Automation* tab → *+* (top right)\n"
-            "2. Choose *App* → pick *Wallet* → *Is Opened* → *Run Immediately*, "
-            "turn *Notify When Run* OFF\n"
-            "3. Tap *Next* → search for *Get Contents of URL* and add it\n"
-            "4. Tap the URL field and enter exactly:\n"
-            f"`{WEBHOOK_URL}`\n"
-            "5. Expand *Show More* and set:\n"
-            "   • *Method:* `POST`\n"
-            "   • *Headers:* add two rows —\n"
-            "     `Content-Type` → `application/json`\n"
-            "     `X-Webhook-Token` → your token from Step 1\n"
-            "   • *Request Body:* `JSON`\n"
-            "     add one field, key `text`, type *Text*, value = the notification text\n"
-            "6. Tap *Done*\n\n"
-            "_Android user? See the next message instead._",
-            parse_mode="Markdown",
-        )
+        if arg == "confirm":
+            if summary["matched_count"] == 0:
+                await message.reply("Nothing is safe to delete yet — run /clean\\_dupes to see why.", parse_mode="Markdown")
+                return
+            deleted = await db_manager.delete_duplicate_expenses(message.from_user.id)
+            if deleted < 0:
+                await message.reply("❌ Something went wrong deleting them. Nothing was changed.")
+                return
+            await message.reply(
+                f"🧹 *Deleted {deleted} duplicate{'' if deleted == 1 else 's'}*\n\n"
+                f"{summary['unmatched_count']} hand-logged expense"
+                f"{'' if summary['unmatched_count'] == 1 else 's'} kept — nothing else recorded those.\n\n"
+                "Your categories were copied onto the imported transactions, and your bank "
+                "and cards keep importing everything automatically from now on.",
+                parse_mode="Markdown",
+            )
+            return
 
-        await message.answer(
-            "*STEP 2b — Android (MacroDroid app)*\n\n"
-            "1. Install *MacroDroid* from Play Store → *Add Macro*\n"
-            "2. *Trigger:* Device Events → Notification → Notification Received\n"
-            "   • pick your payment app (Google Wallet / Bit / PayBox)\n"
-            "   • Text Content → *Contains* → type `₪`\n"
-            "3. *Action:* Applications → HTTP Request\n"
-            "   • Request Type: `POST`\n"
-            f"   • URL: `{WEBHOOK_URL}`\n"
-            "   • Headers:\n"
-            "     `Content-Type` → `application/json`\n"
-            "     `X-Webhook-Token` → your token from Step 1\n"
-            "   • Body → *Raw / Custom*, paste exactly:\n"
-            '`{"text": "[not_title] [not_ticker]"}`\n'
-            "4. Save the macro, then grant *Notification Access* when prompted\n"
-            "5. ⚠️ Settings → Apps → MacroDroid → Battery → *Unrestricted*, "
-            "or Android will kill it after a few hours",
-            parse_mode="Markdown",
-        )
+        # No argument — show what would happen. Never delete without confirmation.
+        lines = [
+            "🧾 *Duplicate cleanup*\n",
+            f"You have *{summary['total_count']}* hand-logged expenses "
+            f"totalling *₪{summary['total_amount']:,.2f}*.\n",
+        ]
 
-        await message.answer(
-            "*STEP 3 — Test it*\n\n"
-            "Make any small real payment, or trigger the shortcut manually.\n\n"
-            "Within a few seconds you should get a message here like:\n"
-            "✅ Logged *ILS 12.00* at *Cafe*\n\n"
-            "*If nothing arrives:*\n"
-            "• Check the token was pasted with no extra spaces\n"
-            "• Confirm the header name is `X-Webhook-Token` (not `X-Webhook-Secret`)\n"
-            "• Make sure your phone is on the home VPN/network\n"
-            "• Send /webhook\\_token to see your token again\n\n"
-            "That's it — you're set up. 🎉",
-            parse_mode="Markdown",
-        )
+        if summary["matched_count"] > 0:
+            breakdown = ", ".join(
+                f"{n} {src.replace('_', ' ')}" for src, n in sorted(summary["matched_by_source"].items())
+            )
+            lines.append(
+                f"✅ *{summary['matched_count']}* of them (*₪{summary['matched_amount']:,.2f}*) "
+                "match a transaction your bank or card already imported — same amount, "
+                f"within a few days.\n_{breakdown}_\n"
+            )
+        else:
+            lines.append(
+                "⚠️ *None* of them match a transaction from your bank or cards. Either the "
+                "accounts aren't connected yet, or none of this spending went through them.\n"
+            )
 
+        if summary["unmatched_count"] > 0:
+            lines.append(
+                f"🛑 *{summary['unmatched_count']}* (*₪{summary['unmatched_amount']:,.2f}*) have "
+                "*no* counterpart and will be kept — cash, Bit and PayBox never reach a bank "
+                "or card feed. Examples:"
+            )
+            for row in summary["unmatched"][:5]:
+                desc = (row["description"] or "no description")[:28]
+                lines.append(f"  • {row['date']} ₪{row['amount']:,.2f} — {desc}")
+            if summary["unmatched_count"] > 5:
+                lines.append(f"  • …and {summary['unmatched_count'] - 5} more")
+            lines.append("")
+
+        if summary["matched_count"] > 0:
+            lines.append(
+                f"*/clean\\_dupes confirm* — delete the {summary['matched_count']} duplicates"
+            )
+            lines.append("\n_Your categories are copied over first. This cannot be undone._")
+
+        await message.reply("\n".join(lines), parse_mode="Markdown")
     # --- /start ---
     @dp.message(Command("start"))
     async def handle_start(message: types.Message):
@@ -852,8 +815,9 @@ def register_handlers(dp: Dispatcher, db_manager):
             "/add\\_savings `<name> <target> [monthly_allocation]`\n"
             "/list\\_savings · /deposit\\_savings `<goal_id> <amount>`\n\n"
             "*Automatic logging*\n"
-            "/setup\\_applepay — log payments automatically from your phone\n"
-            "/webhook\\_token — show your token again\n\n"
+            "Connect your bank and credit cards in Settings on the web app —\n"
+            "transactions import automatically every night.\n"
+            "/clean\\_dupes — remove expenses your bank/card sync now imports itself\n\n"
             "*Account*\n"
             "/link\\_google `<email>`",
             parse_mode="Markdown",
@@ -883,8 +847,7 @@ def register_handlers(dp: Dispatcher, db_manager):
             "/add\\_savings `<name> <target> [monthly_allocation]` — create a savings goal.\n"
             "/list\\_savings — list all your savings goals and progress.\n"
             "/deposit\\_savings `<goal_id> <amount>` — add money toward a savings goal.\n"
-            "/setup\\_applepay — get instructions to auto-log Apple Pay transactions.\n"
-            "/webhook\\_token — show your personal Apple Pay webhook token.\n"
+            "/clean\\_dupes — remove hand-logged expenses that your bank/card sync now imports itself.\n"
             "/link\\_google `<email>` — link this Telegram account to your SmartFin web account.\n\n"
             "_You can also just type naturally, e.g. \"55 nis shawarma\" or \"got salary 15000\"._",
             parse_mode="Markdown",

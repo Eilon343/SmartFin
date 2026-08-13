@@ -107,12 +107,22 @@ class TestParseInputIntents:
         assert result["intent"] == "ERROR_UNSUPPORTED"
 
     @pytest.mark.asyncio
-    async def test_apple_pay_source_detected(self):
-        payload = {"intent": "log_expense", "amount": 120.0, "currency": "ILS", "item": "Supermarket", "category": "Shopping", "source": "apple_pay"}
+    async def test_prompt_no_longer_asks_for_an_apple_pay_source(self):
+        # The Apple Pay endpoint is gone, so anything reaching this parser was typed to
+        # the bot. An 'apple_pay' row written today would also be a deletion candidate
+        # for /clean_applepay, which hunts exactly that source.
+        from app.ai.ai_engine import _INTENT_SYSTEM_PROMPT
+
+        assert "apple_pay" not in _INTENT_SYSTEM_PROMPT
+
+    @pytest.mark.asyncio
+    async def test_apple_pay_wording_is_parsed_as_an_ordinary_expense(self):
+        payload = {"intent": "log_expense", "amount": 120.0, "currency": "ILS", "item": "Supermarket", "category": "Shopping", "source": "bot"}
         with patch("app.ai.ai_engine._get_client") as mock:
             mock.return_value.models.generate_content.return_value = _mock_response(payload)
             result = await parse_input("Apple Pay transaction: 120 ILS at Supermarket", CATEGORIES)
-        assert result["source"] == "apple_pay"
+        assert result["intent"] == "log_expense"
+        assert result["source"] == "bot"
 
 
 # ── Retry logic ───────────────────────────────────────────────────────────────

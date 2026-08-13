@@ -1,8 +1,12 @@
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useI18n } from '../context/I18nContext';
 import Icon from '../components/ui/Icon';
 import PageHeader from '../components/ui/PageHeader';
+import Modal from '../components/ui/Modal';
+import Toast from '../components/ui/Toast';
+import api from '../api/client';
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -22,6 +26,172 @@ function ThemeToggle() {
       {isDark ? <Icon name="moon" size={15} color="var(--indigo)" /> : <Icon name="sun" size={15} color="var(--amber)" />}
       <span>{isDark ? t('settings_theme_btn_dark') : t('settings_theme_btn_light')}</span>
     </button>
+  );
+}
+
+function BankConnectModal({ open, onClose, onSave }) {
+  const { t } = useI18n();
+  const [companies, setCompanies] = useState([]);
+  const [companyId, setCompanyId] = useState('');
+  const [credentials, setCredentials] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setCredentials({});
+    setSaving(false);
+    api.get('/bank-connections/companies').then(res => {
+      setCompanies(res.data || []);
+      if (res.data?.length) setCompanyId(res.data[0].id);
+    });
+  }, [open]);
+
+  const company = companies.find(c => c.id === companyId);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!company) return;
+    setSaving(true);
+    try {
+      await onSave(companyId, credentials);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 14 }}>
+        <div className="between">
+          <h3 className="h2" style={{ fontSize: 17 }}>{t('settings_bank_connect')}</h3>
+          <button type="button" className="btn ghost icon" onClick={onClose}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="field">
+          <label>{t('settings_bank_company')}</label>
+          <select className="select" value={companyId} onChange={e => { setCompanyId(e.target.value); setCredentials({}); }}>
+            <optgroup label={t('settings_bank_group_bank')}>
+              {companies.filter(c => c.kind !== 'card').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </optgroup>
+            <optgroup label={t('settings_bank_group_card')}>
+              {companies.filter(c => c.kind === 'card').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </optgroup>
+          </select>
+        </div>
+        {company?.loginFields.map(field => (
+          <div className="field" key={field}>
+            <label>{t(`settings_bank_field_${field}`)}</label>
+            <input
+              className="input"
+              type={field.toLowerCase().includes('password') ? 'password' : 'text'}
+              value={credentials[field] || ''}
+              onChange={e => setCredentials(c => ({ ...c, [field]: e.target.value }))}
+            />
+          </div>
+        ))}
+        <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          <button type="button" className="btn" onClick={onClose}>{t('common_cancel')}</button>
+          <button type="submit" className="btn primary" disabled={saving}>
+            {saving ? t('common_saving') : <><Icon name="check" size={13} /> {t('settings_bank_connect')}</>}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function statusColor(status) {
+  if (status === 'active') return 'var(--emerald)';
+  if (status === 'pending_first_sync') return 'var(--amber)';
+  return 'var(--rose)';
+}
+
+function BankSyncCard() {
+  const { t } = useI18n();
+  const [connections, setConnections] = useState([]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [toast, setToast] = useState('');
+  const pollRef = useRef(null);
+
+  const load = useCallback(() => {
+    api.get('/bank-connections').then(res => setConnections(res.data || []));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const anyPending = connections.some(c => c.status === 'pending_first_sync');
+    clearInterval(pollRef.current);
+    if (anyPending) {
+      pollRef.current = setInterval(load, 5000);
+    }
+    return () => clearInterval(pollRef.current);
+  }, [connections, load]);
+
+  const connect = async (companyId, credentials) => {
+    try {
+      await api.post('/bank-connections', { companyId, credentials });
+      setToast(t('settings_bank_toast_connected'));
+      load();
+    } catch (err) {
+      setToast(err.response?.data?.error || t('settings_bank_err_connect'));
+      throw err;
+    }
+  };
+
+  const syncNow = async (id) => {
+    try {
+      await api.post(`/bank-connections/${id}/sync`);
+      setToast(t('settings_bank_toast_sync'));
+      load();
+    } catch (err) {
+      setToast(err.response?.data?.error || t('settings_bank_err_sync'));
+    }
+  };
+
+  const disconnect = async (id) => {
+    if (!window.confirm(t('settings_bank_confirm_disconnect'))) return;
+    await api.delete(`/bank-connections/${id}`);
+    setToast(t('settings_bank_toast_disconnected'));
+    load();
+  };
+
+  return (
+    <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
+      <h3 className="h2" style={{ marginBottom: 4 }}>{t('settings_bank')}</h3>
+      <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>{t('settings_bank_sub')}</div>
+      <div className="muted-2" style={{ fontSize: 12, marginBottom: 16 }}>{t('settings_bank_card_hint')}</div>
+
+      {connections.length === 0 && (
+        <div className="muted-2" style={{ fontSize: 13, marginBottom: 16 }}>{t('settings_bank_none')}</div>
+      )}
+
+      {connections.map(c => (
+        <div key={c.id} className="between" style={{ padding: '12px 0', borderTop: '1px solid var(--line)' }}>
+          <div className="stack">
+            <span style={{ fontWeight: 500, fontSize: 14 }}>{c.display_name || c.company_id}</span>
+            <span className="muted-2" style={{ fontSize: 12 }}>
+              <span style={{ color: statusColor(c.status) }}>{t(`settings_bank_status_${c.status}`)}</span>
+              {' · '}
+              {t('settings_bank_last_sync')}: {c.last_sync_at ? new Date(c.last_sync_at).toLocaleString() : t('settings_bank_last_sync_never')}
+            </span>
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn" onClick={() => syncNow(c.id)}>{t('settings_bank_sync_now')}</button>
+            <button className="btn" style={{ color: 'var(--rose)', borderColor: 'var(--rose-soft)' }} onClick={() => disconnect(c.id)}>
+              {t('settings_bank_disconnect')}
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <button className="btn primary" style={{ marginTop: 16 }} onClick={() => setModalOpen(true)}>
+        <Icon name="link" size={14} /> {t('settings_bank_connect')}
+      </button>
+
+      <BankConnectModal open={modalOpen} onClose={() => setModalOpen(false)} onSave={connect} />
+      <Toast msg={toast} onDone={() => setToast('')} />
+    </div>
   );
 }
 
@@ -99,6 +269,8 @@ export default function Settings() {
           </div>
         ))}
       </div>
+
+      <BankSyncCard />
 
       <div className="card card-pad-lg">
         <h3 className="h2" style={{ marginBottom: 4 }}>{t('settings_account')}</h3>

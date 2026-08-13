@@ -123,9 +123,18 @@ def setup_scheduler(bot: Bot, db_manager) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Must be an `async def`, NOT `lambda: _charge_due_subscriptions(...)`.
+    # AsyncIOScheduler routes a job to its event loop only when the function passes
+    # iscoroutinefunction(); a plain lambda fails that test, so APScheduler ran it in a
+    # worker thread, where it built the coroutine and threw it away without awaiting it.
+    # Subscriptions silently stopped being billed from 2026-04-27 (commit 3837072) until
+    # this was fixed — the only symptom was a "coroutine was never awaited" warning.
+    async def charge_due_subscriptions():
+        await _charge_due_subscriptions(bot, db_manager)
+
     # Every day at 09:00 — bill due subscriptions (idempotent per month)
     scheduler.add_job(
-        lambda: _charge_due_subscriptions(bot, db_manager),
+        charge_due_subscriptions,
         CronTrigger(hour=9, minute=0),
         id="daily_subscription_billing",
         replace_existing=True,

@@ -523,8 +523,10 @@ function TransactionsTable({ expenses }) {
           <div className="desktop-only" style={{ textAlign: lang === 'he' ? 'left' : 'right' }}>
             {e.is_virtual ? (
               <span className="vr virtual">{t('tx_savings')}</span>
+            ) : e.source === 'bank_sync' ? (
+              <span className="vr" style={{ background: '#1a1a1a', color: '#f5f5f7', fontSize: 10, fontWeight: 600 }}>{t('tx_bank_sync')}</span>
             ) : e.source === 'apple_pay' ? (
-              <span className="vr" style={{ background: '#1a1a1a', color: '#f5f5f7', fontSize: 10, fontWeight: 600 }}>Apple Pay</span>
+              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)', fontSize: 10 }}>Apple Pay</span>
             ) : e.source === 'bot' ? (
               <span className="vr" style={{ background: 'var(--indigo-soft)', color: 'var(--indigo)' }}>{t('bot')}</span>
             ) : e.source === 'web' ? (

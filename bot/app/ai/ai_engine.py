@@ -256,6 +256,10 @@ async def _run_with_retries(call):
 # its keep both as a quality lever and by pushing the prefix above the
 # caching threshold.
 
+# The prompt used to ask for source="apple_pay" when a message mentioned Apple Pay, and
+# handlers.py writes whatever comes back. That endpoint is gone, so every message
+# reaching this parser was typed to the bot — and an 'apple_pay' row written today would
+# be a deletion candidate for /clean_applepay, which hunts exactly that source.
 _INTENT_SYSTEM_PROMPT = """\
 You are SmartFin's intent classifier. Read the user's message and return
 ONLY a valid JSON ARRAY of intent objects — no prose, no markdown fences,
@@ -281,8 +285,7 @@ SCHEMAS (return one of these per array element)
   log_expense:
     {"intent":"log_expense","amount":55.0,"currency":"ILS",
      "item":"shawarma","category":"Food","source":"bot"}
-    • source="apple_pay" iff the message starts with 'Apple pay transaction:'
-      OR explicitly mentions Apple Pay; otherwise source="bot".
+    • source is always "bot".
     • category MUST be picked from the user's category list. If nothing fits,
       use null — never invent a new category name.
     • Multiple expenses in one message ("7 on cola, 5 on gum") → one
@@ -342,10 +345,6 @@ WORKED EXAMPLES (do not echo these — they show the expected mapping)
             "item":"cola","category":"Food","source":"bot"},
            {"intent":"log_expense","amount":5.0,"currency":"ILS",
             "item":"gum","category":"Food","source":"bot"}]
-
-  Input:  "Apple pay transaction: 120 ILS at Supermarket"
-  Output: [{"intent":"log_expense","amount":120.0,"currency":"ILS",
-            "item":"Supermarket","category":"Food","source":"apple_pay"}]
 
   Input:  "got salary 15000"
   Output: [{"intent":"log_income","amount":15000.0,"currency":"ILS",

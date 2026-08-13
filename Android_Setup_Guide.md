@@ -39,69 +39,33 @@ The bot is your quick way to log expenses without opening the dashboard.
 
 ---
 
-## 4. Automate Tap-to-Pay (Google Wallet / NFC)
+## 4. Automatic Expense Logging (Bank & Card Sync)
 
-When you tap to pay, your banking or wallet app sends a notification. We use **MacroDroid** to intercept that notification and forward it to SmartFin automatically.
+Nothing to install on the phone. SmartFin logs in to your bank and credit cards for you
+and imports transactions every night.
 
-### Step 4.1 – Install MacroDroid
+1. Open SmartFin in your browser → **Settings** → **Bank sync**.
+2. Tap **Connect**, choose your bank, and enter the same details you use on the bank's
+   own website. They're encrypted before they're stored and are never shown again.
+3. Repeat for **each credit card** (Isracard, Max, Visa Cal, Amex…).
 
-1. Install **MacroDroid – Device Automation** from the Google Play Store.
-2. Open it and grant the permissions it requests on first launch.
+Connecting the cards as well as the bank matters: the bank statement shows only one
+lump settlement per card per month, not what you actually bought. With the card
+connected, SmartFin imports the individual purchases and drops the duplicate
+settlement automatically.
 
-### Step 4.2 – Create the Automation Macro
+The first sync backfills about three months and takes a few minutes; you'll get a
+Telegram message when it's done, and again after each nightly sync that finds
+something new.
 
-1. Tap **Add Macro** on the MacroDroid home screen.
+### Replaced: the MacroDroid / notification webhook
 
-#### A. Set the Trigger
+Earlier versions forwarded Google Wallet payment notifications to SmartFin with
+MacroDroid. That endpoint has been removed — a tap-to-pay purchase is a credit-card
+purchase, so the card connection already imports it, with the real merchant name
+instead of a notification string. Running both logged everything twice.
 
-1. Tap **+** under **Triggers**.
-2. Go to **Device Events** → **Notification** → **Notification Received**.
-3. Select your payment app (e.g. **Google Wallet**, **Bit**, **PayBox**). Tap OK.
-4. Under "Text Content", select **Contains** and type `₪` — this filters to actual payment notifications only. Tap OK.
-
-#### B. Set the Action (HTTP Webhook)
-
-1. Tap **+** under **Actions**.
-2. Go to **Applications** → **HTTP Request**.
-3. Configure as follows:
-
-   | Field | Value |
-   |-------|-------|
-   | Request Type | `POST` |
-   | URL | `https://mac-mini-home.tail61d766.ts.net/webhook/apple-pay` |
-
-4. Add two **Headers**:
-   - `Content-Type` → `application/json`
-   - `x-webhook-secret` → *(ask the admin for this value)*
-
-5. In the **Body** tab, set type to **Raw / Custom** and paste exactly:
-   ```json
-   {
-     "text": "[not_title] [not_ticker]"
-   }
-   ```
-   The `[not_title]` and `[not_ticker]` are MacroDroid magic text variables that insert the notification content at runtime.
-
-6. Tap OK to save the action.
-
-#### C. Save the Macro
-
-1. Name it something like **SmartFin Auto Pay**.
-2. Tap the checkmark or back arrow to save.
-3. When prompted, grant MacroDroid **Notification Access** in Android Settings.
-
-### Step 4.3 – Disable Battery Optimization for MacroDroid
-
-Android kills background apps aggressively. Without this step, MacroDroid will stop catching notifications after a short while.
-
-1. Open Android **Settings** → **Apps** → **MacroDroid**.
-2. Tap **Battery** → select **Unrestricted** (or "Don't optimize").
-3. On Samsung devices: also go to **Settings** → **Battery** → **Background usage limits** and make sure MacroDroid is not listed there.
-
-### Step 4.4 – Test It
-
-Make a purchase using NFC. You should see:
-1. A payment notification from Google Wallet / your bank app.
-2. MacroDroid intercepts it and sends the POST request.
-3. SmartFin parses the amount and merchant, logs the expense, and sends you a **Telegram confirmation message**.
-
+If you set up that macro, **delete it in MacroDroid**, then send the bot
+`/clean_applepay` to review and remove the duplicates it left behind. The command
+shows you what it would delete before deleting anything, and only removes rows it can
+match to a real synced transaction unless you explicitly ask for more.
