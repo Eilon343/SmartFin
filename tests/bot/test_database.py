@@ -3,6 +3,7 @@ Tests for bot/app/database/DatabaseManager.py
 
 Mocks the aiomysql connection pool — no real DB required.
 """
+import hashlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
@@ -42,35 +43,100 @@ async def _get_db_with_pool(pool):
     return db
 
 
-# ── ensure_user ───────────────────────────────────────────────────────────────
+# ── user resolution & link codes ──────────────────────────────────────────────
 
-class TestEnsureUser:
+class TestResolveUserByChatId:
+    """ensure_user() used to live here and is deliberately gone.
+
+    It created a users row keyed by the Telegram id, which is what let the bot mint accounts
+    nobody had proven ownership of. The bot now only ever *resolves* an existing link.
+    """
+
     @pytest.mark.asyncio
-    async def test_inserts_new_user(self):
-        cur = _make_cursor()
-        conn = _make_conn(cur)
-        pool = _make_pool(conn)
-        db = await _get_db_with_pool(pool)
+    async def test_resolves_chat_id_to_the_linked_account(self):
+        # An app-origin account: user_id is a DB-assigned id, nothing like the chat id.
+        cur = _make_cursor(fetchone=(10000000000007,))
+        db = await _get_db_with_pool(_make_pool(_make_conn(cur)))
 
-        await db.ensure_user(12345, "eilon")
+        user_id = await db.get_user_id_by_chat_id(12345)
 
-        cur.execute.assert_called_once()
+        assert user_id == 10000000000007
         sql = cur.execute.call_args[0][0]
-        assert "INSERT" in sql.upper()
-        assert "users" in sql.lower()
+        assert "telegram_chat_id" in sql.lower()
+        # The lookup must NOT be by user_id — that was the bug.
+        assert "where user_id" not in sql.lower()
+        assert cur.execute.call_args[0][1] == ("12345",)
 
     @pytest.mark.asyncio
-    async def test_handles_existing_user_via_upsert(self):
-        """ON DUPLICATE KEY UPDATE means calling twice should not raise."""
+    async def test_returns_none_for_an_unlinked_chat(self):
+        cur = _make_cursor(fetchone=None)
+        db = await _get_db_with_pool(_make_pool(_make_conn(cur)))
+
+        assert await db.get_user_id_by_chat_id(999) is None
+
+    @pytest.mark.asyncio
+    async def test_the_bot_can_no_longer_create_accounts(self):
+        db = await _get_db_with_pool(_make_pool(_make_conn(_make_cursor())))
+
+        assert not hasattr(db, "ensure_user")
+        assert not hasattr(db, "link_google_account")
+
+
+class TestRedeemLinkCode:
+    @pytest.mark.asyncio
+    async def test_links_the_chat_on_a_valid_code(self):
+        # rowcount 1 = the conditional UPDATE claimed the code.
+        cur = _make_cursor(fetchone=(777,), rowcount=1)
+        db = await _get_db_with_pool(_make_pool(_make_conn(cur)))
+
+        # owner lookup -> 777, then chat-ownership lookup -> 777 (same user, idempotent)
+        result = await db.redeem_link_code("ABCD1234", 55501)
+
+        assert result == "ok"
+        statements = [c[0][0] for c in cur.execute.call_args_list]
+        assert any("UPDATE telegram_link_codes" in s for s in statements)
+        assert any("UPDATE users SET telegram_chat_id" in s for s in statements)
+
+    @pytest.mark.asyncio
+    async def test_rejects_a_used_or_expired_code_without_linking(self):
+        # rowcount 0 = used_at was already set, or expires_at has passed. The single
+        # conditional UPDATE covers both, so neither can be redeemed.
+        cur = _make_cursor(rowcount=0)
+        db = await _get_db_with_pool(_make_pool(_make_conn(cur)))
+
+        result = await db.redeem_link_code("ABCD1234", 55501)
+
+        assert result == "invalid"
+        statements = [c[0][0] for c in cur.execute.call_args_list]
+        assert not any("UPDATE users" in s for s in statements)
+
+    @pytest.mark.asyncio
+    async def test_rejects_an_empty_code_without_touching_the_database(self):
         cur = _make_cursor()
-        conn = _make_conn(cur)
-        pool = _make_pool(conn)
-        db = await _get_db_with_pool(pool)
+        db = await _get_db_with_pool(_make_pool(_make_conn(cur)))
 
-        await db.ensure_user(12345, "eilon")
-        await db.ensure_user(12345, "eilon")
+        assert await db.redeem_link_code("", 55501) == "invalid"
+        cur.execute.assert_not_called()
 
-        assert cur.execute.call_count == 2
+    @pytest.mark.asyncio
+    async def test_stores_only_a_hash_never_the_code(self):
+        cur = _make_cursor(fetchone=(777,), rowcount=1)
+        db = await _get_db_with_pool(_make_pool(_make_conn(cur)))
+
+        await db.redeem_link_code("ABCD1234", 55501)
+
+        expected = hashlib.sha256(b"ABCD1234").hexdigest()
+        assert cur.execute.call_args_list[0][0][1] == (expected,)
+
+    @pytest.mark.asyncio
+    async def test_normalizes_case_and_separators(self):
+        cur = _make_cursor(fetchone=(777,), rowcount=1)
+        db = await _get_db_with_pool(_make_pool(_make_conn(cur)))
+
+        await db.redeem_link_code(" abcd-1234 ", 55501)
+
+        expected = hashlib.sha256(b"ABCD1234").hexdigest()
+        assert cur.execute.call_args_list[0][0][1] == (expected,)
 
 
 # ── get_user_categories ───────────────────────────────────────────────────────

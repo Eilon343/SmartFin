@@ -7,7 +7,9 @@ import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
 import DuplicateCleanupCard from '../components/DuplicateCleanupCard';
+import TelegramLinkCard from '../components/TelegramLinkCard';
 import WhatsNewModal from '../components/WhatsNewModal';
+import WelcomeModal from '../components/WelcomeModal';
 import api from '../api/client';
 
 function ThemeToggle() {
@@ -266,6 +268,7 @@ export default function Settings() {
   // The tour is shown once automatically after the update; this is how someone finds it
   // again afterwards.
   const [tourOpen, setTourOpen] = useState(false);
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
 
   const rows = [
     {
@@ -312,6 +315,18 @@ export default function Settings() {
         </button>
       ),
     },
+    // Replayable on demand. The first-run tour is suppressed for every pre-existing
+    // account by migration 011, so without this there would be no way to read it at all.
+    {
+      icon: 'sparkles',
+      name: t('welcome_eyebrow'),
+      sub: t('welcome_replay_sub'),
+      val: (
+        <button className="btn" onClick={() => setWelcomeOpen(true)}>
+          {t('welcome_open')}
+        </button>
+      ),
+    },
     {
       icon: theme === 'dark' ? 'moon' : 'sun',
       name: t('settings_theme'),
@@ -347,11 +362,16 @@ export default function Settings() {
         ))}
       </div>
 
+      <TelegramLinkCard />
+
       <BankSyncCard />
 
       <DuplicateCleanupCard />
 
       <WhatsNewModal open={tourOpen} onClose={() => setTourOpen(false)} />
+
+      {/* Replay only — the account is already marked onboarded, so closing it records nothing. */}
+      <WelcomeModal open={welcomeOpen} onFinish={() => setWelcomeOpen(false)} />
 
       <div className="card card-pad-lg">
         <h3 className="h2" style={{ marginBottom: 4 }}>{t('settings_account')}</h3>

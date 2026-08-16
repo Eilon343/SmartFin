@@ -53,6 +53,26 @@ against it. It is the only way to see the real duplicate counts before they are 
 
 **This release adds no new environment variables.** Nothing to generate, nothing to rotate.
 
+> ### Where env actually lives, and why the key seemed to reset
+>
+> `/DATA/AppData/SmartFin/.env` on the host is the **only** source of truth. The `.env`
+> inside the CI workspace is a disposable copy: `actions/checkout` wipes untracked and
+> ignored files before every run, and `.env` is gitignored, so **anything edited in the
+> deployed workspace copy is destroyed on the next deploy**. Editing it there fixes exactly
+> one run, which is what made `BANK_CREDENTIALS_KEY` look like it reset itself. Nothing in
+> the workflow has ever generated a `.env` — it only copies the host file over.
+>
+> **Fix env on the host file, then redeploy. Never edit the checked-out copy.**
+>
+> The deploy now refuses to start unless `MYSQL_ROOT_PASSWORD`, `JWT_SECRET`,
+> `BANK_CREDENTIALS_KEY` and `GOOGLE_CLIENT_ID` are present on the host, and
+> `BANK_CREDENTIALS_KEY` is 64 hex characters. It also fingerprints the key
+> (`/DATA/AppData/SmartFin/.bank-key-fingerprint`, a SHA-256 prefix — never the key itself)
+> and **aborts if it changed**, because a rotated key fails silently: the backend boots
+> fine, then every bank connection reports "Your saved credentials could not be read".
+> To rotate deliberately, set repository variable `ALLOW_BANK_KEY_ROTATION=true`, deploy
+> once, then unset it — and expect to reconnect every bank and card by hand.
+
 Confirm what bank sync already needs is present, since cleanup is worthless without
 imported data:
 
@@ -137,6 +157,54 @@ SHOW COLUMNS FROM deleted_income   LIKE \"batch_id\";
 ```
 
 Both must return a row.
+
+---
+
+## Step 4b — Run migration 010 (real authentication)
+
+Run this **before** starting the new code — the new backend queries `users.email` and
+`users.password_hash`, neither of which exists until it has run.
+
+```bash
+docker exec -i smartfin_db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" smartfin' \
+  < db/migrate_010_real_auth.sql
+```
+
+**What it does to existing users: nothing.** No row is renumbered, no id changes, no data
+moves. It only:
+
+1. makes `user_id` `AUTO_INCREMENT` starting at 10^13 (above the Telegram chat-id range, so
+   new sign-ups can never collide with a legacy bot-origin id),
+2. renames `google_email` → `email` and lowercases it,
+3. adds `password_hash` and **drops `pin_hash`**,
+4. creates `telegram_link_codes`.
+
+Dropping `pin_hash` is safe: nothing in the codebase ever wrote it, so no user could have
+had a working PIN. **The two existing production users sign in with Google exactly as
+before** — their `email` (formerly `google_email`) and their `telegram_chat_id` are
+untouched, so both the web app and the bot keep working for them with no action on their
+part. They can set a password later from the app if they want one.
+
+Verify — the two users must still be there, with their emails and Telegram links intact,
+and the counter must be at the floor:
+
+```bash
+docker exec smartfin_db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -D smartfin -e "
+SELECT user_id, email, telegram_chat_id IS NOT NULL AS tg FROM users;
+SELECT AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES
+ WHERE TABLE_SCHEMA=\"smartfin\" AND TABLE_NAME=\"users\";
+SHOW COLUMNS FROM users LIKE \"password_hash\";
+SHOW TABLES LIKE \"telegram_link_codes\";
+"'
+```
+
+Expect: both original rows with their original `user_id` and `email`, `AUTO_INCREMENT` =
+`10000000000000`, and a row for each of the last two checks.
+
+> **The bot changes behaviour here.** `/link_google` is gone. An unlinked chat now gets an
+> instruction to link from Settings instead of silently doing nothing. Existing linked users
+> are unaffected because the bot resolves them by `telegram_chat_id`, which is what their
+> rows already carry.
 
 ---
 

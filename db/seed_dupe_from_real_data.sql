@@ -68,10 +68,10 @@ DELETE FROM bank_connections      WHERE user_id = @uid;
 DELETE FROM users                 WHERE user_id = @uid;
 
 -- ── User ─────────────────────────────────────────────────────────────────────
--- PIN is 1234 (bcrypt). The sign-in screen is Google-only, so log in via the console
--- snippet in TESTING_DUPE_CLEANUP.md.
-INSERT INTO users (user_id, username, pin_hash, google_email)
-VALUES (@uid, 'dupetest_real', '$2b$10$L2ECs0WOet67cm8VYWO8VuxPR0Uf5A7WUVdwiHMEisPXQhWW2Inci', 'dupetest-real@example.com');
+-- Password is 'dupetest123' (bcrypt cost 12). Sign in at /login with the email below —
+-- no console token snippet needed now that the app has a real sign-in form.
+INSERT INTO users (user_id, username, password_hash, email)
+VALUES (@uid, 'dupetest_real', '$2b$12$yiyarxk3BipMeLuLa2dAOuHnHV8oC86efvpaqoMc9yyEppyGoJaLq', 'dupetest-real@example.com');
 
 -- ── Hand-logged expenses, mirrored from real imported transactions ───────────
 INSERT INTO expenses (user_id, amount, currency, description, category_id, source, is_virtual, created_at)

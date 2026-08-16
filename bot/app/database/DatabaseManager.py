@@ -1,4 +1,5 @@
 import aiomysql
+import hashlib
 import logging
 from datetime import date, timedelta
 from dotenv import load_dotenv
@@ -22,36 +23,105 @@ class DatabaseManager:
             self.pool = await aiomysql.create_pool(**self.config)
         return self.pool
 
-    async def user_exists(self, user_id: int) -> bool:
+    async def get_user_id_by_chat_id(self, chat_id: int) -> int | None:
+        """Resolves a Telegram chat to the SmartFin account that linked it.
+
+        This is the ONLY way the bot identifies a user. It used to treat the Telegram id as
+        the users.user_id primary key directly, which held only because the bot was also the
+        thing that created accounts. Accounts are now created in the web app and get a
+        DB-assigned id, so an app-origin user's user_id and chat id are different numbers —
+        the old assumption silently matched nothing and every command did nothing.
+
+        Returns None for a chat nobody has linked. The bot must never create the row itself:
+        obtaining an account is the web app's job, and a bot-created account is exactly the
+        unverified-claim hole this replaced.
+        """
         pool = await self.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
-                return await cur.fetchone() is not None
+                await cur.execute(
+                    "SELECT user_id FROM users WHERE telegram_chat_id = %s",
+                    (str(chat_id),),
+                )
+                row = await cur.fetchone()
+                return row[0] if row else None
 
-    async def get_notifiable_user_ids(self) -> list[int]:
-        """Every user reachable on Telegram — the audience for scheduled jobs."""
+    async def get_notifiable_users(self) -> list[tuple[int, str]]:
+        """(user_id, telegram_chat_id) for every user reachable on Telegram.
+
+        Both values are needed: user_id keys the financial queries, telegram_chat_id is
+        where the message goes. They are only interchangeable for legacy bot-origin rows.
+        """
         try:
             pool = await self.get_pool()
             async with pool.acquire() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "SELECT user_id FROM users WHERE telegram_chat_id IS NOT NULL"
+                        "SELECT user_id, telegram_chat_id FROM users "
+                        "WHERE telegram_chat_id IS NOT NULL"
                     )
-                    return [row[0] for row in await cur.fetchall()]
+                    return [(row[0], row[1]) for row in await cur.fetchall()]
         except Exception as e:
-            logging.error(f"get_notifiable_user_ids error: {e}")
+            logging.error(f"get_notifiable_users error: {e}")
             return []
 
-    async def ensure_user(self, user_id: int, username: str | None):
-        pool = await self.get_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "INSERT INTO users (user_id, username) VALUES (%s, %s) "
-                    "ON DUPLICATE KEY UPDATE username = VALUES(username)",
-                    (user_id, username),
-                )
+    async def redeem_link_code(self, code: str, chat_id: int) -> str:
+        """Links this chat to the account that generated `code`.
+
+        Returns 'ok', 'invalid' (unknown, expired or already used) or 'chat_taken'.
+
+        Python twin of backend/src/services/telegramLink.js::redeemLinkCode — the aiogram bot
+        talks to MySQL directly rather than through the backend, so the rule genuinely lives
+        in two places, the same arrangement as the two Gemini parsers. Change one, change the
+        other.
+        """
+        normalized = (code or "").strip().upper().replace("-", "").replace(" ", "")
+        if not normalized:
+            return "invalid"
+        code_hash = hashlib.sha256(normalized.encode()).hexdigest()
+
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    # Claim and validate in one statement: two concurrent redemptions both
+                    # reach here, but only one can move used_at off NULL, so only one sees
+                    # rowcount 1. Checking first and updating after would let both through.
+                    await cur.execute(
+                        "UPDATE telegram_link_codes SET used_at = NOW() "
+                        "WHERE code_hash = %s AND used_at IS NULL AND expires_at > NOW()",
+                        (code_hash,),
+                    )
+                    if cur.rowcount != 1:
+                        return "invalid"
+
+                    await cur.execute(
+                        "SELECT user_id FROM telegram_link_codes WHERE code_hash = %s",
+                        (code_hash,),
+                    )
+                    row = await cur.fetchone()
+                    if not row:
+                        return "invalid"
+                    user_id = row[0]
+
+                    # telegram_chat_id is UNIQUE, so this would fail as a duplicate key.
+                    # Checking first turns it into a message the user can act on.
+                    await cur.execute(
+                        "SELECT user_id FROM users WHERE telegram_chat_id = %s",
+                        (str(chat_id),),
+                    )
+                    existing = await cur.fetchone()
+                    if existing and str(existing[0]) != str(user_id):
+                        return "chat_taken"
+
+                    await cur.execute(
+                        "UPDATE users SET telegram_chat_id = %s WHERE user_id = %s",
+                        (str(chat_id), user_id),
+                    )
+            return "ok"
+        except Exception as e:
+            logging.error(f"redeem_link_code error: {e}")
+            return "invalid"
 
     async def get_user_categories(self, user_id: int) -> list[str]:
         """Returns base categories plus any user-defined ones."""
@@ -96,29 +166,14 @@ class DatabaseManager:
                 )
                 return cur.lastrowid
 
-    async def link_google_account(self, user_id: int, email: str) -> bool:
-        """Returns True on success, 'conflict' if email owned by another user."""
-        clean_email = email.lower().strip()
-        try:
-            pool = await self.get_pool()
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cur:
-                    # Check if email already belongs to a different user
-                    await cur.execute(
-                        "SELECT user_id FROM users WHERE google_email = %s",
-                        (clean_email,),
-                    )
-                    row = await cur.fetchone()
-                    if row and row[0] != user_id:
-                        return "conflict"
-                    await cur.execute(
-                        "UPDATE users SET google_email = %s, telegram_chat_id = %s WHERE user_id = %s",
-                        (clean_email, str(user_id), user_id),
-                    )
-            return True
-        except Exception as e:
-            logging.error(f"link_google_account error: {e}")
-            return False
+    # link_google_account() lived here. It took an email on the sender's word and wrote it
+    # to whichever row ensure_user() had just created from the Telegram id, so anyone could
+    # claim an address nobody had registered yet — and the real owner's later Google sign-in
+    # then landed in the claimant's account. Linking now goes the other way round: the web
+    # app issues a code from an authenticated session and redeem_link_code() consumes it.
+    #
+    # ensure_user() went with it. The bot no longer creates accounts at all, which is what
+    # made the claim possible in the first place.
 
     # get_or_create_webhook_token() lived here to issue per-user Apple Pay webhook
     # tokens. The Apple Pay endpoint was removed once bank/card sync landed, so nothing
@@ -222,16 +277,20 @@ class DatabaseManager:
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
+                    # telegram_chat_id comes along because the billing job DMs the user.
+                    # It is NULL for accounts that never linked Telegram — they are still
+                    # billed, they just get no message.
                     "SELECT s.subscription_id, s.user_id, s.name, s.amount, s.currency, "
-                    "       c.name AS category "
+                    "       c.name AS category, u.telegram_chat_id "
                     "FROM subscriptions s "
                     "LEFT JOIN categories c ON s.category_id = c.category_id "
+                    "LEFT JOIN users u ON u.user_id = s.user_id "
                     "WHERE s.active = TRUE AND s.day_of_month <= %s "
                     "  AND (s.last_charged_month IS NULL OR s.last_charged_month < %s)",
                     (today_day, current_month),
                 )
                 rows = await cur.fetchall()
-        keys = ["subscription_id", "user_id", "name", "amount", "currency", "category"]
+        keys = ["subscription_id", "user_id", "name", "amount", "currency", "category", "telegram_chat_id"]
         return [dict(zip(keys, r)) for r in rows]
 
     async def mark_subscription_charged(self, subscription_id: int, month: str):

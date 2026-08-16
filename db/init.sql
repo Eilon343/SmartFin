@@ -1,11 +1,42 @@
+-- user_id is AUTO_INCREMENT from 10^13 (migration 010). Bot-origin users predating that
+-- migration have user_id = their Telegram chat id; chat ids are well under 10^11 and the
+-- protocol keeps them far below the floor, so a DB-assigned id can never collide with one.
+-- New accounts of every origin get their id from the DB — nothing derives it from Telegram.
+--
+-- email is the single identity column: both password sign-up and Google sign-in resolve to
+-- it, which is what makes "same email = same account" a lookup rather than a merge.
+-- Always stored and queried lowercased.
+--
+-- password_hash is NULL for Google-only accounts. That is a valid state, not an error.
 CREATE TABLE IF NOT EXISTS users (
-    user_id      BIGINT PRIMARY KEY,
+    user_id      BIGINT PRIMARY KEY AUTO_INCREMENT,
     username     VARCHAR(100),
-    pin_hash     VARCHAR(255),
-    google_email      VARCHAR(255) UNIQUE,
+    password_hash     VARCHAR(255) NULL,
+    email             VARCHAR(255) UNIQUE,
     telegram_chat_id  VARCHAR(50) UNIQUE,
     webhook_token     VARCHAR(64) UNIQUE,
+    -- NULL = has never finished the welcome tour. Kept per-account rather than in
+    -- localStorage so an introduction to the app happens once, not once per browser.
+    onboarded_at      DATETIME NULL,
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) AUTO_INCREMENT = 10000000000000;
+
+-- Telegram is linked FROM an authenticated web session, never the other way round: the app
+-- issues a short-lived single-use code and the bot redeems it. A Telegram message can no
+-- longer create an account or attach itself to one it does not already own.
+--
+-- code_hash is the SHA-256 of the code, so a DB read never yields a live code and redemption
+-- is an indexed equality lookup on a hash — no secret-dependent comparison runs in app code.
+CREATE TABLE IF NOT EXISTS telegram_link_codes (
+    id         INT PRIMARY KEY AUTO_INCREMENT,
+    user_id    BIGINT NOT NULL,
+    code_hash  CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at    DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_link_code_hash (code_hash),
+    INDEX idx_link_user (user_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
 CREATE TABLE IF NOT EXISTS categories (

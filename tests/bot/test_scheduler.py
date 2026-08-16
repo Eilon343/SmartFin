@@ -107,7 +107,10 @@ class TestChargeDueSubscriptions:
             "amount": 39.90,
             "currency": "ILS",
             "category": "Entertainment",
-            "user_id": 12345,
+            # An app-origin account: the id that keys the money is NOT the id that
+            # addresses the chat.
+            "user_id": 10000000000007,
+            "telegram_chat_id": "12345",
         }])
         db.add_expense = AsyncMock(return_value=True)
         db.mark_subscription_charged = AsyncMock()
@@ -124,9 +127,45 @@ class TestChargeDueSubscriptions:
         assert call_kwargs["amount"] == 39.90
         assert call_kwargs["description"] == "[Subscription] Netflix"
         assert call_kwargs["source"] == "bot"
+        assert call_kwargs["user_id"] == 10000000000007
 
         db.mark_subscription_charged.assert_called_once_with(1, "2026-04")
+
+        # The DM goes to the chat id. Sending to user_id would either fail or reach an
+        # unrelated chat, since a DB-assigned user_id is outside the chat-id range.
         bot.send_message.assert_called_once()
+        assert bot.send_message.call_args[0][0] == "12345"
+
+    @pytest.mark.asyncio
+    async def test_charges_a_user_who_never_linked_telegram_without_messaging(self):
+        from app.scheduler import _charge_due_subscriptions
+
+        bot = AsyncMock()
+        bot.send_message = AsyncMock()
+
+        db = AsyncMock()
+        db.get_due_subscriptions = AsyncMock(return_value=[{
+            "subscription_id": 1,
+            "name": "Netflix",
+            "amount": 39.90,
+            "currency": "ILS",
+            "category": "Entertainment",
+            "user_id": 10000000000007,
+            "telegram_chat_id": None,   # web-only account
+        }])
+        db.add_expense = AsyncMock(return_value=True)
+        db.mark_subscription_charged = AsyncMock()
+        db.has_active_bank_sync = AsyncMock(return_value=False)
+
+        with patch("app.scheduler.date") as mock_date:
+            mock_date.today.return_value = date(2026, 4, 15)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            await _charge_due_subscriptions(bot, db)
+
+        # Billed as normal — the account simply gets no notification.
+        db.add_expense.assert_called_once()
+        db.mark_subscription_charged.assert_awaited_once()
+        bot.send_message.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_synced_user_gets_no_generated_expense(self):
