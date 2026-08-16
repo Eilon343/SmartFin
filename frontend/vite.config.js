@@ -5,12 +5,37 @@ import { readFileSync } from 'fs';
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
+/**
+ * Emits /version.json alongside the build.
+ *
+ * The service-worker update path is the primary mechanism, but it depends on browser
+ * lifecycle behaviour that is unreliable in an installed iOS PWA — one that is resumed
+ * rather than launched can sit on a stale bundle indefinitely. This file gives the running
+ * app a way to ask "what version is actually deployed?" without involving the service
+ * worker at all, so a stuck client can detect it and recover itself.
+ *
+ * It must be served no-cache; see nginx.conf.
+ */
+function emitVersionFile() {
+  return {
+    name: 'smartfin-version-file',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({ version: pkg.version }),
+      });
+    },
+  };
+}
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
   plugins: [
     react(),
+    emitVersionFile(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'apple-touch-icon-180x180.png', 'favicon.png'],
