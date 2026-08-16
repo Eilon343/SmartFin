@@ -1,4 +1,3 @@
-import os
 import logging
 from datetime import datetime
 from aiogram import Dispatcher, types, F
@@ -7,12 +6,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.ai.ai_engine import parse_input, generate_financial_advice, AIEngineError
 from app.bot.states import ExpenseFlow, IncomeFlow, SubscriptionFlow
-
-# Public URL phones post Apple Pay / payment notifications to.
-WEBHOOK_URL = os.getenv(
-    "WEBHOOK_PUBLIC_URL",
-    "https://mac-mini-home.tail61d766.ts.net/webhook/apple-pay",
-)
 
 WITTY_UNSUPPORTED = (
     "🧙 I only do financial magic — expenses, income, subscriptions, and savings.\n"
@@ -713,117 +706,26 @@ def register_handlers(dp: Dispatcher, db_manager):
         else:
             await message.reply("❌ Failed to link account. Try again.")
 
-    async def _issue_token(message: types.Message):
-        """Shared guard + token issuing for the Apple Pay setup commands."""
-        if not await _auth(message.from_user.id, db_manager):
-            await message.reply(
-                "Link your Google account first:\n`/link_google your@email.com`",
-                parse_mode="Markdown",
-            )
-            return None
-        token = await db_manager.get_or_create_webhook_token(message.from_user.id)
-        if not token:
-            await message.reply("❌ Failed to generate your token. Try again in a moment.")
-            return None
-        return token
-
-    @dp.message(Command("webhook_token"))
-    async def handle_webhook_token(message: types.Message):
-        token = await _issue_token(message)
-        if not token:
-            return
+    # --- /clean_dupes ---
+    # Cleanup itself lives in the web app (Settings → Duplicate cleanup). Two reasons it
+    # is not run from here:
+    #   1. Chat is the wrong surface for approving a hundred irreversible deletions. The
+    #      web screen shows each hand-logged row beside the imported transaction that
+    #      covers it, with a checkbox, so the user approves pairs rather than a number.
+    #   2. This handler resolves the user by Telegram chat id, so it silently does
+    #      nothing for a web-origin account — exactly the users who most need it.
+    # The command is kept because it is documented and users will still type it.
+    @dp.message(Command("clean_dupes", "clean_applepay"))
+    async def handle_clean_dupes(message: types.Message):
         await message.reply(
-            "🔑 *Your personal webhook token*\n\n"
-            f"`{token}`\n\n"
-            "Tap it to copy. Use it as the `X-Webhook-Token` header in your shortcut.\n\n"
-            "Need the full walkthrough? Send /setup\\_applepay\n\n"
-            "⚠️ Keep it private — anyone with this token can log expenses to your account.",
+            "🧾 *Duplicate cleanup has moved to the web app.*\n\n"
+            "Open *Settings → Duplicate cleanup*. You'll see every expense you logged by "
+            "hand next to the bank or card transaction that now covers it, and you choose "
+            "what goes.\n\n"
+            "Anything with no match — cash, Bit, PayBox — is kept automatically, and "
+            "whatever you do remove can be restored for 30 days.",
             parse_mode="Markdown",
         )
-
-    @dp.message(Command("setup_applepay"))
-    async def handle_setup_applepay(message: types.Message):
-        token = await _issue_token(message)
-        if not token:
-            return
-
-        await message.answer(
-            "🍎 *Automatic expense logging — setup guide*\n\n"
-            "Your phone will watch for payment notifications and send them here "
-            "automatically. Every expense lands in *your* account and the confirmation "
-            "comes back to *this* chat.\n\n"
-            "Takes about 5 minutes. Three steps:\n"
-            "1️⃣ Copy your token\n"
-            "2️⃣ Build the shortcut/macro\n"
-            "3️⃣ Test it\n\n"
-            "_Scroll down — the next messages walk you through each one._",
-            parse_mode="Markdown",
-        )
-
-        await message.answer(
-            "*STEP 1 — Your token*\n\n"
-            f"`{token}`\n\n"
-            "Tap the token above to copy it. You'll paste it in Step 2.\n\n"
-            "This token identifies you. Don't share it, don't post it in a group. "
-            "If it ever leaks, send /setup\\_applepay again after asking the admin "
-            "to reset it.",
-            parse_mode="Markdown",
-        )
-
-        await message.answer(
-            "*STEP 2a — iPhone (Shortcuts app)*\n\n"
-            "1. Open *Shortcuts* → *Automation* tab → *+* (top right)\n"
-            "2. Choose *App* → pick *Wallet* → *Is Opened* → *Run Immediately*, "
-            "turn *Notify When Run* OFF\n"
-            "3. Tap *Next* → search for *Get Contents of URL* and add it\n"
-            "4. Tap the URL field and enter exactly:\n"
-            f"`{WEBHOOK_URL}`\n"
-            "5. Expand *Show More* and set:\n"
-            "   • *Method:* `POST`\n"
-            "   • *Headers:* add two rows —\n"
-            "     `Content-Type` → `application/json`\n"
-            "     `X-Webhook-Token` → your token from Step 1\n"
-            "   • *Request Body:* `JSON`\n"
-            "     add one field, key `text`, type *Text*, value = the notification text\n"
-            "6. Tap *Done*\n\n"
-            "_Android user? See the next message instead._",
-            parse_mode="Markdown",
-        )
-
-        await message.answer(
-            "*STEP 2b — Android (MacroDroid app)*\n\n"
-            "1. Install *MacroDroid* from Play Store → *Add Macro*\n"
-            "2. *Trigger:* Device Events → Notification → Notification Received\n"
-            "   • pick your payment app (Google Wallet / Bit / PayBox)\n"
-            "   • Text Content → *Contains* → type `₪`\n"
-            "3. *Action:* Applications → HTTP Request\n"
-            "   • Request Type: `POST`\n"
-            f"   • URL: `{WEBHOOK_URL}`\n"
-            "   • Headers:\n"
-            "     `Content-Type` → `application/json`\n"
-            "     `X-Webhook-Token` → your token from Step 1\n"
-            "   • Body → *Raw / Custom*, paste exactly:\n"
-            '`{"text": "[not_title] [not_ticker]"}`\n'
-            "4. Save the macro, then grant *Notification Access* when prompted\n"
-            "5. ⚠️ Settings → Apps → MacroDroid → Battery → *Unrestricted*, "
-            "or Android will kill it after a few hours",
-            parse_mode="Markdown",
-        )
-
-        await message.answer(
-            "*STEP 3 — Test it*\n\n"
-            "Make any small real payment, or trigger the shortcut manually.\n\n"
-            "Within a few seconds you should get a message here like:\n"
-            "✅ Logged *ILS 12.00* at *Cafe*\n\n"
-            "*If nothing arrives:*\n"
-            "• Check the token was pasted with no extra spaces\n"
-            "• Confirm the header name is `X-Webhook-Token` (not `X-Webhook-Secret`)\n"
-            "• Make sure your phone is on the home VPN/network\n"
-            "• Send /webhook\\_token to see your token again\n\n"
-            "That's it — you're set up. 🎉",
-            parse_mode="Markdown",
-        )
-
     # --- /start ---
     @dp.message(Command("start"))
     async def handle_start(message: types.Message):
@@ -852,8 +754,9 @@ def register_handlers(dp: Dispatcher, db_manager):
             "/add\\_savings `<name> <target> [monthly_allocation]`\n"
             "/list\\_savings · /deposit\\_savings `<goal_id> <amount>`\n\n"
             "*Automatic logging*\n"
-            "/setup\\_applepay — log payments automatically from your phone\n"
-            "/webhook\\_token — show your token again\n\n"
+            "Connect your bank and credit cards in Settings on the web app —\n"
+            "transactions import automatically every night.\n"
+            "/clean\\_dupes — remove expenses your bank/card sync now imports itself\n\n"
             "*Account*\n"
             "/link\\_google `<email>`",
             parse_mode="Markdown",
@@ -883,8 +786,7 @@ def register_handlers(dp: Dispatcher, db_manager):
             "/add\\_savings `<name> <target> [monthly_allocation]` — create a savings goal.\n"
             "/list\\_savings — list all your savings goals and progress.\n"
             "/deposit\\_savings `<goal_id> <amount>` — add money toward a savings goal.\n"
-            "/setup\\_applepay — get instructions to auto-log Apple Pay transactions.\n"
-            "/webhook\\_token — show your personal Apple Pay webhook token.\n"
+            "/clean\\_dupes — remove hand-logged expenses that your bank/card sync now imports itself.\n"
             "/link\\_google `<email>` — link this Telegram account to your SmartFin web account.\n\n"
             "_You can also just type naturally, e.g. \"55 nis shawarma\" or \"got salary 15000\"._",
             parse_mode="Markdown",

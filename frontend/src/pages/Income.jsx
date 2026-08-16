@@ -33,8 +33,11 @@ function getMonthOptions(lang) {
   return result;
 }
 
-function fmt(n) {
-  return `\u200E₪${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u200E`;
+// The amount alone. Wrapped in LRMs so a number never reorders inside the RTL layout.
+// Every amount on this page renders ₪ as its own styled glyph or a currency
+// prefix, so the formatter must not add one — doing both printed it twice.
+function fmtNum(n) {
+  return `‎${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}‎`;
 }
 
 function TypeBadge({ type }) {
@@ -203,7 +206,7 @@ export default function Income() {
           <span className="meta-label">{t('inc_fixed')}</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>
-            {fmt(summary?.fixed_total ?? 0)}
+            {fmtNum(summary?.fixed_total ?? 0)}
           </div>
           <span className="muted" style={{ fontSize: 12 }}>{t('inc_this_month')}</span>
         </div>
@@ -211,7 +214,7 @@ export default function Income() {
           <span className="meta-label">{t('inc_var_this_mo')}</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>
-            {fmt(summary?.variable_total ?? 0)}
+            {fmtNum(summary?.variable_total ?? 0)}
           </div>
           <span className="chip idg" style={{ marginTop: 6, fontSize: 10 }}>{t('inc_current_month')}</span>
         </div>
@@ -219,7 +222,7 @@ export default function Income() {
           <span className="meta-label">{t('inc_total')}</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>
-            {fmt(summary?.total ?? 0)}
+            {fmtNum(summary?.total ?? 0)}
           </div>
           <span className="muted" style={{ fontSize: 12 }}>{t('inc_fixed_var')}</span>
         </div>
@@ -268,7 +271,7 @@ export default function Income() {
                   </span>
                 </div>
                 <span className="mono tnum" style={{ fontSize: 13 }} dir="ltr">
-                  {entry.currency !== 'ILS' ? `${entry.currency} ` : '₪'}{fmt(entry.amount)}
+                  {entry.currency !== 'ILS' ? `${entry.currency} ` : '₪'}{fmtNum(entry.amount)}
                 </span>
                 <TypeBadge type={entry.type} />
                 <button

@@ -309,6 +309,14 @@ exports.togglePauseSubscription = async (req, res) => {
 // savings_transferred = SUM(amount) of virtual expenses this month (actual moves to savings goals).
 // variable_avg denominator = months with actual data (not always VARIABLE_INCOME_LOOKBACK)
 // projected_expenses scales actual spending to end of month (current month only)
+//
+// subscription_total counts ONLY subscriptions not yet billed in the requested month
+// (future month → all of them; current month → billing day still ahead; past month → 0).
+// It is a forecast of money still to leave, not a record of money that left. Once the
+// billing day passes, the real charge lands in `expenses` via bank/card sync and is
+// already inside projected_expenses; counting the subscription as well subtracted the
+// same money twice. Being forward-only, it is NOT pro-rated by the MTD clamp, and it
+// belongs to forecasted_net_pnl alone — current_net_pnl is actuals only.
 const VARIABLE_INCOME_LOOKBACK = 3;
 
 exports.getPnL = async (req, res) => {
@@ -352,9 +360,21 @@ exports.getPnL = async (req, res) => {
 
         const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows]] = await Promise.all([
             db.query(expensesSql, expensesParams),
+            // Only subscriptions that have NOT been charged yet in `month`. Once the
+            // billing day passes, the real charge is already in `expenses` — imported by
+            // bank/card sync — so counting the subscription too would subtract it twice.
+            // Future month  → every subscription is still ahead.
+            // Current month → only those whose billing day has not arrived.
+            // Past month    → all already charged, hence 0.
             db.query(
-                "SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions WHERE user_id = ? AND active = TRUE AND paused = FALSE AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)",
-                [user_id, month]
+                `SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions
+                 WHERE user_id = ? AND active = TRUE AND paused = FALSE
+                   AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
+                   AND (
+                         ? > DATE_FORMAT(CURDATE(), '%Y-%m')
+                      OR (? = DATE_FORMAT(CURDATE(), '%Y-%m') AND day_of_month > DAY(CURDATE()))
+                   )`,
+                [user_id, month, month, month]
             ),
             db.query(
                 isMTD
@@ -389,7 +409,9 @@ exports.getPnL = async (req, res) => {
             else variable_sum = Number(r.total);
         }
         const total_expenses = fixed_sum + variable_sum;
-        const subscription_total = Number(subRows[0].total) * proRate;
+        // Not pro-rated: this is already only the charges still ahead of us this month,
+        // not a whole-month figure being clamped to a partial window.
+        const subscription_total = Number(subRows[0].total);
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total) * proRate;
         const variable_actual = Number(varActualRows[0].total) * proRate;
@@ -398,7 +420,13 @@ exports.getPnL = async (req, res) => {
         const variable_avg = (monthsWithData > 0 ? Number(varPastRows[0].total) / monthsWithData : 0) * proRate;
 
         const actual_income = fixed_income + variable_actual;
-        const current_net_pnl = actual_income - total_expenses - subscription_total - savings_allocation;
+        // Subscriptions are deliberately NOT subtracted here. subscription_total is money
+        // still ahead of us this month; current_net_pnl is where the user stands right now,
+        // built only from money that has actually moved. Mixing the two also broke the
+        // month-vs-month delta on the dashboard: a past month always scores 0 subscriptions,
+        // so the current month was penalised by charges that had not happened in either.
+        // The forecast below is where subscription_total belongs.
+        const current_net_pnl = actual_income - total_expenses - savings_allocation;
 
         // Smart Forecast: fixed expenses (rent, utilities) are flat — already paid, won't recur this month.
         // Only variable expenses get run-rated to end of month.
@@ -429,8 +457,10 @@ exports.getPnL = async (req, res) => {
         const projected_income = isMTD
             ? actual_income
             : fixed_income + Math.max(variable_actual, variable_avg);
+        // The forecast is the only place subscription_total belongs — in both branches,
+        // so "money still to come out" is never silently dropped by the MTD clamp.
         const forecasted_net_pnl = isMTD
-            ? current_net_pnl
+            ? current_net_pnl - subscription_total
             : projected_income - projected_expenses - subscription_total - savings_allocation;
 
         res.json({

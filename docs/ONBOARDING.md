@@ -10,7 +10,7 @@ SmartFin is a personal finance app with **three user-facing surfaces** sharing o
 
 1. **Telegram bot** — users type things like `55 nis shawarma` or `got salary 15000`. The bot parses with Gemini AI and stores expenses/income/subscriptions.
 2. **Web app (PWA)** — React + Vite dashboard for charts, budgets, savings goals, settings.
-3. **Apple Pay webhook** — iOS Shortcut posts transaction text to the backend, which also parses via Gemini and writes expenses.
+3. **Bank & card sync** — the backend logs in to the user's banks and credit cards nightly (`israeli-bank-scrapers`, headless Chromium), stages the transactions, categorizes them with Gemini and writes expenses/income.
 
 All three write to the **same MySQL DB**, so what you log in Telegram appears instantly on the web dashboard.
 
@@ -50,7 +50,7 @@ All three write to the **same MySQL DB**, so what you log in Telegram appears in
 
 | Path | What it is |
 |------|-----------|
-| `backend/` | Node 20 + Express 5 REST API. Auth (JWT + Google OAuth), expenses, income, savings, insights, Apple Pay webhook queue. Entry: `backend/src/index.js`. |
+| `backend/` | Node 20 + Express 5 REST API. Auth (JWT + Google OAuth), expenses, income, savings, insights, bank/card sync (`src/services/`), webhook queue. Entry: `backend/src/index.js`. |
 | `bot/` | Python 3 + aiogram 3 Telegram bot. Parses NL via Gemini. Entry: `bot/app/main.py`. Handlers in `bot/app/bot/handlers.py`. Scheduler runs monthly subscriptions, budget alerts. |
 | `frontend/` | React 19 + Vite 8 PWA. Pages: Dashboard, Expenses, Income, Savings, Subscriptions, Categories, Insights, Settings, Login. API client in `src/api/client.js`. |
 | `db/` | Schema (`init.sql`) + migrations (`migrate_*.sql`) + `seed_test_data.sql`. |
@@ -67,11 +67,15 @@ All three write to the **same MySQL DB**, so what you log in Telegram appears in
 5. Handler shows confirmation buttons. On confirm, `DatabaseManager.py` inserts into MySQL.
 6. Frontend polls `/api/expenses` → row appears on dashboard.
 
-### Apple Pay webhook flow
+### Bank & card sync flow
 
-1. iOS Shortcut POSTs `{ text, secret }` to `/webhook/applepay`.
-2. `backend/src/controllers/webhookController.js` queues the job, returns 202.
-3. Background queue processor calls Gemini, parses, inserts expenses with `source='apple_pay'`.
+1. User connects a bank or card in **Settings → Bank sync**; credentials are AES-256-GCM encrypted under `BANK_CREDENTIALS_KEY` before they touch the DB.
+2. `bankSyncScheduler.runSyncCycle()` (every 2 min) scrapes any connection that is due — first sync backfills 3 months, later ones overlap 3 days.
+3. Rows land in `bank_transactions_raw` (staging), deduped by a content hash.
+4. `runCategorizationDrain()` (every 1 min) classifies each settled row, asks Gemini for categories in one batched call, and writes `expenses`/`income` with `source='bank_sync'`.
+5. Credit-card settlement rows on the bank account are skipped when that card is itself connected, so purchases aren't counted twice.
+
+> The **Apple Pay webhook** that used to be surface #3 was removed — a tap-to-pay purchase is a credit-card purchase, so the card connection already imports it with the real merchant name. Historical `source='apple_pay'` rows are kept; the bot's `/clean_applepay` removes the duplicates.
 
 ---
 
@@ -158,17 +162,35 @@ CORS_ORIGIN=http://localhost:8080
 #   - Want to share login sessions with Eilon's dev DB / move tokens between machines: ask Eilon for his.
 JWT_SECRET=any-long-random-string-for-dev
 
-# WEBHOOK_SECRET — Apple Pay iOS Shortcut sends this; backend rejects mismatches.
-#   - Not testing Apple Pay flow: pick any string, doesn't matter.
-#   - Testing with the shared iOS Shortcut Eilon already configured: ASK EILON for the value.
-WEBHOOK_SECRET=dev-webhook-secret
+# TELEGRAM_WEBHOOK_SECRET — proves an update on POST /webhook/telegram really came from
+# Telegram. Telegram echoes it back in the X-Telegram-Bot-Api-Secret-Token header on
+# every delivery, and the backend rejects any update that doesn't match.
+# Leave it blank and the endpoint accepts ANY update, including forged ones that claim
+# to be from another user's chat — the backend logs a warning at startup if so.
+# Pick any long random string, then register it with Telegram:
+#   curl -F "url=https://<your-public-host>/webhook/telegram" \
+#        -F "secret_token=<the same value>" \
+#        https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook
+# Only needed if this deployment actually serves the Telegram webhook — the bot runs in
+# long-polling mode by default, in which case Telegram never calls the endpoint.
+TELEGRAM_WEBHOOK_SECRET=
+
+# WEBHOOK_SECRET — DEPRECATED, no longer read by any code. It authenticated the Apple
+# Pay webhook, which was removed once bank/card sync landed (an Apple Pay purchase is a
+# credit-card purchase, so the card connection already imports it). Safe to delete.
+
+# BANK_CREDENTIALS_KEY — encrypts stored bank-connection credentials (israeli-bank-scrapers feature).
+# Must be a 64-character hex string (32 bytes). Generate one with:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# Losing/changing this key makes existing stored bank credentials undecryptable — reconnect the account if that happens.
+BANK_CREDENTIALS_KEY=
 
 # ── Telegram chat ID ─────────────────────────────────────
 # YOUR own numeric Telegram ID. Get it from @userinfobot.
 # Used by:
-#   - backend webhook (routes Apple Pay txns to this user)
 #   - bot scheduler (daily spending-score messages go here)
-# If you don't plan to test Apple Pay or scheduled messages, you can leave it blank
+#   - bank sync (sync-complete / sync-failed notifications)
+# If you don't plan to test scheduled messages, you can leave it blank
 # and the bot/web app will still work fine. Recommended: set it.
 TELEGRAM_CHAT_ID=
 
@@ -222,7 +244,8 @@ Just editing `MYSQL_ROOT_PASSWORD` in `.env` and restarting **does nothing** —
 | `MYSQL_*`, `DB_*` | Pick yourself, anything works |
 | `PORT`, `CORS_ORIGIN` | Pick yourself, use values shown |
 | `JWT_SECRET` | Pick yourself for solo dev. **Ask Eilon** if you want shared login sessions with his DB |
-| `WEBHOOK_SECRET` | Pick yourself if not testing Apple Pay. **Ask Eilon** if you'll use the shared iOS Shortcut |
+| `TELEGRAM_WEBHOOK_SECRET` | Pick yourself. Only matters if this deployment serves the Telegram webhook — the bot long-polls by default |
+| `BANK_CREDENTIALS_KEY` | Generate your own (see comment above `.env` example) — never share |
 | `TELEGRAM_CHAT_ID` | Yours, from `@userinfobot` (optional — leave blank if not testing webhook/scheduler) |
 | `TELEGRAM_BOT_TOKEN` | **Ask Eilon** |
 | `GEMINI_API_KEY` | **Ask Eilon** |
@@ -555,7 +578,8 @@ Connection settings (any client):
 
 - **Currency:** ILS by default, glyph `₪`. The codebase already handles UTF-8 — don't normalize the symbol.
 - **DB transactions:** anything that touches multiple tables (e.g. savings deposits → expenses + savings_goals) must be wrapped in a transaction. See `savingsController.js` for the pattern.
-- **Webhook auth:** Apple Pay posts include `secret` field — must match `WEBHOOK_SECRET`.
+- **Webhook auth:** `POST /webhook/telegram` is authenticated by `TELEGRAM_WEBHOOK_SECRET`, checked against the `X-Telegram-Bot-Api-Secret-Token` header Telegram sends. Unset = the endpoint is open, so set it on anything internet-facing. (The Apple Pay webhook and its `WEBHOOK_SECRET` are gone — bank/card sync replaced them.)
+- **Bank credentials:** encrypted at rest with AES-256-GCM under `BANK_CREDENTIALS_KEY`; they are never returned by any API, only decrypted in-process for a scrape.
 - **Bot auth:** users register either via `/start` in Telegram or via Google login on the web (then link Telegram chat_id in Settings). Bot rejects messages from unknown chat IDs.
 - **Secrets:** never commit `.env`. Never paste real keys in PRs or logs.
 

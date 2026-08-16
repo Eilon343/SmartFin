@@ -1,6 +1,5 @@
 import aiomysql
 import logging
-import secrets
 from datetime import date, timedelta
 from dotenv import load_dotenv
 
@@ -121,30 +120,11 @@ class DatabaseManager:
             logging.error(f"link_google_account error: {e}")
             return False
 
-    async def get_or_create_webhook_token(self, user_id: int) -> str | None:
-        """Return this user's Apple Pay webhook token, generating one on first use."""
-        try:
-            pool = await self.get_pool()
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "SELECT webhook_token FROM users WHERE user_id = %s",
-                        (user_id,),
-                    )
-                    row = await cur.fetchone()
-                    if row and row[0]:
-                        return row[0]
-                    # hex, not urlsafe: no "_" or "-" to break Telegram Markdown
-                    # or get mangled when copied into a Shortcuts header field
-                    token = secrets.token_hex(24)
-                    await cur.execute(
-                        "UPDATE users SET webhook_token = %s WHERE user_id = %s",
-                        (token, user_id),
-                    )
-                    return token
-        except Exception as e:
-            logging.error(f"get_or_create_webhook_token error: {e}")
-            return None
+    # get_or_create_webhook_token() lived here to issue per-user Apple Pay webhook
+    # tokens. The Apple Pay endpoint was removed once bank/card sync landed, so nothing
+    # issues or checks a token any more. `users.webhook_token` is left in place — the
+    # column is harmless and dropping it would discard the tokens of anyone still
+    # holding an old shortcut.
 
     async def add_user_category(self, user_id: int, name: str) -> bool:
         try:
@@ -209,6 +189,31 @@ class DatabaseManager:
                     return cur.rowcount > 0
         except Exception as e:
             logging.error(f"delete_subscription error: {e}")
+            return False
+
+    async def has_active_bank_sync(self, user_id: int) -> bool:
+        """True when this user has a bank or card connection that imports transactions.
+
+        Used to decide whether generated subscription rows are still needed: once sync
+        is running it imports the real charge, so generating one would double-count.
+        """
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        # 'error' counts as active: bankSyncScheduler retries errored
+                        # connections hourly, so the real charge still arrives. Only
+                        # 'invalid_credentials' and 'disabled' never auto-retry.
+                        "SELECT 1 FROM bank_connections "
+                        "WHERE user_id = %s AND status IN ('active', 'pending_first_sync', 'error') LIMIT 1",
+                        (user_id,),
+                    )
+                    return await cur.fetchone() is not None
+        except Exception as e:
+            # On error keep the old behaviour and record the subscription. That risks a
+            # duplicate the user can delete, rather than a silently missing expense.
+            logging.error(f"has_active_bank_sync error: {e}")
             return False
 
     async def get_due_subscriptions(self, today_day: int, current_month: str) -> list[dict]:
@@ -556,3 +561,13 @@ class DatabaseManager:
         except Exception as e:
             logging.error(f"add_expense error: {e}")
             return False
+
+    # Duplicate cleanup lives in the backend now: backend/src/services/duplicateMatcher.js
+    # holds the matching rules and cleanupController.js runs the archive/restore flow.
+    # It was moved so there is one implementation behind the web UI rather than two that
+    # can drift, and so web-origin users are covered too - this pool resolves users by
+    # Telegram chat id and therefore cannot serve them at all.
+    #
+    # cad5b82 fixed the refund sign here (ABS(charged_amount) never matched a negative
+    # reimbursement); that same fix is carried in loadSyncedExpenses(), which joins the
+    # imported expense row and compares its own amount. Nothing was lost in the move.

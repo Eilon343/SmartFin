@@ -2,8 +2,18 @@ const db = require('../config/db');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const TELEGRAM_USER_ID = process.env.TELEGRAM_CHAT_ID;
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
+
+if (!TELEGRAM_WEBHOOK_SECRET) {
+    console.warn(
+        'TELEGRAM_WEBHOOK_SECRET is not set — POST /webhook/telegram will refuse every ' +
+        'request with 503. This is fine if the bot long-polls, which is the default. To ' +
+        'serve the webhook, set the variable and register it with Telegram:\n' +
+        '  curl -F "url=<public-url>/webhook/telegram" -F "secret_token=<value>" \\\n' +
+        '       https://api.telegram.org/bot<TOKEN>/setWebhook'
+    );
+}
 
 function buildPrompt(text) {
     return (
@@ -12,9 +22,9 @@ function buildPrompt(text) {
         `Example input: "הוצאתי 7 שקל על קולה, 200 שקל על דלק ו5 על חטיף"\n` +
         `Example output:\n` +
         `[\n` +
-        `  {"amount": 7.0, "currency": "ILS", "merchant": "קולה", "category": "Food", "source": "apple_pay"},\n` +
-        `  {"amount": 200.0, "currency": "ILS", "merchant": "דלק", "category": "Transport", "source": "apple_pay"},\n` +
-        `  {"amount": 5.0, "currency": "ILS", "merchant": "חטיף", "category": "Food", "source": "apple_pay"}\n` +
+        `  {"amount": 7.0, "currency": "ILS", "merchant": "קולה", "category": "Food"},\n` +
+        `  {"amount": 200.0, "currency": "ILS", "merchant": "דלק", "category": "Transport"},\n` +
+        `  {"amount": 5.0, "currency": "ILS", "merchant": "חטיף", "category": "Food"}\n` +
         `]\n\n` +
         `Now parse this message: "${text}"\n\n` +
         `Rules:\n` +
@@ -25,7 +35,6 @@ function buildPrompt(text) {
         `- currency: "ILS" unless stated otherwise\n` +
         `- merchant: the item/place name from the message (keep original language)\n` +
         `- category: best match from [Food, Transport, Housing, Entertainment, Shopping, Utilities, Health, Other]\n` +
-        `- source: always "apple_pay"\n` +
         `- Use null for fields that cannot be determined`
     );
 }
@@ -121,9 +130,14 @@ async function insertExpense(userId, parsed) {
         );
         categoryId = ins.insertId;
     }
+    // 'bot', not 'apple_pay'. Both remaining callers — the Telegram webhook and the
+    // Gemini-down queue drain — are Telegram messages; the Apple Pay endpoint that
+    // justified the old value is gone. Beyond being mislabelled, an 'apple_pay' row
+    // written today would be a deletion target for the bot's /clean_applepay, which
+    // hunts exactly that source.
     await db.query(
         'INSERT INTO expenses (user_id, amount, currency, description, category_id, source) VALUES (?, ?, ?, ?, ?, ?)',
-        [userId, parsed.amount, parsed.currency || 'ILS', parsed.merchant, categoryId, 'apple_pay']
+        [userId, parsed.amount, parsed.currency || 'ILS', parsed.merchant, categoryId, 'bot']
     );
 }
 
@@ -185,7 +199,7 @@ const HELP_TEXT =
     `*Multiple expenses in one message:*\n` +
     `Separate with commas or "and/ו". Up to 10 per message.\n\n` +
     `*Auto-logging:*\n` +
-    `Send /setup_applepay for a step-by-step guide to logging payments automatically from your phone.\n\n` +
+    `Connect your bank and credit cards in Settings on the web app — transactions import automatically every night.\n\n` +
     `*Categories detected automatically:*\n` +
     `Food · Transport · Shopping · Housing · Entertainment · Utilities · Health · Other\n\n` +
     `*Commands:*\n` +
@@ -194,6 +208,28 @@ const HELP_TEXT =
     `_All expenses appear in your SmartFin dashboard._`;
 
 exports.handleTelegram = async (req, res) => {
+    // Telegram echoes the secret_token given to setWebhook on every delivery. Without
+    // this check the endpoint is an open door: the update body carries the chat id, so a
+    // forged POST can log expenses into any account and — via /link_google — attach a
+    // stranger's SmartFin account to the attacker's Telegram chat.
+    //
+    // Fails CLOSED. This used to enforce only when a secret was configured, so an
+    // unconfigured deployment accepted anything — and "unconfigured" is the default,
+    // because the bot long-polls and most deployments never register a webhook at all.
+    // An endpoint that is usually unused but always open is the worst combination: no
+    // one notices it, and reaching it is enough to log expenses into any account or,
+    // via /link_google, attach someone else's SmartFin account to an attacker's chat.
+    //
+    // Refusing when unset costs nothing in the default configuration and closes the door
+    // in the one that matters.
+    if (!TELEGRAM_WEBHOOK_SECRET) {
+        return res.sendStatus(503);
+    }
+    const presented = req.headers['x-telegram-bot-api-secret-token'];
+    if (presented !== TELEGRAM_WEBHOOK_SECRET) {
+        return res.sendStatus(401);
+    }
+
     res.sendStatus(200); // always ack Telegram immediately
 
     const update = req.body;
@@ -291,70 +327,3 @@ exports.startQueueProcessor = () => {
     run();
 };
 
-/**
- * Resolve which user a webhook call belongs to.
- *
- * Preferred: a per-user X-Webhook-Token, issued by the bot's /webhook_token
- * command. Each shortcut carries its owner's token, so transactions land in
- * that user's account and notifications go to that user's chat.
- *
- * Legacy: the shared X-Webhook-Secret, which carries no identity and always
- * resolves to TELEGRAM_CHAT_ID (the instance owner). Kept only so existing
- * shortcuts keep working until they are migrated — remove once they are.
- */
-async function resolveWebhookUser(req) {
-    const token = req.headers['x-webhook-token'];
-    if (token) {
-        const [rows] = await db.query(
-            'SELECT user_id, telegram_chat_id FROM users WHERE webhook_token = ?',
-            [String(token)]
-        );
-        if (rows.length === 0) return { error: 'unauthorized' };
-        return { userId: rows[0].user_id, chatId: rows[0].telegram_chat_id };
-    }
-
-    const secret = req.headers['x-webhook-secret'];
-    if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) return { error: 'unauthorized' };
-
-    console.warn('Apple Pay webhook used the legacy shared secret — attributing to the instance owner. Update this shortcut to send X-Webhook-Token.');
-    const [rows] = await db.query(
-        'SELECT user_id, telegram_chat_id FROM users WHERE telegram_chat_id = ?',
-        [String(TELEGRAM_USER_ID)]
-    );
-    if (rows.length === 0) return { error: 'unlinked' };
-    return { userId: rows[0].user_id, chatId: rows[0].telegram_chat_id };
-}
-
-exports.handleApplePay = async (req, res) => {
-    const { text } = req.body;
-    if (!text) return res.status(400).json({ error: 'text required' });
-
-    const { userId, chatId, error } = await resolveWebhookUser(req);
-    if (error === 'unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error === 'unlinked') {
-        return res.status(403).json({ error: 'Account not linked. Send /link_google to the bot first.' });
-    }
-
-    try {
-        const saved = await processAndSave(userId, text, chatId);
-        res.json({ success: true, count: saved.length, parsed: saved });
-    } catch (err) {
-        if (err.unavailable) {
-            await db.query(
-                "INSERT INTO webhook_queue (user_id, text, status) VALUES (?, ?, 'pending')",
-                [userId, text]
-            );
-            try {
-                await sendTelegramMessage(
-                    chatId,
-                    `⏳ AI is temporarily unavailable. Your transaction has been queued and will be logged automatically when it recovers.`
-                );
-            } catch (notifyErr) {
-                console.error('Failed to send queued notification:', notifyErr.message);
-            }
-            return res.json({ success: false, queued: true });
-        }
-        await sendErrorToTelegram('Apple Pay webhook', err, { input: text });
-        res.status(500).json({ error: 'Failed to process transaction' });
-    }
-};

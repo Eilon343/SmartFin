@@ -6,6 +6,8 @@ import { useI18n } from '../context/I18nContext';
 import Icon from './ui/Icon';
 import Drawer from './ui/Drawer';
 import LogTransaction from './LogTransaction';
+import WhatsNewModal from './WhatsNewModal';
+import { shouldShowWhatsNew } from '../lib/whatsNew';
 
 const NAV = [
   { id: 'dashboard',     nameKey: 'nav_dashboard',     icon: 'layout-dashboard', path: '/' },
@@ -89,6 +91,9 @@ export default function Layout() {
   const { t } = useI18n();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  // Read straight from storage in the initial state rather than an effect, so the tour
+  // never flashes in for someone who has already dismissed it.
+  const [whatsNewOpen, setWhatsNewOpen] = useState(shouldShowWhatsNew);
 
   const displayName = googleProfile?.name || user?.username?.replace(/^@/, '') || 'You';
 
@@ -275,6 +280,9 @@ export default function Layout() {
           </div>
         </div>
       </Drawer>
+
+      {/* ── One-time tour for the bank-sync update ── */}
+      <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
 
       {/* ── Log transaction bottom sheet ── */}
       <LogTransaction

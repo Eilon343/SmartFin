@@ -40,13 +40,24 @@ function SourceBadge({ source, isVirtual }) {
   if (isVirtual) {
     return <span className="vr virtual">{t('tx_savings')}</span>;
   }
-  if (source === 'apple_pay') {
+  if (source === 'bank_sync') {
     return (
       <span style={{
         background: 'var(--text-0)', color: 'var(--bg-0)',
         padding: '3px 10px', borderRadius: 20,
         fontSize: 11, fontWeight: 600, letterSpacing: '-0.01em',
         whiteSpace: 'nowrap',
+      }}>
+        &#x1F3E6; {t('tx_bank_sync')}
+      </span>
+    );
+  }
+  // Apple Pay logging was removed, but historical rows keep the source value.
+  if (source === 'apple_pay') {
+    return (
+      <span style={{
+        background: 'var(--hover-bg-2)', color: 'var(--text-2)',
+        padding: '3px 10px', borderRadius: 20, fontSize: 11, whiteSpace: 'nowrap',
       }}>
         &#x1F4F1; Apple Pay
       </span>
@@ -294,11 +305,11 @@ export default function Expenses() {
           <span className="muted" style={{ fontSize: 12 }}>{t('inc_this_month')}</span>
         </div>
         <div className="card card-pad-lg">
-          <span className="meta-label">Apple Pay</span>
+          <span className="meta-label">{t('tx_bank_sync')}</span>
           <div className="big-num" style={{ fontSize: 36, marginTop: 8 }} dir="ltr">
-            {expenses.filter(e => e.source === 'apple_pay').length}
+            {expenses.filter(e => e.source === 'bank_sync').length}
           </div>
-          <span className="muted" style={{ fontSize: 12 }}>{t('exp_tap')}</span>
+          <span className="muted" style={{ fontSize: 12 }}>{t('exp_imported')}</span>
         </div>
       </div>
 
@@ -502,7 +513,7 @@ export default function Expenses() {
           <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 20 }}>
             {t('inc_del_confirm')}{' '}
             <strong style={{ color: 'var(--text-0)' }} dir="ltr">
-              {t(deleteTarget?.description) || deleteTarget?.description || `₪${fmt(deleteTarget?.amount ?? 0)}`}
+              {t(deleteTarget?.description) || deleteTarget?.description || fmt(deleteTarget?.amount ?? 0)}
             </strong>{' '}
             {t('dash_from')} {deleteTarget?.created_at ? new Date(deleteTarget.created_at).toLocaleDateString('he-IL') : ''}?
           </p>

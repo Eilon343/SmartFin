@@ -1,217 +1,194 @@
+/**
+ * The Apple Pay webhook was removed once bank/card sync landed.
+ *
+ * An Apple Pay purchase IS a credit-card purchase, so the card connection imports the
+ * same transaction directly from the issuer — with the real merchant name instead of a
+ * notification string. Running both double-counted every purchase, and cross-source
+ * deduplication would have meant fuzzy amount/date matching that can corrupt two
+ * records at once when it guesses wrong.
+ *
+ * These tests guard the removal: the endpoint must stay gone, and the Telegram webhook
+ * that shares the same controller must keep working.
+ */
 const request = require('supertest');
 const app = require('./setup/testApp');
 const db = require('./setup/dbMock');
 
-// Extend timeout: the 503 retry path sleeps 2s + 4s before giving up.
-jest.setTimeout(12000);
+describe('POST /webhook/apple-pay — removed', () => {
+    test('the endpoint no longer exists', async () => {
+        const res = await request(app)
+            .post('/webhook/apple-pay')
+            .set('X-Webhook-Secret', 'test-webhook-secret')
+            .send({ text: 'Cafe 12.00' });
 
-const VALID_SECRET = 'test-webhook-secret';
+        expect(res.status).toBe(404);
+    });
 
-beforeEach(() => {
-    global.fetch = jest.fn();
-    // Speed up retry delays so tests don't actually sleep 6 seconds
-    jest.spyOn(global, 'setTimeout').mockImplementation((fn) => { fn(); return 0; });
+    test('it is not reachable with a per-user token either', async () => {
+        const res = await request(app)
+            .post('/webhook/apple-pay')
+            .set('X-Webhook-Token', 'some-user-token')
+            .send({ text: 'Cafe 12.00' });
+
+        expect(res.status).toBe(404);
+    });
+
+    test('no expense is written by the attempt', async () => {
+        db.query.mockResolvedValue([[]]);
+        await request(app).post('/webhook/apple-pay').send({ text: 'Cafe 12.00' });
+
+        const inserts = db.query.mock.calls.filter(([sql]) => /INSERT INTO expenses/i.test(sql));
+        expect(inserts).toHaveLength(0);
+    });
 });
 
-afterEach(() => {
-    delete global.fetch;
-    jest.restoreAllMocks();
-});
+describe('POST /webhook/telegram — still active', () => {
+    // These exercise the ACK behaviour, which only applies to an authenticated update.
+    // The secret has to be set before the controller is loaded, since it reads it once.
+    const SECRET = 'telegram-webhook-secret';
+    let freshApp;
+    let freshDb;
 
-function mockGeminiSuccess(parsed) {
-    global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(parsed) }] } }],
-        }),
+    beforeEach(() => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+        jest.resetModules();
+        process.env.TELEGRAM_WEBHOOK_SECRET = SECRET;
+        const express = require('express');
+        freshApp = express();
+        freshApp.use(express.json());
+        freshApp.use('/webhook', require('../../backend/src/routes/webhookRoutes'));
+        freshDb = require('./setup/dbMock');
+        freshDb.query.mockResolvedValue([[]]);
     });
-}
-
-function mockGemini503() {
-    global.fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 503,
-        json: async () => ({ error: { message: 'Service unavailable', code: 503 } }),
-    });
-}
-
-function mockTelegram() {
-    global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
-}
-
-// ── Auth / secret validation ──────────────────────────────────────────────────
-
-describe('POST /webhook/apple-pay - secret validation', () => {
-    it('returns 401 with no secret header', async () => {
-        const res = await request(app)
-            .post('/webhook/apple-pay')
-            .send({ text: 'Apple Pay 55 ILS at Cafe' });
-
-        expect(res.status).toBe(401);
+    afterEach(() => {
+        delete process.env.TELEGRAM_WEBHOOK_SECRET;
+        delete global.fetch;
+        jest.resetModules();
+        jest.restoreAllMocks();
     });
 
-    it('returns 401 with wrong secret', async () => {
-        const res = await request(app)
-            .post('/webhook/apple-pay')
-            .set('X-Webhook-Secret', 'wrong-secret')
-            .send({ text: 'Apple Pay 55 ILS at Cafe' });
+    test('acknowledges immediately so Telegram does not retry', async () => {
+        const res = await request(freshApp)
+            .post('/webhook/telegram')
+            .set('X-Telegram-Bot-Api-Secret-Token', SECRET)
+            .send({ message: { chat: { id: 123 }, text: '/help' } });
 
-        expect(res.status).toBe(401);
+        expect(res.status).toBe(200);
     });
 
-    it('returns 400 when text body missing', async () => {
-        const res = await request(app)
-            .post('/webhook/apple-pay')
-            .set('X-Webhook-Secret', VALID_SECRET)
+    test('acknowledges even on a malformed update', async () => {
+        const res = await request(freshApp)
+            .post('/webhook/telegram')
+            .set('X-Telegram-Bot-Api-Secret-Token', SECRET)
             .send({});
 
-        expect(res.status).toBe(400);
+        expect(res.status).toBe(200);
     });
 });
 
-// ── Per-user token routing ───────────────────────────────────────────────────
-
-describe('POST /webhook/apple-pay - per-user token routing', () => {
-    it('attributes the expense and the notification to the token owner, not the instance owner', async () => {
-        const SECOND_USER = 555000111;
-        mockGeminiSuccess({ amount: 42, currency: 'ILS', merchant: 'Bakery', category: 'Food', source: 'apple_pay' });
-        db.query
-            .mockResolvedValueOnce([[{ user_id: SECOND_USER, telegram_chat_id: String(SECOND_USER) }]]) // token lookup
-            .mockResolvedValueOnce([[{ category_id: 1 }]])   // category lookup
-            .mockResolvedValueOnce([{ insertId: 200 }]);     // insert expense
-        mockTelegram();
-
+describe('POST /webhook/telegram — unconfigured', () => {
+    /**
+     * Fails CLOSED when no secret is set. This is the DEFAULT configuration, because the
+     * bot long-polls and most deployments never register a webhook — so an endpoint that
+     * accepted anything here was both permanently open and unlikely to be noticed.
+     * The update body carries its own chat id, so reaching it was enough to log expenses
+     * into any account, or to attach someone else's account to an attacker's chat via
+     * /link_google.
+     */
+    test('refuses every update when no secret is configured', async () => {
+        db.query.mockResolvedValue([[]]);
         const res = await request(app)
-            .post('/webhook/apple-pay')
-            .set('X-Webhook-Token', 'second-user-token')
-            .send({ text: 'Apple Pay 42 ILS at Bakery' });
+            .post('/webhook/telegram')
+            .send({ message: { chat: { id: 123 }, text: '/help' } });
 
-        expect(res.status).toBe(200);
-
-        // Expense rows must carry the second user's id
-        const insertCall = db.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO expenses'));
-        expect(insertCall[1][0]).toBe(SECOND_USER);
-
-        // Telegram notification must go to the second user's chat
-        const telegramCall = global.fetch.mock.calls.find(([url]) => url.includes('api.telegram.org'));
-        expect(JSON.parse(telegramCall[1].body).chat_id).toBe(String(SECOND_USER));
+        expect(res.status).toBe(503);
     });
 
-    it('returns 401 for an unrecognized token', async () => {
-        db.query.mockResolvedValueOnce([[]]); // no user matches the token
+    test('a forged update cannot reach the database', async () => {
+        db.query.mockResolvedValue([[]]);
+        await request(app)
+            .post('/webhook/telegram')
+            .send({ message: { chat: { id: 999 }, text: '/link_google victim@example.com' } });
 
-        const res = await request(app)
-            .post('/webhook/apple-pay')
-            .set('X-Webhook-Token', 'bogus-token')
-            .send({ text: 'Apple Pay 42 ILS at Bakery' });
+        expect(db.query).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * The update body carries the chat id it claims to come from, so an unauthenticated
+ * endpoint lets anyone forge a message from any chat — logging expenses into a
+ * stranger's account, or attaching their SmartFin account to the attacker's Telegram
+ * via /link_google. Telegram echoes the secret_token passed to setWebhook on every
+ * delivery; that is what proves an update is really from Telegram.
+ */
+describe('POST /webhook/telegram — secret token', () => {
+    const SECRET = 'telegram-webhook-secret';
+    let freshApp;
+    let freshDb;
+
+    beforeEach(() => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+        // The controller reads the secret at load time, so the module cache is dropped
+        // to exercise the configured path. That gives the rebuilt app a NEW db mock
+        // instance — assertions must target that one, not the module-level `db`, or
+        // they inspect a mock nothing ever called and pass vacuously.
+        jest.resetModules();
+        process.env.TELEGRAM_WEBHOOK_SECRET = SECRET;
+        const express = require('express');
+        freshApp = express();
+        freshApp.use(express.json());
+        freshApp.use('/webhook', require('../../backend/src/routes/webhookRoutes'));
+        freshDb = require('./setup/dbMock');
+        freshDb.query.mockResolvedValue([[]]);
+    });
+
+    afterEach(() => {
+        delete process.env.TELEGRAM_WEBHOOK_SECRET;
+        delete global.fetch;
+        jest.resetModules();
+        jest.restoreAllMocks();
+    });
+
+    const update = { message: { chat: { id: 123 }, text: '/help' } };
+
+    test('an update with the right secret is accepted', async () => {
+        const res = await request(freshApp)
+            .post('/webhook/telegram')
+            .set('X-Telegram-Bot-Api-Secret-Token', SECRET)
+            .send(update);
+
+        expect(res.status).toBe(200);
+    });
+
+    test('an update with no secret is rejected once one is configured', async () => {
+        const res = await request(freshApp).post('/webhook/telegram').send(update);
+        expect(res.status).toBe(401);
+    });
+
+    test('an update with the wrong secret is rejected', async () => {
+        const res = await request(freshApp)
+            .post('/webhook/telegram')
+            .set('X-Telegram-Bot-Api-Secret-Token', 'guessed')
+            .send(update);
 
         expect(res.status).toBe(401);
     });
-});
 
-// ── Successful parse → expense inserted ──────────────────────────────────────
-
-function mockOwner() {
-    db.query.mockResolvedValueOnce([[{ user_id: 123456789 }]]); // owner telegram_chat_id lookup
-}
-
-describe('POST /webhook/apple-pay - successful Gemini parse', () => {
-    it('parses transaction, inserts expense, notifies Telegram', async () => {
-        mockGeminiSuccess({ amount: 55, currency: 'ILS', merchant: 'Cafe', category: 'Food', source: 'apple_pay' });
-        mockOwner();
-        db.query
-            .mockResolvedValueOnce([[{ category_id: 1 }]])  // category lookup
-            .mockResolvedValueOnce([{ insertId: 100 }]);     // insert expense
-        mockTelegram();
-
-        const res = await request(app)
-            .post('/webhook/apple-pay')
-            .set('X-Webhook-Secret', VALID_SECRET)
-            .send({ text: 'Apple Pay transaction: 55 ILS at Cafe' });
-
-        expect(res.status).toBe(200);
-        expect(res.body.success).toBe(true);
-        expect(res.body.parsed[0].amount).toBe(55);
+    test('a rejected update never reaches the database', async () => {
+        freshDb.query.mockClear();
+        await request(freshApp).post('/webhook/telegram').send(update);
+        expect(freshDb.query).not.toHaveBeenCalled();
     });
 
-    it('creates category when not found then inserts expense', async () => {
-        mockGeminiSuccess({ amount: 120, currency: 'ILS', merchant: 'NewPlace', category: 'Shopping', source: 'apple_pay' });
-        mockOwner();
-        db.query
-            .mockResolvedValueOnce([[]])                     // category not found
-            .mockResolvedValueOnce([{ insertId: 50 }])       // category created
-            .mockResolvedValueOnce([{ insertId: 101 }]);     // expense inserted
-        mockTelegram();
+    // Positive control for the test above: proves the assertion is watching the mock the
+    // rebuilt app actually uses, so "no calls" means rejection and not a mis-wired spy.
+    test('an accepted update does reach the database', async () => {
+        freshDb.query.mockClear();
+        await request(freshApp)
+            .post('/webhook/telegram')
+            .set('X-Telegram-Bot-Api-Secret-Token', SECRET)
+            .send({ message: { chat: { id: 123 }, text: '55 shawarma' } });
 
-        const res = await request(app)
-            .post('/webhook/apple-pay')
-            .set('X-Webhook-Secret', VALID_SECRET)
-            .send({ text: 'Apple Pay 120 ILS at NewPlace' });
-
-        expect(res.status).toBe(200);
-        expect(res.body.success).toBe(true);
-    });
-
-    it('handles null merchant — uses "Unknown merchant" in notification', async () => {
-        mockGeminiSuccess({ amount: 55, currency: 'ILS', merchant: null, category: 'Other', source: 'apple_pay' });
-        mockOwner();
-        db.query
-            .mockResolvedValueOnce([[{ category_id: 8 }]])
-            .mockResolvedValueOnce([{ insertId: 102 }]);
-        mockTelegram();
-
-        const res = await request(app)
-            .post('/webhook/apple-pay')
-            .set('X-Webhook-Secret', VALID_SECRET)
-            .send({ text: 'Apple Pay 55' });
-
-        expect(res.status).toBe(200);
-    });
-});
-
-// ── Gemini returns no amount ───────────────────────────────────────────────────
-
-describe('POST /webhook/apple-pay - Gemini parse edge cases', () => {
-    it('returns 500 when Gemini returns null amount', async () => {
-        mockGeminiSuccess({ amount: null, currency: 'ILS', merchant: 'Cafe', category: 'Food', source: 'apple_pay' });
-        mockOwner();
-
-        const res = await request(app)
-            .post('/webhook/apple-pay')
-            .set('X-Webhook-Secret', VALID_SECRET)
-            .send({ text: 'Apple Pay transaction: ???' });
-
-        expect(res.status).toBe(500);
-    });
-});
-
-// ── Gemini 503 → queue ────────────────────────────────────────────────────────
-
-describe('POST /webhook/apple-pay - Gemini unavailable', () => {
-    it('queues transaction when all 3 Gemini attempts fail with 503', async () => {
-        // 3 attempts × 503
-        mockGemini503();
-        mockGemini503();
-        mockGemini503();
-        mockOwner();
-        // queue insert
-        db.query.mockResolvedValueOnce([{ insertId: 1 }]);
-        // Telegram notification
-        mockTelegram();
-
-        const res = await request(app)
-            .post('/webhook/apple-pay')
-            .set('X-Webhook-Secret', VALID_SECRET)
-            .send({ text: 'Apple Pay 55 ILS at Cafe' });
-
-        expect(res.status).toBe(200);
-        expect(res.body.success).toBe(false);
-        expect(res.body.queued).toBe(true);
-
-        // Verify exactly 3 Gemini calls were made (retried twice)
-        const geminiCalls = global.fetch.mock.calls.filter(
-            ([url]) => url && url.includes('generativelanguage')
-        );
-        expect(geminiCalls).toHaveLength(3);
+        expect(freshDb.query).toHaveBeenCalled();
     });
 });

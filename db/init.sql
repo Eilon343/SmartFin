@@ -24,9 +24,11 @@ CREATE TABLE IF NOT EXISTS expenses (
     currency    VARCHAR(10) DEFAULT 'ILS',
     description VARCHAR(255),
     category_id INT,
-    source      ENUM('bot', 'apple_pay', 'manual', 'web') DEFAULT 'bot',
+    source      ENUM('bot', 'apple_pay', 'manual', 'web', 'bank_sync') DEFAULT 'bot',
     is_virtual  BOOLEAN NOT NULL DEFAULT FALSE,
+    goal_id     INT NULL,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_expenses_goal_id (goal_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     FOREIGN KEY (category_id) REFERENCES categories(category_id)
 );
@@ -72,6 +74,30 @@ CREATE TABLE IF NOT EXISTS income (
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
+-- Archive tables for duplicate cleanup (migration 008).
+-- Cleanup moves a hand-logged row here instead of deleting it, so the pass is undoable
+-- for RESTORE_WINDOW_DAYS. Defined with LIKE so they track their source table's columns.
+-- No foreign keys: the archive must outlive whatever it references.
+-- MySQL 8 has no ADD COLUMN IF NOT EXISTS; init.sql only ever runs against a fresh
+-- volume, where the LIKE above just created the table, so a plain ALTER is correct here.
+-- Existing databases get the same shape from migrate_008, which guards on
+-- INFORMATION_SCHEMA instead.
+CREATE TABLE IF NOT EXISTS deleted_expenses LIKE expenses;
+ALTER TABLE deleted_expenses
+    ADD COLUMN deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN batch_id CHAR(36) NOT NULL,
+    ADD COLUMN matched_row_id INT NULL,
+    ADD INDEX idx_del_exp_user (user_id, deleted_at),
+    ADD INDEX idx_del_exp_batch (batch_id);
+
+CREATE TABLE IF NOT EXISTS deleted_income LIKE income;
+ALTER TABLE deleted_income
+    ADD COLUMN deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN batch_id CHAR(36) NOT NULL,
+    ADD COLUMN matched_row_id INT NULL,
+    ADD INDEX idx_del_inc_user (user_id, deleted_at),
+    ADD INDEX idx_del_inc_batch (batch_id);
+
 CREATE TABLE IF NOT EXISTS savings_goals (
     goal_id            INT PRIMARY KEY AUTO_INCREMENT,
     user_id            BIGINT NOT NULL,
@@ -92,6 +118,55 @@ CREATE TABLE IF NOT EXISTS webhook_queue (
     text       TEXT NOT NULL,
     status     ENUM('pending', 'processed', 'failed') DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS bank_connections (
+    id                    INT PRIMARY KEY AUTO_INCREMENT,
+    user_id               BIGINT NOT NULL,
+    company_id            VARCHAR(50) NOT NULL,
+    display_name          VARCHAR(100) NULL,
+    credentials_encrypted TEXT NOT NULL,
+    status                ENUM('pending_first_sync', 'active', 'invalid_credentials', 'error', 'disabled') NOT NULL DEFAULT 'pending_first_sync',
+    last_sync_at          TIMESTAMP NULL,
+    -- last_sync_at is the last SUCCESS (it drives the incremental scrape window);
+    -- last_attempt_at is the last try, and paces the retry of an errored connection.
+    last_attempt_at       TIMESTAMP NULL,
+    last_sync_status      VARCHAR(50) NULL,
+    last_sync_error       TEXT NULL,
+    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- One connection per provider per user (migration 009). createConnection also checks,
+    -- but two interleaved requests both pass that check and the duplicate connections then
+    -- scrape the same account into separate staging rows — the UNIQUE key on
+    -- bank_transactions_raw is per-connection, so nothing dedupes them.
+    UNIQUE KEY uq_bank_conn_user_company (user_id, company_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS bank_transactions_raw (
+    id                  INT PRIMARY KEY AUTO_INCREMENT,
+    bank_connection_id  INT NOT NULL,
+    user_id             BIGINT NOT NULL,
+    external_hash       CHAR(64) NOT NULL,
+    account_number      VARCHAR(100),
+    txn_date            DATE NOT NULL,
+    description         VARCHAR(255),
+    memo                VARCHAR(255) NULL,
+    charged_amount      DECIMAL(10, 2) NOT NULL,
+    currency            VARCHAR(10) DEFAULT 'ILS',
+    status              ENUM('completed', 'pending') NOT NULL,
+    raw_json            JSON,
+    import_status       ENUM('pending_categorization', 'imported', 'skipped', 'failed') NOT NULL DEFAULT 'pending_categorization',
+    import_attempts     INT NOT NULL DEFAULT 0,
+    expense_id          INT NULL,
+    income_id           INT NULL,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_bank_txn (bank_connection_id, external_hash),
+    FOREIGN KEY (bank_connection_id) REFERENCES bank_connections(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    -- SET NULL, not the default RESTRICT: deleting a bank-imported expense in the web
+    -- UI must succeed. The staged row survives, unlinked, so it is never re-imported.
+    CONSTRAINT fk_btr_expense FOREIGN KEY (expense_id) REFERENCES expenses(expense_id) ON DELETE SET NULL,
+    CONSTRAINT fk_btr_income  FOREIGN KEY (income_id)  REFERENCES income(income_id)   ON DELETE SET NULL
 );
 
 -- Base categories (user_id NULL = shared across all users)

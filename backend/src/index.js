@@ -5,10 +5,18 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const expenseRoutes = require('./routes/expenseRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
+const bankConnectionRoutes = require('./routes/bankConnectionRoutes');
 const { startQueueProcessor } = require('./controllers/webhookController');
+const bankSyncScheduler = require('./services/bankSyncScheduler');
+const { purgeExpiredArchives } = require('./controllers/cleanupController');
 
 if (!process.env.JWT_SECRET) {
     console.error('FATAL: JWT_SECRET environment variable is not set');
+    process.exit(1);
+}
+
+if (!process.env.BANK_CREDENTIALS_KEY) {
+    console.error('FATAL: BANK_CREDENTIALS_KEY environment variable is not set');
     process.exit(1);
 }
 
@@ -52,6 +60,7 @@ app.use('/api', apiLimiter);
 app.use('/webhook', webhookLimiter);
 
 app.use('/api', expenseRoutes);
+app.use('/api', bankConnectionRoutes);
 app.use('/webhook', webhookRoutes);
 
 app.get('/health', (_req, res) => {
@@ -61,4 +70,13 @@ app.get('/health', (_req, res) => {
 app.listen(PORT, () => {
     console.log(`SmartFin API listening on port ${PORT}`);
     startQueueProcessor();
+    bankSyncScheduler.start();
+
+    // Drop duplicate-cleanup archives past their restore window. Daily is ample for a
+    // 30-day window; the first run is deferred a minute so it never competes with boot.
+    const PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+    setTimeout(() => {
+        purgeExpiredArchives();
+        setInterval(purgeExpiredArchives, PURGE_INTERVAL_MS).unref();
+    }, 60 * 1000).unref();
 });

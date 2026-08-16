@@ -14,7 +14,9 @@ export default defineConfig([
       reactRefresh.configs.vite,
     ],
     languageOptions: {
-      globals: globals.browser,
+      // __APP_VERSION__ is injected by Vite's `define`, so it exists at runtime but not
+      // in any source file eslint can see.
+      globals: { ...globals.browser, __APP_VERSION__: 'readonly' },
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
