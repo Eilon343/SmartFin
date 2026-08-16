@@ -92,8 +92,7 @@ describe('POST /webhook/telegram — unconfigured', () => {
      * bot long-polls and most deployments never register a webhook — so an endpoint that
      * accepted anything here was both permanently open and unlikely to be noticed.
      * The update body carries its own chat id, so reaching it was enough to log expenses
-     * into any account, or to attach someone else's account to an attacker's chat via
-     * /link_google.
+     * into any account that had already linked its chat.
      */
     test('refuses every update when no secret is configured', async () => {
         db.query.mockResolvedValue([[]]);
@@ -108,7 +107,7 @@ describe('POST /webhook/telegram — unconfigured', () => {
         db.query.mockResolvedValue([[]]);
         await request(app)
             .post('/webhook/telegram')
-            .send({ message: { chat: { id: 999 }, text: '/link_google victim@example.com' } });
+            .send({ message: { chat: { id: 999 }, text: '/link ABCD1234' } });
 
         expect(db.query).not.toHaveBeenCalled();
     });
@@ -190,5 +189,46 @@ describe('POST /webhook/telegram — secret token', () => {
             .send({ message: { chat: { id: 123 }, text: '55 shawarma' } });
 
         expect(freshDb.query).toHaveBeenCalled();
+    });
+
+    /**
+     * Regression for the account-takeover this overhaul closes.
+     *
+     * /link_google <email> took the sender's word for the address. The re-link guard only
+     * fired when telegram_chat_id was already set, so for every account that had never
+     * linked Telegram — i.e. every Google-only account — an ordinary Telegram user who knew
+     * the email address could bind their own chat to it and read and write its finances.
+     *
+     * The command no longer exists. The text now falls through to ordinary expense parsing,
+     * which for an unknown chat stops at the welcome message. Nothing may write to `users`.
+     */
+    test('a Telegram message can no longer bind itself to an account it does not own', async () => {
+        freshDb.query.mockClear();
+        freshDb.query.mockResolvedValue([[]]); // no user owns this chat
+
+        await request(freshApp)
+            .post('/webhook/telegram')
+            .set('X-Telegram-Bot-Api-Secret-Token', SECRET)
+            .send({ message: { chat: { id: 66666 }, text: '/link_google victim@example.com' } });
+
+        const writes = freshDb.query.mock.calls.filter(c => /UPDATE users|INSERT INTO users/i.test(c[0]));
+        expect(writes).toHaveLength(0);
+    });
+
+    /**
+     * Redemption goes through the same claim as everywhere else, so a guessed code cannot
+     * link a chat — and a wrong guess must not write to `users` either.
+     */
+    test('a wrong /link code binds nothing', async () => {
+        freshDb.query.mockClear();
+        freshDb.query.mockResolvedValue([{ affectedRows: 0 }]); // code claim matches nothing
+
+        await request(freshApp)
+            .post('/webhook/telegram')
+            .set('X-Telegram-Bot-Api-Secret-Token', SECRET)
+            .send({ message: { chat: { id: 66666 }, text: '/link ZZZZZZZZ' } });
+
+        const writes = freshDb.query.mock.calls.filter(c => /UPDATE users/i.test(c[0]));
+        expect(writes).toHaveLength(0);
     });
 });

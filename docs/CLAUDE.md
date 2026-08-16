@@ -77,6 +77,58 @@ Both call Gemini, both retry 3× with backoff on 429/5xx, both have their own pr
 
 **Gemini model is hard-coded to `gemini-2.5-flash`.** `1.5-flash` 404s on v1beta; `2.0-flash` has quota 0 on the project key. Do not change it.
 
+### Auth model (migration 010)
+
+Accounts are created **in the web app only** — email+password or Google. The bot can no
+longer create one, which is the whole point: `/link_google <email>` used to be the sole
+registration path, and it took the address on the sender's word.
+
+- **`users.email` is the single identity column** (renamed from `google_email`), `UNIQUE`,
+  always stored and queried **lowercased**. One column is what makes "sign up with a
+  password, later use Google, land in the same account" a lookup rather than a merge.
+- **`password_hash` is nullable** — NULL means a Google-only account, a valid state.
+  `pin_hash` and the `user_id`+PIN login are gone; nothing in the repo ever wrote that column.
+- **Sign-in leaks nothing.** Unknown email, wrong password and Google-only account all return
+  an identical `401 invalid_credentials`, and the unknown/NULL paths still run a full bcrypt
+  compare against a dummy hash so they cost the same time. Sign-up answers a taken address
+  with the same uniform 409 as any other rejection — do not add a distinct "already exists".
+- **Google merge gates on `email_verified`.** Creating a new account from a Google sign-in
+  does not require it (first claim, nothing to take over), but merging into an account that
+  already has a `password_hash` does. Google sets the flag only for addresses it verified;
+  merging without it would let anyone attach an arbitrary address to a Google account and
+  walk into the password account that owns it.
+- **Telegram is linked from an authenticated session.** `POST /api/auth/telegram/link-code`
+  issues an 8-char Crockford-base32 code, single-use, 10-minute expiry, stored only as a
+  SHA-256. The bot redeems it with `/link <code>`. Redemption is one conditional `UPDATE`
+  claimed via `affectedRows`/`rowcount`, so concurrent redemptions cannot both win, and
+  unknown/expired/used all collapse to one message so the code space can't be probed.
+  The rule has **two implementations** — `backend/src/services/telegramLink.js` and
+  `DatabaseManager.redeem_link_code` — because the aiogram bot talks to MySQL directly.
+  Change one, change the other (same arrangement as the two Gemini parsers).
+- **Auth routes live in `routes/authRoutes.js`.** Anything under `/api/auth` inherits
+  `authLimiter` (20 / 15 min) automatically; `apiLimiter` skips those paths. `GET /api/me` is
+  deliberately **not** under `/api/auth` — Settings polls it while a link code is live, which
+  would exhaust the strict bucket in under two minutes.
+- **Never add a query to `middleware/auth.js`.** Its single `SELECT` is the first entry in the
+  positional `mockResolvedValueOnce` queue of all 14 backend test files.
+
+### In-app tours
+Both tours render from one component, `components/ui/TourDeck.jsx` — paged card, dots,
+back/next, and swipe (horizontal drag ≥45px that is ≥1.2× the vertical travel, so it cannot
+fire while someone is scrolling the body copy; RTL mirrors it). A tour is a page list plus
+`${prefix}_${key}_title` / `_body` keys and nothing else. Keep them sharing the deck: the
+moment one is restyled alone they stop matching.
+
+- **What's-new** (`WhatsNewModal`) is per-browser, keyed to a feature version in
+  `lib/whatsNew.js`. Right for a release announcement.
+- **Welcome** (`WelcomeModal`) is per-ACCOUNT, via `users.onboarded_at` (migration 011) —
+  an introduction to the app should happen once ever, not once per device. Migration 011
+  backfills every pre-existing user so nobody is introduced to an app they already use;
+  both tours stay replayable from Settings.
+- Layout holds `showWelcome` as a **tri-state** (`null` = /api/me hasn't answered).
+  "Unknown" must stay distinct from "not needed" or what's-new flashes up in the gap.
+  Finishing the welcome also retires what's-new — for a new user, all of it is new.
+
 ### Webhook queue (Gemini-down fallback)
 When Gemini returns 429/5xx after retries, the request is marked `unavailable` and the text is inserted into `webhook_queue` (status `pending`) instead of failing. `startQueueProcessor()` in `webhookController.js` drains the queue every 5 min.
 
@@ -84,7 +136,7 @@ When Gemini returns 429/5xx after retries, the request is marked `unavailable` a
 
 ## Data model gotchas (`db/init.sql` is the schema source of truth)
 
-- **`users.user_id` is `BIGINT`** and for bot-origin users *equals their Telegram chat ID*. Web-origin users get a different id. `telegram_chat_id` links the two; bot/webhook resolve users by it.
+- **`users.user_id` is `BIGINT AUTO_INCREMENT` starting at 10^13** (migration 010). Legacy bot-origin rows predating it have `user_id` = their Telegram chat ID; chat ids sit below 10^11, so the ranges cannot collide. Nothing derives an id from Telegram any more. `telegram_chat_id` is the only link between a chat and an account — **always resolve a Telegram user through it, never by treating the chat id as `user_id`**.
 - **Base categories have `user_id IS NULL`** (shared across all users). Category queries are always `WHERE user_id IS NULL OR user_id = ?`.
 - **`categories.is_fixed`** — flat monthly costs (Housing, Utilities, Savings). Drives P&L forecasting: fixed expenses are NOT run-rated to month-end, variable ones are.
 - **`expenses.is_virtual = TRUE`** — savings-goal transfers, not real spending. Excluded from summaries/budgets via `is_virtual = FALSE`; the savings deposit (`savingsController.depositToGoal`) writes the virtual expense + bumps `savings_goals.saved_amount` inside one transaction.

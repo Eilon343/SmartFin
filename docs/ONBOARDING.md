@@ -292,13 +292,15 @@ docker logs -f smartfin_bot
 
 ### 5.4 Register yourself as a user
 
-SmartFin is multi-user — the schema supports any number of accounts and you do **not** need to insert your row by hand. Two automatic paths:
+SmartFin is multi-user — the schema supports any number of accounts and you do **not** need to insert your row by hand. Accounts are created **in the web app only** (migration 010); the bot cannot create one.
 
-**Path 1 — Telegram `/start`:** open your dev bot in Telegram, send `/start`. The handler in `bot/app/bot/handlers.py` calls `DatabaseManager.add_user()` which inserts a row keyed by your Telegram `user_id` and copies the shared base categories so you have Food/Transport/etc. ready.
+**Path 1 — email + password:** open <http://localhost:8080>, choose **Sign up**, enter an email and a password of at least 8 characters. `authController.signup` inserts the row; `user_id` comes from `AUTO_INCREMENT` (≥ 10^13).
 
-**Path 2 — Web Google login:** open <http://localhost:8080>, click "Sign in with Google". `authController.googleLogin` either looks up the existing row by `google_email` or creates a new one. Then go to Settings → link your Telegram chat ID so the bot recognizes you.
+**Path 2 — Google:** on the same screen click **Continue with Google**. `authController.googleLogin` looks the address up by `users.email` and creates the account if it is new. Using both paths with the same email reaches **one** account — `email` is `UNIQUE` and is the sole identity column.
 
-Either path is enough. Use both if you want the same account reachable from web + bot — link them via the Settings page after logging in on the web.
+Base categories are shared at `user_id IS NULL`, so a new account gets Food/Transport/etc. without anything being copied.
+
+**To reach that account from the bot:** sign in on the web, go to **Settings → Telegram bot**, tap **Generate code**, then send `/link <code>` to your dev bot. The code is single-use and expires in 10 minutes. The bot resolves you by `telegram_chat_id` from then on — it will not respond to an unlinked chat.
 
 ### 5.5 Optional — seed fake test data
 

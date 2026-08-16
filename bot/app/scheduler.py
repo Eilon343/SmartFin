@@ -112,14 +112,21 @@ async def _charge_due_subscriptions(bot: Bot, db_manager):
                 logging.error(f"Subscription expense failed for sub_id={sub['subscription_id']}, skipping charge mark")
                 continue
             await db_manager.mark_subscription_charged(sub["subscription_id"], current_month)
-            try:
-                await bot.send_message(
-                    user_id,
-                    f"💳 Auto-charged: *{sub['name']}* — ₪{float(sub['amount']):.2f}",
-                    parse_mode="Markdown",
-                )
-            except Exception as e:
-                logging.error(f"Subscription notify error: {e}")
+            # The DM goes to telegram_chat_id, NOT user_id. Those are the same number only
+            # for legacy bot-origin accounts; an app-origin user_id is a DB-assigned id well
+            # outside the chat-id range, so sending to it would fail or, worse, reach an
+            # unrelated chat. None means the user never linked Telegram — they are still
+            # billed, they just get no message.
+            chat_id = sub.get("telegram_chat_id")
+            if chat_id:
+                try:
+                    await bot.send_message(
+                        chat_id,
+                        f"💳 Auto-charged: *{sub['name']}* — ₪{float(sub['amount']):.2f}",
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logging.error(f"Subscription notify error: {e}")
         except Exception as e:
             logging.error(f"Subscription charge error for sub_id={sub['subscription_id']}: {e}")
 
@@ -130,11 +137,14 @@ def setup_scheduler(bot: Bot, db_manager) -> AsyncIOScheduler:
     async def send_spending_scores():
         # Resolved per run, not captured at setup: a user who links their account
         # after the bot starts must still get their weekly score.
-        for user_id in await db_manager.get_notifiable_user_ids():
+        #
+        # user_id keys the financial queries; chat_id is where the message goes. They are
+        # the same number only for legacy bot-origin accounts.
+        for user_id, chat_id in await db_manager.get_notifiable_users():
             try:
                 data = await _compute_spending_score(db_manager, user_id)
                 text = _format_score_message(data)
-                await bot.send_message(user_id, text, parse_mode="Markdown")
+                await bot.send_message(chat_id, text, parse_mode="Markdown")
             except Exception as e:
                 logging.error(f"Spending score error for {user_id}: {e}")
 

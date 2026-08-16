@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime
 from aiogram import Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
@@ -13,8 +14,58 @@ WITTY_UNSUPPORTED = (
 )
 
 
-async def _auth(user_id: int, db_manager) -> bool:
-    return await db_manager.user_exists(user_id)
+NOT_LINKED = (
+    "👋 This Telegram chat isn't connected to a SmartFin account yet.\n\n"
+    "Sign in at the SmartFin web app, open *Settings → Telegram bot*, tap "
+    "*Generate code*, then send it here as `/link <code>`."
+)
+
+
+async def _resolve_user(tg_id: int, db_manager) -> int | None:
+    """Maps a Telegram id to the SmartFin user_id that linked it, or None.
+
+    Every handler goes through this. The bot used to pass message.from_user.id straight into
+    queries as users.user_id, which worked only while the bot was also what created accounts.
+    Accounts are now created in the web app with a DB-assigned id, so for an app-origin user
+    the two numbers differ and the old code matched nothing at all — silently.
+    """
+    return await db_manager.get_user_id_by_chat_id(tg_id)
+
+
+# Redemption attempts per chat, for the /link throttle below. In-memory and per-process,
+# which is enough: the bot is a single long-polling process, and the code space (32^8) plus
+# the 10-minute expiry already make guessing impractical. This closes the remaining gap that
+# bot messages bypass the backend's authLimiter entirely.
+_LINK_ATTEMPTS: dict[int, list[float]] = {}
+_LINK_MAX_ATTEMPTS = 5
+_LINK_WINDOW_SECONDS = 600
+
+
+def _link_throttle_ok(tg_id: int) -> bool:
+    now = time.monotonic()
+    recent = [t for t in _LINK_ATTEMPTS.get(tg_id, []) if now - t < _LINK_WINDOW_SECONDS]
+    if len(recent) >= _LINK_MAX_ATTEMPTS:
+        _LINK_ATTEMPTS[tg_id] = recent
+        return False
+    recent.append(now)
+    _LINK_ATTEMPTS[tg_id] = recent
+    return True
+
+
+def _clear_link_throttle(tg_id: int) -> None:
+    """A successful link resets the budget — the attempts were legitimate."""
+    _LINK_ATTEMPTS.pop(tg_id, None)
+
+
+async def _reject_unlinked(callback, state) -> None:
+    """Ends a confirmation flow whose chat has no account behind it.
+
+    Reachable when a chat is unlinked (or re-linked elsewhere) between opening a confirmation
+    and pressing its button — the FSM state outlives the link.
+    """
+    await state.clear()
+    await callback.message.edit_text(NOT_LINKED, parse_mode="Markdown", reply_markup=None)
+    await callback.answer()
 
 
 
@@ -87,11 +138,12 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- Any non-command text → AI parse → route by intent ---
     @dp.message(F.text & ~F.text.startswith("/"), StateFilter(None))
     async def handle_text(message: types.Message, state: FSMContext):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
 
-        await db_manager.ensure_user(message.from_user.id, message.from_user.username)
-        categories = await db_manager.get_user_categories(message.from_user.id)
+        categories = await db_manager.get_user_categories(user_id)
 
         try:
             parsed_list = await parse_input(message.text, categories)
@@ -133,7 +185,7 @@ def register_handlers(dp: Dispatcher, db_manager):
                 # Calculate warnings for each
                 for exp in expenses:
                     warning = await _check_budget_warning(
-                        db_manager, message.from_user.id,
+                        db_manager, user_id,
                         exp.get("category"), float(exp.get("amount") or 0)
                     )
                     exp["budget_warning"] = warning
@@ -218,7 +270,7 @@ def register_handlers(dp: Dispatcher, db_manager):
             thinking_msg = await message.reply("🤔 מנתח את הנתונים שלך...")
             try:
                 context = await db_manager.get_dynamic_financial_context(
-                    message.from_user.id, timeframe, category
+                    user_id, timeframe, category
                 )
                 import json as _json
                 print("[financial_advice] payload sent to Gemini:")
@@ -242,7 +294,7 @@ def register_handlers(dp: Dispatcher, db_manager):
 
         # Default: log_expense
         warning = await _check_budget_warning(
-            db_manager, message.from_user.id,
+            db_manager, user_id,
             parsed.get("category"), float(parsed.get("amount") or 0)
         )
         parsed["budget_warning"] = warning
@@ -257,8 +309,7 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /input command (alias for backward compat) ---
     @dp.message(Command("input"))
     async def handle_input_command(message: types.Message, state: FSMContext):
-        if not await _auth(message.from_user.id, db_manager):
-            return
+        # handle_text resolves the user itself; this only needs the argument check.
         text = message.text.replace("/input", "").strip()
         if not text:
             await message.reply("Please add the expense after the command, e.g. `/input 55 NIS shawarma`")
@@ -268,9 +319,15 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.callback_query(F.data == "confirm_expense", ExpenseFlow.pending_confirmation)
     async def callback_confirm(callback: types.CallbackQuery, state: FSMContext):
+        # Resolved, not taken from callback.from_user.id. This used to write an expense with
+        # no check at all, keyed by the raw Telegram id — FSM state was the only gate.
+        user_id = await _resolve_user(callback.from_user.id, db_manager)
+        if user_id is None:
+            await _reject_unlinked(callback, state)
+            return
+
         data = await state.get_data()
         parsed = data.get("parsed", {})
-        user_id = callback.from_user.id
 
         success = await db_manager.add_expense(
             user_id=user_id,
@@ -291,9 +348,13 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- ✅ Confirm multi expenses ---
     @dp.callback_query(F.data == "confirm_multi_expenses", ExpenseFlow.pending_multi_confirmation)
     async def callback_confirm_multi(callback: types.CallbackQuery, state: FSMContext):
+        user_id = await _resolve_user(callback.from_user.id, db_manager)
+        if user_id is None:
+            await _reject_unlinked(callback, state)
+            return
+
         data = await state.get_data()
         parsed_list = data.get("parsed_list", [])
-        user_id = callback.from_user.id
 
         success_count = 0
         for parsed in parsed_list:
@@ -337,7 +398,9 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(ExpenseFlow.editing_amount)
     async def handle_edit_amount(message: types.Message, state: FSMContext):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
         try:
             new_amount = float(message.text.strip())
@@ -350,7 +413,7 @@ def register_handlers(dp: Dispatcher, db_manager):
         parsed["amount"] = new_amount
         # Re-check budget warning with new amount
         parsed["budget_warning"] = await _check_budget_warning(
-            db_manager, message.from_user.id, parsed.get("category"), new_amount
+            db_manager, user_id, parsed.get("category"), new_amount
         )
         await state.update_data(parsed=parsed)
         await state.set_state(ExpenseFlow.editing_description)
@@ -358,7 +421,8 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(ExpenseFlow.editing_description)
     async def handle_edit_description(message: types.Message, state: FSMContext):
-        if not await _auth(message.from_user.id, db_manager):
+        if await _resolve_user(message.from_user.id, db_manager) is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
         data = await state.get_data()
         parsed = data["parsed"]
@@ -375,7 +439,10 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- 📂 Change Category ---
     @dp.callback_query(F.data == "change_category", ExpenseFlow.pending_confirmation)
     async def callback_change_category(callback: types.CallbackQuery, state: FSMContext):
-        user_id = callback.from_user.id
+        user_id = await _resolve_user(callback.from_user.id, db_manager)
+        if user_id is None:
+            await _reject_unlinked(callback, state)
+            return
         categories = await db_manager.get_user_categories(user_id)
 
         buttons = [InlineKeyboardButton(text=cat, callback_data=f"cat:{cat}") for cat in categories]
@@ -388,13 +455,18 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.callback_query(F.data.startswith("cat:"), ExpenseFlow.selecting_category)
     async def callback_select_category(callback: types.CallbackQuery, state: FSMContext):
+        user_id = await _resolve_user(callback.from_user.id, db_manager)
+        if user_id is None:
+            await _reject_unlinked(callback, state)
+            return
+
         selected = callback.data.removeprefix("cat:")
         data = await state.get_data()
         parsed = data["parsed"]
         parsed["category"] = selected
         # Re-check budget warning with new category
         parsed["budget_warning"] = await _check_budget_warning(
-            db_manager, callback.from_user.id, selected, float(parsed.get("amount") or 0)
+            db_manager, user_id, selected, float(parsed.get("amount") or 0)
         )
         await state.update_data(parsed=parsed)
         await state.set_state(ExpenseFlow.pending_confirmation)
@@ -410,9 +482,13 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- ✅ Confirm income ---
     @dp.callback_query(F.data == "confirm_income", IncomeFlow.pending_confirmation)
     async def callback_confirm_income(callback: types.CallbackQuery, state: FSMContext):
+        user_id = await _resolve_user(callback.from_user.id, db_manager)
+        if user_id is None:
+            await _reject_unlinked(callback, state)
+            return
+
         data = await state.get_data()
         parsed = data.get("parsed", {})
-        user_id = callback.from_user.id
         month = datetime.now().strftime("%Y-%m")
 
         success = await db_manager.add_income(
@@ -440,9 +516,13 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- ✅ Confirm subscription ---
     @dp.callback_query(F.data == "confirm_subscription", SubscriptionFlow.pending_confirmation)
     async def callback_confirm_subscription(callback: types.CallbackQuery, state: FSMContext):
+        user_id = await _resolve_user(callback.from_user.id, db_manager)
+        if user_id is None:
+            await _reject_unlinked(callback, state)
+            return
+
         data = await state.get_data()
         parsed = data.get("parsed", {})
-        user_id = callback.from_user.id
 
         day = parsed.get("day") or 1
         try:
@@ -475,14 +555,16 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /add_category ---
     @dp.message(Command("add_category"))
     async def handle_add_category(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
         name = message.text.replace("/add_category", "").strip()
         if not name:
             await message.reply("Usage: `/add_category Health`")
             return
 
-        success = await db_manager.add_user_category(message.from_user.id, name.capitalize())
+        success = await db_manager.add_user_category(user_id, name.capitalize())
         if success:
             await message.reply(f"✅ Category *{name.capitalize()}* added.", parse_mode="Markdown")
         else:
@@ -491,7 +573,9 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /add_savings goal_name target_amount monthly_allocation ---
     @dp.message(Command("add_savings"))
     async def handle_add_savings(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
         parts = message.text.replace("/add_savings", "").strip().split()
         if len(parts) < 2:
@@ -519,9 +603,8 @@ def register_handlers(dp: Dispatcher, db_manager):
             await message.reply("Target amount must be a number.")
             return
 
-        await db_manager.ensure_user(message.from_user.id, message.from_user.username)
         goal_id = await db_manager.add_savings_goal(
-            message.from_user.id, name, target, monthly
+            user_id, name, target, monthly
         )
         if goal_id:
             alloc_line = f"\nMonthly allocation: ₪{monthly:.2f}" if monthly > 0 else ""
@@ -535,9 +618,11 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("list_savings"))
     async def handle_list_savings(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
-        goals = await db_manager.list_savings_goals(message.from_user.id)
+        goals = await db_manager.list_savings_goals(user_id)
         if not goals:
             await message.reply("No savings goals yet. Add one with /add\\_savings", parse_mode="Markdown")
             return
@@ -558,7 +643,9 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("deposit_savings"))
     async def handle_deposit_savings(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
         parts = message.text.replace("/deposit_savings", "").strip().split()
         if len(parts) != 2 or not parts[0].isdigit():
@@ -571,7 +658,7 @@ def register_handlers(dp: Dispatcher, db_manager):
             await message.reply("Amount must be a number.")
             return
 
-        ok = await db_manager.deposit_to_savings_goal(message.from_user.id, goal_id, amount)
+        ok = await db_manager.deposit_to_savings_goal(user_id, goal_id, amount)
         await message.reply(
             f"✅ ₪{amount:.2f} deposited to goal #{goal_id}!" if ok else "❌ Goal not found."
         )
@@ -579,7 +666,9 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /add_subscription ---
     @dp.message(Command("add_subscription"))
     async def handle_add_subscription(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
         parts = message.text.replace("/add_subscription", "").strip().split()
         if len(parts) < 4:
@@ -600,9 +689,8 @@ def register_handlers(dp: Dispatcher, db_manager):
             await message.reply(f"Invalid input: {e}")
             return
 
-        await db_manager.ensure_user(message.from_user.id, message.from_user.username)
         sub_id = await db_manager.add_subscription(
-            message.from_user.id, name, amount, category, day
+            user_id, name, amount, category, day
         )
         if sub_id:
             await message.reply(
@@ -615,9 +703,11 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("list_subscriptions"))
     async def handle_list_subscriptions(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
-        subs = await db_manager.list_subscriptions(message.from_user.id)
+        subs = await db_manager.list_subscriptions(user_id)
         if not subs:
             await message.reply("No subscriptions yet. Add one with /add\\_subscription", parse_mode="Markdown")
             return
@@ -632,19 +722,23 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("del_subscription"))
     async def handle_del_subscription(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
         arg = message.text.replace("/del_subscription", "").strip()
         if not arg.isdigit():
             await message.reply("Usage: `/del_subscription <id>`", parse_mode="Markdown")
             return
-        ok = await db_manager.delete_subscription(message.from_user.id, int(arg))
+        ok = await db_manager.delete_subscription(user_id, int(arg))
         await message.reply("✅ Deleted." if ok else "❌ Not found.")
 
     # --- /set_budget ---
     @dp.message(Command("set_budget"))
     async def handle_set_budget(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
         parts = message.text.replace("/set_budget", "").strip().rsplit(maxsplit=1)
         if len(parts) != 2:
@@ -661,8 +755,7 @@ def register_handlers(dp: Dispatcher, db_manager):
             await message.reply("Limit must be a number.")
             return
 
-        await db_manager.ensure_user(message.from_user.id, message.from_user.username)
-        ok = await db_manager.set_budget(message.from_user.id, category, limit, carry_over=True)
+        ok = await db_manager.set_budget(user_id, category, limit, carry_over=True)
         if ok:
             await message.reply(
                 f"✅ Budget set: *{category}* — ₪{limit:.2f}/month (carry-over enabled).",
@@ -673,9 +766,11 @@ def register_handlers(dp: Dispatcher, db_manager):
 
     @dp.message(Command("list_budgets"))
     async def handle_list_budgets(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
+        user_id = await _resolve_user(message.from_user.id, db_manager)
+        if user_id is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
-        budgets = await db_manager.list_budgets(message.from_user.id)
+        budgets = await db_manager.list_budgets(user_id)
         if not budgets:
             await message.reply("No budgets yet. Set one with /set\\_budget", parse_mode="Markdown")
             return
@@ -685,26 +780,50 @@ def register_handlers(dp: Dispatcher, db_manager):
             lines.append(f"{roll} *{b['category']}* — ₪{float(b['monthly_limit']):.2f}/mo")
         await message.reply("\n".join(lines), parse_mode="Markdown")
 
-    # --- /link_google ---
-    @dp.message(Command("link_google"))
-    async def handle_link_google(message: types.Message):
-        email = message.text.replace("/link_google", "").strip()
-        if not email or "@" not in email:
-            await message.reply("Usage: `/link_google your@email.com`", parse_mode="Markdown")
-            return
-
-        await db_manager.ensure_user(message.from_user.id, message.from_user.username)
-        result = await db_manager.link_google_account(message.from_user.id, email)
-        if result == "conflict":
-            await message.reply("❌ That email is already linked to a different Telegram account.")
-        elif result:
+    # --- /link <code> ---
+    #
+    # Replaces /link_google <email>, which took the sender's word for the address. Because
+    # the re-link guard only fired once telegram_chat_id was set, any Telegram user who knew
+    # an email could bind their chat to that account — and every Google-only account had a
+    # NULL chat id. An attacker could also claim an unregistered address so its real owner's
+    # later Google sign-in landed in the attacker's account.
+    #
+    # A code proves the sender has an authenticated web session for the account. It is
+    # single-use, expires in 10 minutes, and is stored only as a SHA-256.
+    @dp.message(Command("link"))
+    async def handle_link(message: types.Message):
+        code = message.text.replace("/link", "", 1).strip()
+        if not code:
             await message.reply(
-                f"✅ Google account `{email}` linked to your Telegram.\n"
-                f"You can now sign in at the dashboard with that Google account.",
+                "Usage: `/link <code>`\n\n"
+                "Get your code from SmartFin → *Settings → Telegram bot*.",
                 parse_mode="Markdown",
             )
+            return
+
+        # Bot messages never pass through the backend's authLimiter, so redemption is paced
+        # here instead. Without it the 10-minute window is open to unlimited guessing.
+        if not _link_throttle_ok(message.from_user.id):
+            await message.reply("⏳ Too many attempts. Wait a few minutes and try again.")
+            return
+
+        result = await db_manager.redeem_link_code(code, message.from_user.id)
+        if result == "ok":
+            _clear_link_throttle(message.from_user.id)
+            await message.reply(
+                "✅ Linked! Send me an expense any time — try `55 NIS shawarma`.",
+                parse_mode="Markdown",
+            )
+        elif result == "chat_taken":
+            await message.reply("❌ This Telegram account is already linked to a different SmartFin account.")
         else:
-            await message.reply("❌ Failed to link account. Try again.")
+            # Unknown, expired and already-used are one message on purpose — distinguishing
+            # them would help someone guessing at the code space.
+            await message.reply(
+                "❌ That code is invalid, expired or already used.\n"
+                "Generate a new one in SmartFin → *Settings → Telegram bot*.",
+                parse_mode="Markdown",
+            )
 
     # --- /clean_dupes ---
     # Cleanup itself lives in the web app (Settings → Duplicate cleanup). Two reasons it
@@ -712,8 +831,8 @@ def register_handlers(dp: Dispatcher, db_manager):
     #   1. Chat is the wrong surface for approving a hundred irreversible deletions. The
     #      web screen shows each hand-logged row beside the imported transaction that
     #      covers it, with a checkbox, so the user approves pairs rather than a number.
-    #   2. This handler resolves the user by Telegram chat id, so it silently does
-    #      nothing for a web-origin account — exactly the users who most need it.
+    #   2. Restoring what it removes is a 30-day archive browse, which is a screen, not a
+    #      chat transcript.
     # The command is kept because it is documented and users will still type it.
     @dp.message(Command("clean_dupes", "clean_applepay"))
     async def handle_clean_dupes(message: types.Message):
@@ -729,13 +848,8 @@ def register_handlers(dp: Dispatcher, db_manager):
     # --- /start ---
     @dp.message(Command("start"))
     async def handle_start(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
-            await message.reply(
-                "👋 Welcome to *SmartFin*!\n\n"
-                "Link your Google account first:\n"
-                "`/link_google your@email.com`",
-                parse_mode="Markdown",
-            )
+        if await _resolve_user(message.from_user.id, db_manager) is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
         await message.reply(
             "👋 Welcome to *SmartFin*!\n\n"
@@ -758,18 +872,15 @@ def register_handlers(dp: Dispatcher, db_manager):
             "transactions import automatically every night.\n"
             "/clean\\_dupes — remove expenses your bank/card sync now imports itself\n\n"
             "*Account*\n"
-            "/link\\_google `<email>`",
+            "/link `<code>` — connect this chat to your SmartFin account",
             parse_mode="Markdown",
         )
 
     # --- /help ---
     @dp.message(Command("help"))
     async def handle_help(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
-            await message.reply(
-                "👋 Welcome to *SmartFin*!\n\nLink your Google account first:\n/link_google your@email.com",
-                parse_mode="Markdown",
-            )
+        if await _resolve_user(message.from_user.id, db_manager) is None:
+            await message.reply(NOT_LINKED, parse_mode="Markdown")
             return
 
         await message.reply(
@@ -787,7 +898,7 @@ def register_handlers(dp: Dispatcher, db_manager):
             "/list\\_savings — list all your savings goals and progress.\n"
             "/deposit\\_savings `<goal_id> <amount>` — add money toward a savings goal.\n"
             "/clean\\_dupes — remove hand-logged expenses that your bank/card sync now imports itself.\n"
-            "/link\\_google `<email>` — link this Telegram account to your SmartFin web account.\n\n"
+            "/link `<code>` — connect this chat to your SmartFin account (get the code in Settings → Telegram bot).\n\n"
             "_You can also just type naturally, e.g. \"55 nis shawarma\" or \"got salary 15000\"._",
             parse_mode="Markdown",
         )

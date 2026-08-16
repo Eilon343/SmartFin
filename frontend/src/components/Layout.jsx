@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -7,9 +7,11 @@ import Icon from './ui/Icon';
 import Drawer from './ui/Drawer';
 import LogTransaction from './LogTransaction';
 import WhatsNewModal from './WhatsNewModal';
-import { shouldShowWhatsNew } from '../lib/whatsNew';
+import WelcomeModal from './WelcomeModal';
+import { shouldShowWhatsNew, markWhatsNewSeen } from '../lib/whatsNew';
 import { upgradeNotice, dismissUpgradeNotice } from '../lib/appUpdate';
 import Toast from './ui/Toast';
+import api from '../api/client';
 
 const NAV = [
   { id: 'dashboard',     nameKey: 'nav_dashboard',     icon: 'layout-dashboard', path: '/' },
@@ -96,11 +98,60 @@ export default function Layout() {
   // Read straight from storage in the initial state rather than an effect, so the tour
   // never flashes in for someone who has already dismissed it.
   const [whatsNewOpen, setWhatsNewOpen] = useState(shouldShowWhatsNew);
+  // null until /api/me answers. Tri-state on purpose: "not yet known" has to be distinct
+  // from "not needed", or the what's-new tour flashes up in the gap before the welcome
+  // resolves and the new user sees the wrong one first.
+  const [showWelcome, setShowWelcome] = useState(null);
   // Confirms a silent service-worker update actually landed. upgradeNotice() is
   // idempotent, so StrictMode's double-invoked initialiser cannot swallow it.
   const [upgradedFrom, setUpgradedFrom] = useState(upgradeNotice);
 
   const displayName = googleProfile?.name || user?.username?.replace(/^@/, '') || 'You';
+  // Comes from the JWT, so it is available in the same render that authentication lands.
+  const userId = user?.user_id;
+
+  // Whether this ACCOUNT has been welcomed lives on the server, so the tour does not
+  // reappear on a second device or after clearing site data.
+  //
+  // Keyed to the user id rather than firing once on mount. Mount-only was wrong for
+  // sign-in *transitions*: Layout can mount in the same commit that authentication
+  // resolves, and a /me sent in that window races the token reaching storage. It answered
+  // 401, the catch below marked the account "already welcomed", and a genuinely new user
+  // never saw the tour. Re-running when the identity changes also covers switching
+  // accounts without a reload.
+  useEffect(() => {
+    if (!userId) return undefined;
+
+    let cancelled = false;
+
+    // One retry, because the only failure worth surviving here is a transient one at the
+    // moment of sign-in. A second failure is treated as a real answer.
+    const load = (retry = true) => {
+      api.get('/me')
+        .then(res => { if (!cancelled) setShowWelcome(!res.data.onboarded); })
+        .catch(() => {
+          if (cancelled) return;
+          if (retry) return void setTimeout(() => load(false), 600);
+          // Assume welcomed: wrongly skipping an introduction is a far smaller harm than
+          // wrongly showing one to an established user every time the network hiccups.
+          // onboarded_at stays NULL either way, so a real new user gets it next visit.
+          setShowWelcome(false);
+        });
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  const finishWelcome = useCallback(() => {
+    setShowWelcome(false);
+    // Retire the what's-new tour in the same breath — see the render comment below.
+    markWhatsNewSeen();
+    setWhatsNewOpen(false);
+    // Fire-and-forget: the tour is already closed, and failing to record it only means it
+    // appears once more. Blocking the UI on this would be worse than that.
+    api.post('/me/onboarded').catch(() => {});
+  }, []);
 
   function handleNavClick(path) {
     navigate(path);
@@ -291,8 +342,18 @@ export default function Layout() {
         onDone={() => { dismissUpgradeNotice(); setUpgradedFrom(null); }}
       />
 
-      {/* ── One-time tour for the bank-sync update ── */}
-      <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
+      {/* ── First-run welcome, once per account ── */}
+      <WelcomeModal open={showWelcome === true} onFinish={finishWelcome} />
+
+      {/* ── One-time tour for the bank-sync update ──
+          Held back until the welcome has been resolved, so a brand-new account is never
+          shown two stacked tours. finishWelcome also retires this one: the welcome already
+          covers sync, and following an introduction with "what's new" makes no sense to
+          someone for whom all of it is new. */}
+      <WhatsNewModal
+        open={whatsNewOpen && showWelcome === false}
+        onClose={() => setWhatsNewOpen(false)}
+      />
 
       {/* ── Log transaction bottom sheet ── */}
       <LogTransaction

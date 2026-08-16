@@ -3,6 +3,7 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env'
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const authRoutes = require('./routes/authRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const bankConnectionRoutes = require('./routes/bankConnectionRoutes');
@@ -59,6 +60,7 @@ app.use('/api/auth', authLimiter);
 app.use('/api', apiLimiter);
 app.use('/webhook', webhookLimiter);
 
+app.use('/api', authRoutes);
 app.use('/api', expenseRoutes);
 app.use('/api', bankConnectionRoutes);
 app.use('/webhook', webhookRoutes);

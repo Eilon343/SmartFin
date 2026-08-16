@@ -26,11 +26,12 @@ DELETE FROM users         WHERE user_id = @test_uid;
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ── 1. Test User ─────────────────────────────────────────────
-INSERT INTO users (user_id, username, pin_hash, google_email)
+-- password_hash is bcrypt for 'seedpass123'. Sign in at /login with the email below.
+INSERT INTO users (user_id, username, password_hash, email)
 VALUES (
     @test_uid,
     'Seed Tester',
-    '$2b$10$x3G9b8hPqK1mRnT2wLvDc.fakeHashForTestingOnly',
+    '$2b$12$Leyr1MUZEaZ/gvD0HV0GtuIRZQcbm5sdINUqAE4SUS0PeMoa.eUmi',
     'seed@smartfin.test'
 );
 

@@ -90,6 +90,22 @@ export function AuthProvider({ children }) {
   const [autoChecking, setAutoChecking] = useState(() => !isIOSStandalone && !getStoredToken());
   const user = token ? decodeJwt(token) : null;
 
+  // Email + password. Both land on the same account as Google sign-in when the address
+  // matches, because the server keys identity off a single UNIQUE email column.
+  const signup = useCallback(async (email, password, name) => {
+    const { data } = await api.post('/auth/signup', { email, password, name });
+    setStoredToken(data.token);
+    setToken(data.token);
+    setAutoChecking(false);
+  }, []);
+
+  const login = useCallback(async (email, password) => {
+    const { data } = await api.post('/auth/login', { email, password });
+    setStoredToken(data.token);
+    setToken(data.token);
+    setAutoChecking(false);
+  }, []);
+
   const googleLogin = useCallback(async (idToken) => {
     const { data } = await api.post('/auth/google', { id_token: idToken });
     const gUser = decodeJwt(idToken);
@@ -114,7 +130,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ token, user, googleProfile, googleLogin, logout, isAuthenticated: !!token, autoChecking, finishAutoCheck }}>
+    <AuthContext.Provider value={{ token, user, googleProfile, signup, login, googleLogin, logout, isAuthenticated: !!token, autoChecking, finishAutoCheck }}>
       {children}
     </AuthContext.Provider>
   );

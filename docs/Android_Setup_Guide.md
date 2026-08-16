@@ -11,7 +11,8 @@ Everything you need to get SmartFin running on Android: installing the app, conn
 3. Chrome will show a banner: **"Add SmartFin to Home screen"** or **"Install app"** — tap it.
    - If no banner appears, tap the **⋮ menu** (top-right) → **Install app**.
 4. Confirm the installation. SmartFin will appear in your App Drawer and Home screen, launching in full-screen like a native app.
-5. Open the app and sign in with your **Google Account**.
+5. Open the app and either **create an account** with your email and a password, or sign in
+   with your **Google Account** — both reach the same account if the email matches.
 
 ---
 
@@ -19,13 +20,14 @@ Everything you need to get SmartFin running on Android: installing the app, conn
 
 The bot is your quick way to log expenses without opening the dashboard.
 
-1. Open **Telegram** and search for `@smartfin110800bot`.
-2. Tap **Start**.
-3. Link your Telegram account to your SmartFin profile by sending:
+1. In the SmartFin app, go to **Settings → Telegram bot** and tap **Generate code**.
+2. Open **Telegram** and search for `@smartfin110800bot`.
+3. Tap **Start**.
+4. Send the code you were given:
    ```
-   /link_google your_email@gmail.com
+   /link ABCD1234
    ```
-   Use the same email you registered with in the app.
+   The code is single-use and expires after 10 minutes — generate a fresh one if it lapses.
 
 ---
 

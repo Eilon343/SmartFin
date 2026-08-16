@@ -8,7 +8,10 @@
  * re-open a tour everyone has already read. Bump it only when there is genuinely
  * something new to show.
  */
-export const WHATS_NEW_VERSION = '1.2.0';  // unchanged: 1.2.1 adds no new feature to tour
+// Unchanged through 1.3.0. The auth overhaul needs no tour — a sign-in screen explains
+// itself — and the first-run welcome is a separate, per-account tour. Bumping this would
+// re-open the bank-sync tour for everyone who has already read it.
+export const WHATS_NEW_VERSION = '1.2.0';
 
 const STORAGE_KEY = 'sf_seen_whatsnew';
 

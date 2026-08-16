@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { redeemLinkCode } = require('../services/telegramLink');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -204,21 +205,24 @@ const HELP_TEXT =
     `Food · Transport · Shopping · Housing · Entertainment · Utilities · Health · Other\n\n` +
     `*Commands:*\n` +
     `/help — show this message\n` +
-    `/start — show this message\n\n` +
+    `/start — show this message\n` +
+    `/link <code> — connect this chat to your SmartFin account\n\n` +
     `_All expenses appear in your SmartFin dashboard._`;
 
 exports.handleTelegram = async (req, res) => {
     // Telegram echoes the secret_token given to setWebhook on every delivery. Without
     // this check the endpoint is an open door: the update body carries the chat id, so a
-    // forged POST can log expenses into any account and — via /link_google — attach a
-    // stranger's SmartFin account to the attacker's Telegram chat.
+    // forged POST can log expenses into any account that has already linked its chat.
     //
     // Fails CLOSED. This used to enforce only when a secret was configured, so an
     // unconfigured deployment accepted anything — and "unconfigured" is the default,
     // because the bot long-polls and most deployments never register a webhook at all.
     // An endpoint that is usually unused but always open is the worst combination: no
-    // one notices it, and reaching it is enough to log expenses into any account or,
-    // via /link_google, attach someone else's SmartFin account to an attacker's chat.
+    // one notices it, and reaching it is enough to log expenses into a stranger's account.
+    //
+    // Account *takeover* through this endpoint is closed separately: linking now requires a
+    // code issued to an authenticated web session, so a forged update cannot bind a chat to
+    // an account it does not already own.
     //
     // Refusing when unset costs nothing in the default configuration and closes the door
     // in the one that matters.
@@ -254,35 +258,31 @@ exports.handleTelegram = async (req, res) => {
 };
 
 async function handleTelegramMessage(chatId, text) {
-    // Handle /link_google before user lookup
-    const linkMatch = text.match(/^\/link_google\s+(\S+)$/i);
+    // /link <code> is the ONLY pre-auth command, and it proves nothing by itself — the code
+    // was issued to an already-authenticated web session, so redeeming it links this chat to
+    // the account that asked for it and to no other.
+    //
+    // It replaces /link_google <email>, which took an email on the sender's word. That let
+    // any Telegram user bind their chat to any account whose telegram_chat_id was still NULL
+    // (every Google-only account), and let an attacker pre-claim an address so the real
+    // owner's later Google sign-in landed in the attacker's row.
+    const linkMatch = text.match(/^\/link(?:\s+(\S+))?$/i);
     if (linkMatch) {
-        const email = linkMatch[1].toLowerCase();
-        const [rows] = await db.query(
-            'SELECT user_id, telegram_chat_id FROM users WHERE google_email = ?',
-            [email]
-        );
-        if (rows.length > 0) {
-            const user = rows[0];
-            if (user.telegram_chat_id && user.telegram_chat_id !== chatId) {
-                await sendTelegramMessage(chatId, `❌ That email is already linked to a different Telegram account.`);
-                return;
-            }
-            // Guard: this Telegram account already linked to a different email
-            const [chatRows] = await db.query('SELECT user_id FROM users WHERE telegram_chat_id = ?', [chatId]);
-            if (chatRows.length > 0 && String(chatRows[0].user_id) !== String(user.user_id)) {
-                await sendTelegramMessage(chatId, `❌ This Telegram account is already linked to another email.`);
-                return;
-            }
-            await db.query('UPDATE users SET telegram_chat_id = ? WHERE user_id = ?', [chatId, user.user_id]);
-        } else {
-            // New user — Telegram chat ID becomes their user_id
-            await db.query(
-                'INSERT INTO users (user_id, google_email, telegram_chat_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE google_email = VALUES(google_email), telegram_chat_id = VALUES(telegram_chat_id)',
-                [chatId, email, chatId]
+        const code = linkMatch[1];
+        if (!code) {
+            await sendTelegramMessage(chatId,
+                `Usage: \`/link <code>\`\n\nGet your code from SmartFin → Settings → Telegram bot.`
             );
+            return;
         }
-        await sendTelegramMessage(chatId, `✅ Linked! Your Telegram is now connected to *${email}*. Start logging expenses anytime.`);
+        const result = await redeemLinkCode(code, chatId);
+        if (result.ok) {
+            await sendTelegramMessage(chatId, `✅ Linked! Start logging expenses anytime.`);
+        } else if (result.reason === 'chat_taken') {
+            await sendTelegramMessage(chatId, `❌ This Telegram account is already linked to a different SmartFin account.`);
+        } else {
+            await sendTelegramMessage(chatId, `❌ That code is invalid, expired or already used. Generate a new one in SmartFin → Settings → Telegram bot.`);
+        }
         return;
     }
 
@@ -293,7 +293,8 @@ async function handleTelegramMessage(chatId, text) {
     );
     if (userRows.length === 0) {
         await sendTelegramMessage(chatId,
-            `👋 Welcome to SmartFin Bot!\n\nLink your account first:\n\`/link_google your@email.com\`\n\nUse the same email you signed in with.`
+            `👋 Welcome to SmartFin Bot!\n\nSign in at the SmartFin web app, then open ` +
+            `*Settings → Telegram bot* and tap "Generate code".\n\nSend it here as \`/link <code>\`.`
         );
         return;
     }

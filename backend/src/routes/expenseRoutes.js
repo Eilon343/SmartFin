@@ -2,14 +2,12 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
 const expenseController = require('../controllers/expenseController');
-const authController = require('../controllers/authController');
 const incomeController = require('../controllers/incomeController');
 const savingsController = require('../controllers/savingsController');
 const insightsController = require('../controllers/insightsController');
 const cleanupController = require('../controllers/cleanupController');
 
-router.post('/auth/login', authController.login);
-router.post('/auth/google', authController.googleLogin);
+// Auth routes moved to routes/authRoutes.js.
 
 router.get('/expenses', auth, expenseController.getAllExpenses);
 router.post('/expenses', auth, expenseController.addExpense);

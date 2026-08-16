@@ -35,6 +35,9 @@ def _make_state() -> MagicMock:
     return state
 
 
+LINKED_USER_ID = 10000000000007
+
+
 def _make_db(
     *,
     user_exists: bool = True,
@@ -44,8 +47,10 @@ def _make_db(
     dynamic_context: dict | None = None,
 ) -> MagicMock:
     db = AsyncMock()
-    db.user_exists = AsyncMock(return_value=user_exists)
-    db.ensure_user = AsyncMock()
+    # The bot resolves a chat to its linked account. LINKED_USER_ID is deliberately not the
+    # chat id: for an app-origin account the two differ, and financial queries must use the
+    # account's id.
+    db.get_user_id_by_chat_id = AsyncMock(return_value=LINKED_USER_ID if user_exists else None)
     db.get_user_categories = AsyncMock(return_value=categories or ["Food", "Transport", "Shopping", "Entertainment", "Other"])
     db.get_category_budget = AsyncMock(return_value=budget)
     db.get_category_spending = AsyncMock(return_value=spending)
@@ -474,7 +479,7 @@ class TestHandlerFinancialAdviceHappyPath:
             await _invoke_handle_text(h, message, state, db)
 
         db.get_dynamic_financial_context.assert_called_once_with(
-            message.from_user.id, "last_3_months", "Shopping"
+            LINKED_USER_ID, "last_3_months", "Shopping"
         )
 
     @pytest.mark.asyncio
@@ -518,7 +523,7 @@ class TestHandlerFinancialAdviceHappyPath:
             await _invoke_handle_text(h, message, state, db)
 
         db.get_dynamic_financial_context.assert_called_once_with(
-            message.from_user.id, "current_month", None
+            LINKED_USER_ID, "current_month", None
         )
 
 

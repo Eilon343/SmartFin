@@ -111,8 +111,8 @@ body {
 .container { max-width: 1320px; margin: 0 auto; padding: 28px 32px 120px; }
 
 /* login google button */
-.google-btn:hover { background: #252839 !important; border-color: #3a3f55 !important; }
-.google-btn:active { background: #1a1d2a !important; }
+.google-btn:hover { background: var(--hover-bg-2) !important; border-color: var(--line-2) !important; }
+.google-btn:active { background: var(--hover-bg) !important; }
 /* google overlay: opacity 0.01 (not 0) so Chrome forwards pointer events to the iframe */
 .google-overlay { position: absolute; inset: 0; opacity: 0.01; cursor: pointer; overflow: hidden; border-radius: 12px; }
 .google-overlay > div { width: 100% !important; height: 100% !important; }
@@ -235,11 +235,26 @@ body {
   .modal { padding: 18px 16px; border-radius: 16px; }
 }
 
-/* ── What's-new tour ── */
+/* ── Tours (what's-new + first-run welcome) ── */
 /* Reserve body height only on screens wide enough to spare it, so the footer stays put
    between pages on desktop without pushing itself off a short phone. */
 @media (min-width: 481px) {
   .whatsnew-body { min-height: 112px; }
+}
+
+/* Page transition. The panel is re-keyed per page so it remounts and replays this; the
+   direction follows the way the reader is moving, which is what makes a swipe feel like
+   it dragged the page rather than merely triggered one. */
+.tour-panel-next { animation: tourNext .22s ease-out; }
+.tour-panel-prev { animation: tourPrev .22s ease-out; }
+@keyframes tourNext { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes tourPrev { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: translateX(0); } }
+/* Mirror it under RTL so "forward" still animates in from the leading edge. */
+[dir="rtl"] .tour-panel-next { animation-name: tourPrev; }
+[dir="rtl"] .tour-panel-prev { animation-name: tourNext; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-panel-next, .tour-panel-prev { animation: none; }
 }
 @media (max-width: 480px) {
   /* Dots and buttons stop competing for one line: dots left, actions full-width below. */
