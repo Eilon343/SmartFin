@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS expenses (
     category_id INT,
     source      ENUM('bot', 'apple_pay', 'manual', 'web', 'bank_sync') DEFAULT 'bot',
     is_virtual  BOOLEAN NOT NULL DEFAULT FALSE,
+    goal_id     INT NULL,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_expenses_goal_id (goal_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     FOREIGN KEY (category_id) REFERENCES categories(category_id)
 );
@@ -71,6 +73,30 @@ CREATE TABLE IF NOT EXISTS income (
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
+
+-- Archive tables for duplicate cleanup (migration 008).
+-- Cleanup moves a hand-logged row here instead of deleting it, so the pass is undoable
+-- for RESTORE_WINDOW_DAYS. Defined with LIKE so they track their source table's columns.
+-- No foreign keys: the archive must outlive whatever it references.
+-- MySQL 8 has no ADD COLUMN IF NOT EXISTS; init.sql only ever runs against a fresh
+-- volume, where the LIKE above just created the table, so a plain ALTER is correct here.
+-- Existing databases get the same shape from migrate_008, which guards on
+-- INFORMATION_SCHEMA instead.
+CREATE TABLE IF NOT EXISTS deleted_expenses LIKE expenses;
+ALTER TABLE deleted_expenses
+    ADD COLUMN deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN batch_id CHAR(36) NOT NULL,
+    ADD COLUMN matched_row_id INT NULL,
+    ADD INDEX idx_del_exp_user (user_id, deleted_at),
+    ADD INDEX idx_del_exp_batch (batch_id);
+
+CREATE TABLE IF NOT EXISTS deleted_income LIKE income;
+ALTER TABLE deleted_income
+    ADD COLUMN deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN batch_id CHAR(36) NOT NULL,
+    ADD COLUMN matched_row_id INT NULL,
+    ADD INDEX idx_del_inc_user (user_id, deleted_at),
+    ADD INDEX idx_del_inc_batch (batch_id);
 
 CREATE TABLE IF NOT EXISTS savings_goals (
     goal_id            INT PRIMARY KEY AUTO_INCREMENT,

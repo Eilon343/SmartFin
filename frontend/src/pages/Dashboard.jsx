@@ -406,7 +406,7 @@ function SubscriptionsMini({ subs, onTogglePause }) {
           <h3 className="h2">{t('nav_subscriptions')}</h3>
           <span className="muted" style={{ fontSize: 12 }}>{activeSubs.length} {t('dash_active_mo')}</span>
         </div>
-        <span className="chip idg"><Icon name="repeat" size={11} /> ₪{fmt(total, 0)}{t('dash_mo')}</span>
+        <span className="chip idg"><Icon name="repeat" size={11} /> {fmt(total, 0)}{t('dash_mo')}</span>
       </div>
       <div style={{ flex: 1 }}>
         {subs.slice(0, 5).map(s => (

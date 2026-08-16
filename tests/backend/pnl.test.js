@@ -45,13 +45,14 @@ describe('GET /api/pnl - response shape', () => {
 // ── current_net_pnl math ──────────────────────────────────────────────────────
 
 describe('GET /api/pnl - current_net_pnl is always based on actual data', () => {
-    it('computes: fixed + variable_actual - expenses - subs - savings', async () => {
-        // 5000 + 500 - 1000 - 200 - 300 = 4000
+    it('computes: fixed + variable_actual - expenses - savings, excluding subs', async () => {
+        // Subscriptions are money still ahead of us, not money that has moved, so they
+        // stay out of current_net_pnl: 5000 + 500 - 1000 - 300 = 4200.
         mockPnL({ fixedIncome: '5000', variableActual: '500', expenses: '1000', subscriptions: '200', savings: '300' });
 
         const res = await request(app).get('/api/pnl').set(authHeader());
 
-        expect(res.body.current_net_pnl).toBe(4000);
+        expect(res.body.current_net_pnl).toBe(4200);
         expect(res.body.total_income_actual).toBe(5500);
     });
 
@@ -192,5 +193,64 @@ describe('GET /api/pnl - validation', () => {
     it('requires auth', async () => {
         const res = await request(app).get('/api/pnl');
         expect(res.status).toBe(401);
+    });
+});
+
+// ── subscriptions are a forecast, not a second record of the same money ───────
+
+describe('GET /api/pnl - subscription double-counting', () => {
+    /**
+     * Bank/card sync imports the real subscription charge into `expenses`. Counting the
+     * `subscriptions` row on top subtracted the same money twice, understating P&L by
+     * the full subscription bill every month.
+     */
+    // The billing-day gate lives in SQL because it compares against the DB's CURDATE(),
+    // which a mocked pool cannot evaluate. Asserting the clause is the only way to pin
+    // the rule from here; the arithmetic it feeds is covered behaviourally below.
+    it('gates subscriptions on the billing day, per month direction', async () => {
+        db.query.mockResolvedValueOnce([[{ user_id: TEST_USER.user_id }]]);
+        db.query.mockResolvedValue([[{ total: '0', months_with_data: '0' }]]);
+
+        await request(app).get('/api/pnl').set(authHeader());
+
+        const subQuery = db.query.mock.calls
+            .map(([sql]) => sql)
+            .find((sql) => /FROM subscriptions/i.test(sql));
+
+        // future month → all subs; current month → only days still ahead; past → none.
+        expect(subQuery).toContain("? > DATE_FORMAT(CURDATE(), '%Y-%m')");
+        expect(subQuery).toContain('day_of_month > DAY(CURDATE())');
+    });
+
+    it('keeps an upcoming subscription out of current_net_pnl', async () => {
+        // It has not been paid yet, so it cannot reduce where the user stands today.
+        mockPnL({ fixedIncome: '10000', expenses: '2000', subscriptions: '91' });
+
+        const res = await request(app).get('/api/pnl').set(authHeader());
+
+        expect(res.body.subscription_total).toBe(91);
+        expect(res.body.current_net_pnl).toBe(10000 - 2000);
+    });
+
+    it('subtracts an upcoming subscription exactly once, in the forecast', async () => {
+        // as_of_day pins the forecast to actuals, so the only gap between the two
+        // figures is the subscription itself — subtracted once, and only here.
+        mockPnL({ fixedIncome: '10000', expenses: '2000', subscriptions: '91' });
+
+        const res = await request(app).get('/api/pnl?as_of_day=15').set(authHeader());
+
+        // Absolute figures move with the MTD income pro-rate; the gap between them
+        // is what this test pins.
+        expect(res.body.forecasted_net_pnl).toBe(res.body.current_net_pnl - 91);
+    });
+
+    it('is not pro-rated by the MTD clamp', async () => {
+        // Already forward-only, so halving it for a half-elapsed month would understate
+        // what is still to be paid.
+        mockPnL({ fixedIncome: '10000', expenses: '2000', subscriptions: '91' });
+
+        const res = await request(app).get('/api/pnl?as_of_day=15').set(authHeader());
+
+        expect(res.body.subscription_total).toBe(91);
     });
 });

@@ -80,10 +80,17 @@ function classifyRow(row, connectedCardIssuers = new Set()) {
 }
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// How often the scheduler CHECKS whether anything is due — not how often a bank is
+// scraped. Most ticks find nothing and cost one indexed query.
 const SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const DRAIN_INTERVAL_MS = 60 * 1000; // 1 minute
 const DRAIN_BATCH_SIZE = 40; // categorized in a single Gemini call, so this is 1 request per tick
-const RESYNC_AFTER_MS = 24 * 60 * 60 * 1000; // nightly cadence
+// How stale an active connection must be before it is scraped again — the actual sync
+// cadence. Measured from the last SUCCESS, so it is a rolling 24h rather than a fixed
+// hour: a connection first synced at 14:42 comes due around 14:42 each day, drifting
+// slightly later as each scrape takes time. Not "overnight" — that would need a
+// scheduled hour rather than an interval.
+const RESYNC_AFTER_MS = 24 * 60 * 60 * 1000;
 const FIRST_SYNC_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000; // 3 months
 const INCREMENTAL_OVERLAP_MS = 3 * 24 * 60 * 60 * 1000; // 3 days, late-settling txns
 const RETRY_ERRORED_AFTER_MS = 60 * 60 * 1000; // a transient scrape failure gets another go in an hour
@@ -168,7 +175,7 @@ const DRAIN_QUERY =
  * 'error' connections MUST be included — a bank timeout is transient, and the failure
  * notification tells the user the next scheduled sync will try again. Excluding them
  * (the original behaviour) meant one blip stopped a connection permanently, until the
- * user happened to press Sync now. They retry on a shorter backoff than the nightly
+ * user happened to press Sync now. They retry on a shorter backoff than the 24h
  * cadence, paced by last_attempt_at so a persistently failing bank is not hammered.
  *
  * 'invalid_credentials' is deliberately absent: retrying a password the bank already

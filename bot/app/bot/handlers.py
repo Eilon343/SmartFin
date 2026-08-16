@@ -707,86 +707,25 @@ def register_handlers(dp: Dispatcher, db_manager):
             await message.reply("❌ Failed to link account. Try again.")
 
     # --- /clean_dupes ---
-    # Once bank and card sync is connected it imports the same purchases you logged by
-    # hand — through Apple Pay, the bot, or the web app. This removes only the ones that
-    # provably arrived twice, and never touches spending nothing else recorded (cash,
-    # Bit, PayBox, a card that isn't connected).
+    # Cleanup itself lives in the web app (Settings → Duplicate cleanup). Two reasons it
+    # is not run from here:
+    #   1. Chat is the wrong surface for approving a hundred irreversible deletions. The
+    #      web screen shows each hand-logged row beside the imported transaction that
+    #      covers it, with a checkbox, so the user approves pairs rather than a number.
+    #   2. This handler resolves the user by Telegram chat id, so it silently does
+    #      nothing for a web-origin account — exactly the users who most need it.
+    # The command is kept because it is documented and users will still type it.
     @dp.message(Command("clean_dupes", "clean_applepay"))
     async def handle_clean_dupes(message: types.Message):
-        if not await _auth(message.from_user.id, db_manager):
-            await message.reply(
-                "Link your Google account first:\n`/link_google your@email.com`",
-                parse_mode="Markdown",
-            )
-            return
-
-        arg = message.text.split(maxsplit=1)[1].strip().lower() if len(message.text.split()) > 1 else ""
-        summary = await db_manager.get_duplicate_cleanup_summary(message.from_user.id)
-
-        if summary["total_count"] == 0:
-            await message.reply("✅ You have no hand-logged expenses — nothing to clean.")
-            return
-
-        if arg == "confirm":
-            if summary["matched_count"] == 0:
-                await message.reply("Nothing is safe to delete yet — run /clean\\_dupes to see why.", parse_mode="Markdown")
-                return
-            deleted = await db_manager.delete_duplicate_expenses(message.from_user.id)
-            if deleted < 0:
-                await message.reply("❌ Something went wrong deleting them. Nothing was changed.")
-                return
-            await message.reply(
-                f"🧹 *Deleted {deleted} duplicate{'' if deleted == 1 else 's'}*\n\n"
-                f"{summary['unmatched_count']} hand-logged expense"
-                f"{'' if summary['unmatched_count'] == 1 else 's'} kept — nothing else recorded those.\n\n"
-                "Your categories were copied onto the imported transactions, and your bank "
-                "and cards keep importing everything automatically from now on.",
-                parse_mode="Markdown",
-            )
-            return
-
-        # No argument — show what would happen. Never delete without confirmation.
-        lines = [
-            "🧾 *Duplicate cleanup*\n",
-            f"You have *{summary['total_count']}* hand-logged expenses "
-            f"totalling *₪{summary['total_amount']:,.2f}*.\n",
-        ]
-
-        if summary["matched_count"] > 0:
-            breakdown = ", ".join(
-                f"{n} {src.replace('_', ' ')}" for src, n in sorted(summary["matched_by_source"].items())
-            )
-            lines.append(
-                f"✅ *{summary['matched_count']}* of them (*₪{summary['matched_amount']:,.2f}*) "
-                "match a transaction your bank or card already imported — same amount, "
-                f"within a few days.\n_{breakdown}_\n"
-            )
-        else:
-            lines.append(
-                "⚠️ *None* of them match a transaction from your bank or cards. Either the "
-                "accounts aren't connected yet, or none of this spending went through them.\n"
-            )
-
-        if summary["unmatched_count"] > 0:
-            lines.append(
-                f"🛑 *{summary['unmatched_count']}* (*₪{summary['unmatched_amount']:,.2f}*) have "
-                "*no* counterpart and will be kept — cash, Bit and PayBox never reach a bank "
-                "or card feed. Examples:"
-            )
-            for row in summary["unmatched"][:5]:
-                desc = (row["description"] or "no description")[:28]
-                lines.append(f"  • {row['date']} ₪{row['amount']:,.2f} — {desc}")
-            if summary["unmatched_count"] > 5:
-                lines.append(f"  • …and {summary['unmatched_count'] - 5} more")
-            lines.append("")
-
-        if summary["matched_count"] > 0:
-            lines.append(
-                f"*/clean\\_dupes confirm* — delete the {summary['matched_count']} duplicates"
-            )
-            lines.append("\n_Your categories are copied over first. This cannot be undone._")
-
-        await message.reply("\n".join(lines), parse_mode="Markdown")
+        await message.reply(
+            "🧾 *Duplicate cleanup has moved to the web app.*\n\n"
+            "Open *Settings → Duplicate cleanup*. You'll see every expense you logged by "
+            "hand next to the bank or card transaction that now covers it, and you choose "
+            "what goes.\n\n"
+            "Anything with no match — cash, Bit, PayBox — is kept automatically, and "
+            "whatever you do remove can be restored for 30 days.",
+            parse_mode="Markdown",
+        )
     # --- /start ---
     @dp.message(Command("start"))
     async def handle_start(message: types.Message):

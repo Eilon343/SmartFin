@@ -513,7 +513,7 @@ export default function Expenses() {
           <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 20 }}>
             {t('inc_del_confirm')}{' '}
             <strong style={{ color: 'var(--text-0)' }} dir="ltr">
-              {t(deleteTarget?.description) || deleteTarget?.description || `₪${fmt(deleteTarget?.amount ?? 0)}`}
+              {t(deleteTarget?.description) || deleteTarget?.description || fmt(deleteTarget?.amount ?? 0)}
             </strong>{' '}
             {t('dash_from')} {deleteTarget?.created_at ? new Date(deleteTarget.created_at).toLocaleDateString('he-IL') : ''}?
           </p>

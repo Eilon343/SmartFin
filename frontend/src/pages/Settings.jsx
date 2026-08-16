@@ -6,6 +6,7 @@ import Icon from '../components/ui/Icon';
 import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
+import DuplicateCleanupCard from '../components/DuplicateCleanupCard';
 import api from '../api/client';
 
 function ThemeToggle() {
@@ -106,6 +107,63 @@ function statusColor(status) {
   return 'var(--rose)';
 }
 
+/**
+ * Explains a failed sync in terms of what the user can do about it.
+ *
+ * The bare status word was all this screen used to show. "Error" is indistinguishable
+ * from a bank outage, and hides the fact that some failures never clear on their own —
+ * a mistyped username retries hourly forever, spending a real login attempt each time.
+ * So each failure states the cause, whether it will retry by itself, and the fix.
+ *
+ * The raw scraper message is kept behind a disclosure: useless to most people, but the
+ * first thing you want when something unmapped goes wrong.
+ */
+function SyncFailureNotice({ failure }) {
+  const { t } = useI18n();
+  if (!failure) return null;
+
+  // A failure nothing will retry needs the user now, so it is coloured as such.
+  const urgent = !failure.retrying;
+
+  return (
+    <div
+      className="stack"
+      style={{
+        gap: 6, marginTop: 10, padding: '10px 12px', borderRadius: 8,
+        background: 'var(--hover-bg-2)',
+        borderInlineStart: `3px solid ${urgent ? 'var(--rose)' : 'var(--amber)'}`,
+      }}
+    >
+      <span style={{ fontSize: 12.5, fontWeight: 500 }}>
+        {t(`settings_bank_fail_${failure.code}`)}
+      </span>
+      <span className="muted-2" style={{ fontSize: 12 }}>
+        {t(`settings_bank_fix_${failure.code}`)}
+      </span>
+      <span className="muted-2" style={{ fontSize: 11.5, opacity: 0.8 }}>
+        {failure.retrying ? t('settings_bank_fail_will_retry') : t('settings_bank_fail_no_retry')}
+      </span>
+      {failure.detail && (
+        <details style={{ fontSize: 11.5 }}>
+          <summary className="muted-2" style={{ cursor: 'pointer' }}>
+            {t('settings_bank_fail_details')}
+          </summary>
+          <code
+            dir="ltr"
+            style={{
+              display: 'block', marginTop: 6, padding: 8, borderRadius: 6,
+              background: 'var(--input-bg)', color: 'var(--text-1)',
+              fontSize: 11, lineHeight: 1.5, wordBreak: 'break-all', whiteSpace: 'pre-wrap',
+            }}
+          >
+            {failure.detail}
+          </code>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function BankSyncCard() {
   const { t } = useI18n();
   const [connections, setConnections] = useState([]);
@@ -167,21 +225,24 @@ function BankSyncCard() {
       )}
 
       {connections.map(c => (
-        <div key={c.id} className="between" style={{ padding: '12px 0', borderTop: '1px solid var(--line)' }}>
-          <div className="stack">
-            <span style={{ fontWeight: 500, fontSize: 14 }}>{c.display_name || c.company_id}</span>
-            <span className="muted-2" style={{ fontSize: 12 }}>
-              <span style={{ color: statusColor(c.status) }}>{t(`settings_bank_status_${c.status}`)}</span>
-              {' · '}
-              {t('settings_bank_last_sync')}: {c.last_sync_at ? new Date(c.last_sync_at).toLocaleString() : t('settings_bank_last_sync_never')}
-            </span>
+        <div key={c.id} style={{ padding: '12px 0', borderTop: '1px solid var(--line)' }}>
+          <div className="between">
+            <div className="stack">
+              <span style={{ fontWeight: 500, fontSize: 14 }}>{c.display_name || c.company_id}</span>
+              <span className="muted-2" style={{ fontSize: 12 }}>
+                <span style={{ color: statusColor(c.status) }}>{t(`settings_bank_status_${c.status}`)}</span>
+                {' · '}
+                {t('settings_bank_last_sync')}: {c.last_sync_at ? new Date(c.last_sync_at).toLocaleString() : t('settings_bank_last_sync_never')}
+              </span>
+            </div>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn" onClick={() => syncNow(c.id)}>{t('settings_bank_sync_now')}</button>
+              <button className="btn" style={{ color: 'var(--rose)', borderColor: 'var(--rose-soft)' }} onClick={() => disconnect(c.id)}>
+                {t('settings_bank_disconnect')}
+              </button>
+            </div>
           </div>
-          <div className="row" style={{ gap: 8 }}>
-            <button className="btn" onClick={() => syncNow(c.id)}>{t('settings_bank_sync_now')}</button>
-            <button className="btn" style={{ color: 'var(--rose)', borderColor: 'var(--rose-soft)' }} onClick={() => disconnect(c.id)}>
-              {t('settings_bank_disconnect')}
-            </button>
-          </div>
+          <SyncFailureNotice failure={c.failure} />
         </div>
       ))}
 
@@ -271,6 +332,8 @@ export default function Settings() {
       </div>
 
       <BankSyncCard />
+
+      <DuplicateCleanupCard />
 
       <div className="card card-pad-lg">
         <h3 className="h2" style={{ marginBottom: 4 }}>{t('settings_account')}</h3>

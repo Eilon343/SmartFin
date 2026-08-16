@@ -191,6 +191,31 @@ class DatabaseManager:
             logging.error(f"delete_subscription error: {e}")
             return False
 
+    async def has_active_bank_sync(self, user_id: int) -> bool:
+        """True when this user has a bank or card connection that imports transactions.
+
+        Used to decide whether generated subscription rows are still needed: once sync
+        is running it imports the real charge, so generating one would double-count.
+        """
+        try:
+            pool = await self.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        # 'error' counts as active: bankSyncScheduler retries errored
+                        # connections hourly, so the real charge still arrives. Only
+                        # 'invalid_credentials' and 'disabled' never auto-retry.
+                        "SELECT 1 FROM bank_connections "
+                        "WHERE user_id = %s AND status IN ('active', 'pending_first_sync', 'error') LIMIT 1",
+                        (user_id,),
+                    )
+                    return await cur.fetchone() is not None
+        except Exception as e:
+            # On error keep the old behaviour and record the subscription. That risks a
+            # duplicate the user can delete, rather than a silently missing expense.
+            logging.error(f"has_active_bank_sync error: {e}")
+            return False
+
     async def get_due_subscriptions(self, today_day: int, current_month: str) -> list[dict]:
         """Active subs whose day_of_month <= today and not yet charged for current_month."""
         pool = await self.get_pool()
@@ -537,138 +562,12 @@ class DatabaseManager:
             logging.error(f"add_expense error: {e}")
             return False
 
-    # How far apart a hand-logged expense and the same purchase from the issuer may sit.
-    # You log at the moment of payment; banks and card issuers post one to a few days later.
-    DUPLICATE_MATCH_WINDOW_DAYS = 5
-
-    # Everything a person entered themselves. Bank/card sync now imports these purchases
-    # on its own, so any of them can end up duplicated once a connection exists.
-    USER_ENTERED_SOURCES = ("apple_pay", "bot", "manual", "web")
-
-    async def _match_user_entered_expenses(self, user_id: int) -> tuple[list, list]:
-        """Pairs hand-logged expenses with the synced transaction that now covers them.
-
-        A date range is NOT enough to decide what is a duplicate. Plenty of hand-logged
-        spending never reaches a bank or card feed at all — cash, Bit, PayBox, a card
-        that isn't connected. Deleting by date would erase those permanently. So a row
-        counts as a duplicate only when a real synced transaction with the same amount
-        sits within a few days of it.
-
-        Matching is one-to-one: each synced transaction can absorb only one hand-logged
-        row, so two ₪19.90 coffees still need two counterparts to both be removed.
-
-        Returns (matched, unmatched) lists of dicts.
-        """
-        placeholders = ", ".join(["%s"] * len(self.USER_ENTERED_SOURCES))
-        pool = await self.get_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    f"SELECT expense_id, amount, DATE(created_at), description, source, category_id "
-                    f"FROM expenses WHERE user_id = %s AND source IN ({placeholders}) "
-                    f"AND is_virtual = FALSE ORDER BY created_at",
-                    (user_id, *self.USER_ENTERED_SOURCES),
-                )
-                logged_rows = await cur.fetchall()
-
-                # Only transactions that actually became an expense are candidates.
-                # Skipped credit-card settlements have no expense_id and must not count
-                # as a counterpart — they are a lump bill, not the purchase.
-                await cur.execute(
-                    "SELECT t.expense_id, e.amount, t.txn_date "
-                    "FROM bank_transactions_raw t "
-                    "JOIN expenses e ON e.expense_id = t.expense_id "
-                    "WHERE t.user_id = %s AND t.import_status = 'imported' "
-                    "AND t.expense_id IS NOT NULL",
-                    (user_id,),
-                )
-                synced_rows = await cur.fetchall()
-
-        candidates = [
-            {"expense_id": r[0], "amount": float(r[1]), "date": r[2], "taken": False}
-            for r in synced_rows
-        ]
-        matched, unmatched = [], []
-
-        for expense_id, amount, created_date, description, source, category_id in logged_rows:
-            entry = {
-                "expense_id": expense_id,
-                "amount": float(amount),
-                "date": created_date,
-                "description": description,
-                "source": source,
-                "category_id": category_id,
-            }
-            hit = next(
-                (
-                    c
-                    for c in candidates
-                    if not c["taken"]
-                    and abs(c["amount"] - entry["amount"]) < 0.005
-                    and abs((c["date"] - created_date).days) <= self.DUPLICATE_MATCH_WINDOW_DAYS
-                ),
-                None,
-            )
-            if hit:
-                hit["taken"] = True
-                entry["synced_expense_id"] = hit["expense_id"]
-                matched.append(entry)
-            else:
-                unmatched.append(entry)
-
-        return matched, unmatched
-
-    async def get_duplicate_cleanup_summary(self, user_id: int) -> dict:
-        """What a cleanup would delete and what it would keep, broken down by source."""
-        matched, unmatched = await self._match_user_entered_expenses(user_id)
-
-        by_source: dict[str, int] = {}
-        for row in matched:
-            by_source[row["source"]] = by_source.get(row["source"], 0) + 1
-
-        return {
-            "total_count": len(matched) + len(unmatched),
-            "total_amount": sum(r["amount"] for r in matched + unmatched),
-            "matched_count": len(matched),
-            "matched_amount": sum(r["amount"] for r in matched),
-            "matched_by_source": by_source,
-            "unmatched": unmatched,
-            "unmatched_count": len(unmatched),
-            "unmatched_amount": sum(r["amount"] for r in unmatched),
-        }
-
-    async def delete_duplicate_expenses(self, user_id: int) -> int:
-        """Deletes hand-logged expenses proven to have a synced counterpart.
-
-        The synced row survives because it carries the issuer's real merchant name, but
-        the category the user chose is copied onto it first whenever the synced row has
-        none — otherwise a cleanup would silently undo months of categorising.
-
-        Returns how many rows were deleted, or -1 on error.
-        """
-        try:
-            matched, _ = await self._match_user_entered_expenses(user_id)
-            if not matched:
-                return 0
-
-            pool = await self.get_pool()
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cur:
-                    for row in matched:
-                        if row["category_id"] is not None:
-                            await cur.execute(
-                                "UPDATE expenses SET category_id = %s "
-                                "WHERE expense_id = %s AND category_id IS NULL",
-                                (row["category_id"], row["synced_expense_id"]),
-                            )
-
-                    ids = [r["expense_id"] for r in matched]
-                    placeholders = ", ".join(["%s"] * len(ids))
-                    await cur.execute(
-                        f"DELETE FROM expenses WHERE user_id = %s AND expense_id IN ({placeholders})",
-                        (user_id, *ids),
-                    )
-                    return cur.rowcount
-        except Exception as e:
-            logging.error(f"delete_duplicate_expenses error: {e}")
-            return -1
+    # Duplicate cleanup lives in the backend now: backend/src/services/duplicateMatcher.js
+    # holds the matching rules and cleanupController.js runs the archive/restore flow.
+    # It was moved so there is one implementation behind the web UI rather than two that
+    # can drift, and so web-origin users are covered too - this pool resolves users by
+    # Telegram chat id and therefore cannot serve them at all.
+    #
+    # cad5b82 fixed the refund sign here (ABS(charged_amount) never matched a negative
+    # reimbursement); that same fix is carried in loadSyncedExpenses(), which joins the
+    # imported expense row and compares its own amount. Nothing was lost in the move.

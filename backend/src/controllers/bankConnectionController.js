@@ -2,6 +2,7 @@ const db = require('../config/db');
 const { encrypt } = require('../utils/cryptoUtil');
 const bankCompanies = require('../config/bankCompanies');
 const { requestSyncNow, isSyncQueued } = require('../services/bankSyncScheduler');
+const { classifySyncFailure } = require('../services/syncFailureClassifier');
 
 exports.listCompanies = (_req, res) => {
     const companies = Object.entries(bankCompanies).map(([id, c]) => ({
@@ -58,7 +59,10 @@ exports.listConnections = async (req, res) => {
              FROM bank_connections WHERE user_id = ? ORDER BY created_at DESC`,
             [req.user.user_id]
         );
-        res.json(rows);
+        // `failure` carries a stable code the UI can explain and translate. The raw
+        // last_sync_error stays alongside it for the technical-details disclosure —
+        // it is a scraper/puppeteer message, never anything the user supplied.
+        res.json(rows.map((row) => ({ ...row, failure: classifySyncFailure(row) })));
     } catch (err) {
         console.error('listConnections error:', err);
         res.status(500).json({ error: 'Failed to list bank connections' });

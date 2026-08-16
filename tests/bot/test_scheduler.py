@@ -111,6 +111,7 @@ class TestChargeDueSubscriptions:
         }])
         db.add_expense = AsyncMock(return_value=True)
         db.mark_subscription_charged = AsyncMock()
+        db.has_active_bank_sync = AsyncMock(return_value=False)
 
         today = date(2026, 4, 15)
         with patch("app.scheduler.date") as mock_date:
@@ -121,11 +122,70 @@ class TestChargeDueSubscriptions:
         db.add_expense.assert_called_once()
         call_kwargs = db.add_expense.call_args[1]
         assert call_kwargs["amount"] == 39.90
-        assert call_kwargs["description"] == "Netflix"
+        assert call_kwargs["description"] == "[Subscription] Netflix"
         assert call_kwargs["source"] == "bot"
 
         db.mark_subscription_charged.assert_called_once_with(1, "2026-04")
         bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_synced_user_gets_no_generated_expense(self):
+        """With a bank/card connected, sync imports the real charge — writing a generated
+        row too would double-count. The sub is still marked charged so the job is
+        idempotent for the month and P&L stops forecasting an already-billed charge."""
+        from app.scheduler import _charge_due_subscriptions
+
+        bot = AsyncMock()
+        bot.send_message = AsyncMock()
+
+        db = AsyncMock()
+        db.get_due_subscriptions = AsyncMock(return_value=[{
+            "subscription_id": 1,
+            "name": "Netflix",
+            "amount": 39.90,
+            "currency": "ILS",
+            "category": "Entertainment",
+            "user_id": 12345,
+        }])
+        db.add_expense = AsyncMock(return_value=True)
+        db.mark_subscription_charged = AsyncMock()
+        db.has_active_bank_sync = AsyncMock(return_value=True)
+
+        today = date(2026, 4, 15)
+        with patch("app.scheduler.date") as mock_date:
+            mock_date.today.return_value = today
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            await _charge_due_subscriptions(bot, db)
+
+        db.add_expense.assert_not_called()
+        bot.send_message.assert_not_called()
+        db.mark_subscription_charged.assert_called_once_with(1, "2026-04")
+
+    @pytest.mark.asyncio
+    async def test_sync_lookup_is_memoized_per_user(self):
+        """Two subs for the same user must cost one has_active_bank_sync round-trip."""
+        from app.scheduler import _charge_due_subscriptions
+
+        bot = AsyncMock()
+        db = AsyncMock()
+        db.get_due_subscriptions = AsyncMock(return_value=[
+            {"subscription_id": 1, "name": "Netflix", "amount": 39.90,
+             "currency": "ILS", "category": "Entertainment", "user_id": 12345},
+            {"subscription_id": 2, "name": "Spotify", "amount": 19.90,
+             "currency": "ILS", "category": "Entertainment", "user_id": 12345},
+        ])
+        db.add_expense = AsyncMock(return_value=True)
+        db.mark_subscription_charged = AsyncMock()
+        db.has_active_bank_sync = AsyncMock(return_value=False)
+
+        today = date(2026, 4, 15)
+        with patch("app.scheduler.date") as mock_date:
+            mock_date.today.return_value = today
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            await _charge_due_subscriptions(bot, db)
+
+        db.has_active_bank_sync.assert_called_once_with(12345)
+        assert db.add_expense.call_count == 2
 
     @pytest.mark.asyncio
     async def test_no_due_subscriptions_nothing_happens(self):
@@ -157,6 +217,7 @@ class TestChargeDueSubscriptions:
         }])
         db.add_expense = AsyncMock(return_value=False)  # expense insert failed
         db.mark_subscription_charged = AsyncMock()
+        db.has_active_bank_sync = AsyncMock(return_value=False)
 
         today = date(2026, 4, 1)
         with patch("app.scheduler.date") as mock_date:

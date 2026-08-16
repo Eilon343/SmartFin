@@ -6,6 +6,7 @@ const authController = require('../controllers/authController');
 const incomeController = require('../controllers/incomeController');
 const savingsController = require('../controllers/savingsController');
 const insightsController = require('../controllers/insightsController');
+const cleanupController = require('../controllers/cleanupController');
 
 router.post('/auth/login', authController.login);
 router.post('/auth/google', authController.googleLogin);
@@ -26,6 +27,12 @@ router.put('/subscriptions/:id/pause', auth, expenseController.togglePauseSubscr
 router.delete('/subscriptions/:id', auth, expenseController.deleteSubscription);
 router.get('/pnl', auth, expenseController.getPnL);
 router.get('/insights', auth, insightsController.getInsights);
+
+// Duplicate cleanup: hand-logged rows that bank/card sync now imports itself.
+router.get('/cleanup/duplicates', auth, cleanupController.getDuplicates);
+router.post('/cleanup/duplicates', auth, cleanupController.confirmCleanup);
+router.get('/cleanup/archive', auth, cleanupController.getArchive);
+router.post('/cleanup/restore', auth, cleanupController.restoreCleanup);
 
 router.get('/income', auth, incomeController.getIncome);
 router.post('/income', auth, incomeController.addIncome);

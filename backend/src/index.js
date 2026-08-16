@@ -8,6 +8,7 @@ const webhookRoutes = require('./routes/webhookRoutes');
 const bankConnectionRoutes = require('./routes/bankConnectionRoutes');
 const { startQueueProcessor } = require('./controllers/webhookController');
 const bankSyncScheduler = require('./services/bankSyncScheduler');
+const { purgeExpiredArchives } = require('./controllers/cleanupController');
 
 if (!process.env.JWT_SECRET) {
     console.error('FATAL: JWT_SECRET environment variable is not set');
@@ -70,4 +71,12 @@ app.listen(PORT, () => {
     console.log(`SmartFin API listening on port ${PORT}`);
     startQueueProcessor();
     bankSyncScheduler.start();
+
+    // Drop duplicate-cleanup archives past their restore window. Daily is ample for a
+    // 30-day window; the first run is deferred a minute so it never competes with boot.
+    const PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+    setTimeout(() => {
+        purgeExpiredArchives();
+        setInterval(purgeExpiredArchives, PURGE_INTERVAL_MS).unref();
+    }, 60 * 1000).unref();
 });
