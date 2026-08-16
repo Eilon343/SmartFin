@@ -8,6 +8,8 @@ import Drawer from './ui/Drawer';
 import LogTransaction from './LogTransaction';
 import WhatsNewModal from './WhatsNewModal';
 import { shouldShowWhatsNew } from '../lib/whatsNew';
+import { upgradeNotice, dismissUpgradeNotice } from '../lib/appUpdate';
+import Toast from './ui/Toast';
 
 const NAV = [
   { id: 'dashboard',     nameKey: 'nav_dashboard',     icon: 'layout-dashboard', path: '/' },
@@ -94,6 +96,9 @@ export default function Layout() {
   // Read straight from storage in the initial state rather than an effect, so the tour
   // never flashes in for someone who has already dismissed it.
   const [whatsNewOpen, setWhatsNewOpen] = useState(shouldShowWhatsNew);
+  // Confirms a silent service-worker update actually landed. upgradeNotice() is
+  // idempotent, so StrictMode's double-invoked initialiser cannot swallow it.
+  const [upgradedFrom, setUpgradedFrom] = useState(upgradeNotice);
 
   const displayName = googleProfile?.name || user?.username?.replace(/^@/, '') || 'You';
 
@@ -280,6 +285,11 @@ export default function Layout() {
           </div>
         </div>
       </Drawer>
+
+      <Toast
+        msg={upgradedFrom ? t('update_toast').replace('{version}', __APP_VERSION__) : ''}
+        onDone={() => { dismissUpgradeNotice(); setUpgradedFrom(null); }}
+      />
 
       {/* ── One-time tour for the bank-sync update ── */}
       <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />

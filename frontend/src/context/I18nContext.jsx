@@ -66,6 +66,8 @@ const translations = {
     settings_bank_err_sync: "Could not start sync",
     settings_bank_confirm_disconnect: "Disconnect this bank account? Already-imported transactions will be kept.",
 
+    update_toast: "Updated to v{version}",
+
     // What's-new tour
     whatsnew_eyebrow: "What's new",
     whatsnew_skip: "Skip",
@@ -499,6 +501,8 @@ const translations = {
     settings_bank_err_connect: "לא ניתן היה לחבר את חשבון הבנק",
     settings_bank_err_sync: "לא ניתן היה להתחיל סנכרון",
     settings_bank_confirm_disconnect: "לנתק את חשבון הבנק? עסקאות שכבר יובאו יישמרו.",
+
+    update_toast: "עודכן לגרסה {version}",
 
     // What's-new tour
     whatsnew_eyebrow: "מה חדש",
