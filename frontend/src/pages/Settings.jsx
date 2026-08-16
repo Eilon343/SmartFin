@@ -7,6 +7,7 @@ import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
 import DuplicateCleanupCard from '../components/DuplicateCleanupCard';
+import WhatsNewModal from '../components/WhatsNewModal';
 import api from '../api/client';
 
 function ThemeToggle() {
@@ -260,6 +261,9 @@ export default function Settings() {
   const { logout } = useAuth();
   const { theme } = useTheme();
   const { lang, setLang, t } = useI18n();
+  // The tour is shown once automatically after the update; this is how someone finds it
+  // again afterwards.
+  const [tourOpen, setTourOpen] = useState(false);
 
   const rows = [
     {
@@ -295,6 +299,16 @@ export default function Settings() {
       name: t('settings_avg'),
       sub: t('settings_avg_sub'),
       val: <span className="muted">3 mo</span>,
+    },
+    {
+      icon: 'gift',
+      name: t('whatsnew_eyebrow'),
+      sub: `v${__APP_VERSION__}`,
+      val: (
+        <button className="btn" onClick={() => setTourOpen(true)}>
+          {t('whatsnew_open')}
+        </button>
+      ),
     },
     {
       icon: theme === 'dark' ? 'moon' : 'sun',
@@ -334,6 +348,8 @@ export default function Settings() {
       <BankSyncCard />
 
       <DuplicateCleanupCard />
+
+      <WhatsNewModal open={tourOpen} onClose={() => setTourOpen(false)} />
 
       <div className="card card-pad-lg">
         <h3 className="h2" style={{ marginBottom: 4 }}>{t('settings_account')}</h3>

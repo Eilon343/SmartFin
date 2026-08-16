@@ -66,6 +66,26 @@ const translations = {
     settings_bank_err_sync: "Could not start sync",
     settings_bank_confirm_disconnect: "Disconnect this bank account? Already-imported transactions will be kept.",
 
+    // What's-new tour
+    whatsnew_eyebrow: "What's new",
+    whatsnew_skip: "Skip",
+    whatsnew_back: "Back",
+    whatsnew_next: "Next",
+    whatsnew_done: "Got it",
+    whatsnew_open: "Show me what's new",
+    whatsnew_intro_title: "Your transactions can log themselves",
+    whatsnew_intro_body: "Connect your bank and credit cards, and SmartFin imports what you spend automatically — every day, with the real merchant name and the real amount.\n\nYou can still type things in by hand whenever you want. Nothing you already logged goes away.",
+    whatsnew_connect_title: "Connecting an account",
+    whatsnew_connect_body: "Go to Settings → Bank & card sync → Connect account, pick your provider, and enter the same details you use on its website.\n\nThe first import reaches about 3 months back and takes a few minutes. After that it refreshes once a day on its own.",
+    whatsnew_cards_title: "Add your credit cards too",
+    whatsnew_cards_body: "This is the step worth not skipping. Your bank only shows one lump payment per card each month — not what you actually bought.\n\nConnect the cards themselves and you get the individual purchases, properly categorised. SmartFin knows the lump bill and the purchases are the same money, and counts it once.",
+    whatsnew_safe_title: "About your credentials",
+    whatsnew_safe_body: "They are encrypted before they are stored, and no screen or API ever gives them back — they are only unlocked in memory at the moment of a sync.\n\nIf a provider rejects a sign-in, syncing pauses instead of retrying. Banks lock an account after about three failed attempts, and that is not a risk worth taking automatically.",
+    whatsnew_dupeswhy_title: "You've been logging by hand — expect some duplicates",
+    whatsnew_dupeswhy_body: "Everything you have entered until now stays exactly where it is. Sync does not replace your history.\n\nBut where the two overlap — purchases you typed in that your bank or card also covers — the same expense now arrives twice: once from you, once from the bank. That is the normal result of switching sync on with existing data, and it is worth fixing so your totals are not inflated.",
+    whatsnew_dupesfix_title: "Duplicate cleanup sorts that out",
+    whatsnew_dupesfix_body: "Settings → Duplicate cleanup shows each pair side by side — your entry next to the bank's version of it, same amount, a day or two apart — and removes only your hand-typed copy, keeping the bank's real merchant name.\n\nCash, Bit and PayBox are never touched: no bank feed contains them, so nothing can match them. You see the full list before anything happens, and anything removed can be restored for 30 days.",
+
     // Sync failures — cause on the first line, the fix on the second
     settings_bank_fail_login_failed: "Couldn't sign in — the site never got past the login page.",
     settings_bank_fix_login_failed: "This is almost always a wrong username or password. Disconnect and reconnect with the correct details — check the username especially, since it is easy to confuse with your ID number.",
@@ -479,6 +499,26 @@ const translations = {
     settings_bank_err_connect: "לא ניתן היה לחבר את חשבון הבנק",
     settings_bank_err_sync: "לא ניתן היה להתחיל סנכרון",
     settings_bank_confirm_disconnect: "לנתק את חשבון הבנק? עסקאות שכבר יובאו יישמרו.",
+
+    // What's-new tour
+    whatsnew_eyebrow: "מה חדש",
+    whatsnew_skip: "דילוג",
+    whatsnew_back: "הקודם",
+    whatsnew_next: "הבא",
+    whatsnew_done: "הבנתי",
+    whatsnew_open: "מה חדש בגרסה",
+    whatsnew_intro_title: "העסקאות יכולות להירשם בעצמן",
+    whatsnew_intro_body: "חברו את חשבון הבנק וכרטיסי האשראי, ו-SmartFin ייבא את ההוצאות אוטומטית — כל יום, עם שם בית העסק האמיתי והסכום האמיתי.\n\nאפשר להמשיך לרשום ידנית מתי שרוצים, וכל מה שכבר נרשם נשאר במקומו.",
+    whatsnew_connect_title: "איך מחברים חשבון",
+    whatsnew_connect_body: "היכנסו להגדרות ← סנכרון בנק וכרטיסים ← חיבור חשבון, בחרו את הספק והזינו את אותם פרטים שאתם משתמשים בהם באתר שלו.\n\nהייבוא הראשון חוזר כ-3 חודשים אחורה ולוקח כמה דקות. אחר כך הוא מתעדכן פעם ביום לבד.",
+    whatsnew_cards_title: "אל תדלגו על כרטיסי האשראי",
+    whatsnew_cards_body: "זה השלב שהכי כדאי לא לדלג עליו. הבנק מציג רק חיוב אחד מרוכז לכל כרטיס בחודש — לא את מה שבאמת קניתם.\n\nחיבור הכרטיסים עצמם נותן את הקניות הבודדות, מסווגות כמו שצריך. SmartFin יודע שהחיוב המרוכז והקניות הם אותו כסף, וסופר אותו פעם אחת.",
+    whatsnew_safe_title: "לגבי פרטי ההתחברות",
+    whatsnew_safe_body: "הם מוצפנים לפני השמירה, ואף מסך או API לא מחזיר אותם — הם נפתחים בזיכרון רק ברגע הסנכרון.\n\nאם ספק דוחה התחברות, הסנכרון נעצר במקום לנסות שוב. בנקים נועלים חשבון אחרי כשלוש כניסות כושלות, וזה לא סיכון שכדאי לקחת אוטומטית.",
+    whatsnew_dupeswhy_title: "רשמתם עד היום ידנית — צפויות כפילויות",
+    whatsnew_dupeswhy_body: "כל מה שהזנתם עד עכשיו נשאר בדיוק במקומו. הסנכרון לא מחליף את ההיסטוריה שלכם.\n\nאבל בתקופה שבה השניים נפגשים — קניות שרשמתם ידנית שגם הבנק או הכרטיס מכסים — אותה הוצאה מגיעה עכשיו פעמיים: פעם מכם ופעם מהבנק. זו התוצאה הרגילה של הפעלת סנכרון על נתונים קיימים, וכדאי לתקן אותה כדי שהסכומים לא יהיו מנופחים.",
+    whatsnew_dupesfix_title: "ניקוי הכפילויות מטפל בזה",
+    whatsnew_dupesfix_body: "הגדרות ← ניקוי כפילויות מציג כל זוג זה לצד זה — הרישום שלכם מול הגרסה של הבנק, אותו סכום, בהפרש של יום-יומיים — ומוחק רק את העותק שהקלדתם, ומשאיר את שם בית העסק האמיתי מהבנק.\n\nמזומן, ביט ופייבוקס לא נוגעים בהם לעולם: הם לא מופיעים בפירוט של אף בנק, ולכן שום דבר לא יכול להתאים להם. אתם רואים את הרשימה המלאה לפני שקורה משהו, וכל מה שנמחק ניתן לשחזור במשך 30 יום.",
 
     // Sync failures — cause on the first line, the fix on the second
     settings_bank_fail_login_failed: "ההתחברות נכשלה — האתר לא עבר את מסך הכניסה.",
