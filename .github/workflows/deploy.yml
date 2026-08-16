@@ -3,16 +3,127 @@ name: Deploy to Mac Mini
 on:
   push:
     branches: [master]
+  workflow_dispatch:
+
+# The host file is the ONE source of truth for secrets:
+#
+#   /DATA/AppData/SmartFin/.env
+#
+# The copy inside the runner workspace is disposable. actions/checkout wipes untracked and
+# ignored files before every run, and .env is gitignored — so anything edited in the
+# workspace copy is destroyed on the next deploy. That is what made BANK_CREDENTIALS_KEY
+# appear to "reset": fixing it in the deployed workspace fixed that one run only.
+#
+# Nothing here ever generates a key. A regenerated BANK_CREDENTIALS_KEY does not fail
+# loudly — it decrypts nothing, so every bank connection starts reporting "Your saved
+# credentials could not be read" until each one is reconnected by hand. Failing the deploy
+# is always better than silently rotating it.
+
+env:
+  HOST_ENV: /DATA/AppData/SmartFin/.env
+  KEY_FINGERPRINT_FILE: /DATA/AppData/SmartFin/.bank-key-fingerprint
 
 jobs:
   deploy:
     runs-on: self-hosted
     steps:
+      # Runs FIRST, before checkout touches the workspace and before the database is
+      # backed up or migrated, so a broken env aborts while nothing has changed yet.
+      - name: Preflight — validate host .env
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "$HOST_ENV" ]; then
+            echo "::error::$HOST_ENV is missing. It is the source of truth for all secrets"
+            echo "::error::and is never created by this workflow. Restore it from your backup."
+            exit 1
+          fi
+
+          # tail -1 so a later duplicate wins, matching dotenv's own last-wins behaviour.
+          # Strips CR (in case the file was ever touched on Windows) and surrounding quotes.
+          get_var() {
+            grep -E "^[[:space:]]*$1=" "$HOST_ENV" 2>/dev/null | tail -1 \
+              | sed -E "s/^[[:space:]]*$1=//" \
+              | tr -d '\r' \
+              | sed -E 's/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/'
+          }
+
+          # Fatal: the stack is either dead or silently broken without these.
+          #   MYSQL_ROOT_PASSWORD  — db healthcheck never passes, everything blocks on it
+          #   JWT_SECRET           — backend exits on boot
+          #   BANK_CREDENTIALS_KEY — backend exits on boot
+          #   GOOGLE_CLIENT_ID     — baked into the frontend at BUILD time, so a missing
+          #                          value ships a bundle where Google sign-in silently
+          #                          does nothing, with no server-side error to notice
+          missing=""
+          for v in MYSQL_ROOT_PASSWORD JWT_SECRET BANK_CREDENTIALS_KEY GOOGLE_CLIENT_ID; do
+            [ -n "$(get_var "$v")" ] || missing="$missing $v"
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required variables in $HOST_ENV:$missing"
+            echo "::error::Add them to that file on the host — NOT to the checked-out copy,"
+            echo "::error::which is wiped on every deploy."
+            exit 1
+          fi
+
+          # Degraded but bootable: warn rather than block a deploy that is otherwise fine.
+          for v in GEMINI_API_KEY TELEGRAM_BOT_TOKEN; do
+            [ -n "$(get_var "$v")" ] || echo "::warning::$v is not set in $HOST_ENV — the feature that uses it will not work"
+          done
+
+          key="$(get_var BANK_CREDENTIALS_KEY)"
+          if ! printf '%s' "$key" | grep -qiE '^[0-9a-f]{64}$'; then
+            echo "::error::BANK_CREDENTIALS_KEY must be exactly 64 hex characters (32 bytes);"
+            echo "::error::got ${#key} characters. A truncated key decrypts nothing."
+            exit 1
+          fi
+
+          # Fingerprint, not the key itself, so nothing sensitive is written to disk or logs.
+          # sha256sum is GNU; macOS ships shasum.
+          if command -v sha256sum >/dev/null 2>&1; then
+            fp="$(printf '%s' "$key" | sha256sum | cut -c1-16)"
+          else
+            fp="$(printf '%s' "$key" | shasum -a 256 | cut -c1-16)"
+          fi
+
+          if [ -f "$KEY_FINGERPRINT_FILE" ]; then
+            prev="$(tr -d '\r\n' < "$KEY_FINGERPRINT_FILE")"
+            if [ "$prev" != "$fp" ]; then
+              if [ "${ALLOW_BANK_KEY_ROTATION:-}" = "true" ]; then
+                echo "::warning::BANK_CREDENTIALS_KEY changed and rotation was explicitly allowed."
+                echo "::warning::Every existing bank connection must now be reconnected by hand."
+                printf '%s' "$fp" > "$KEY_FINGERPRINT_FILE"
+              else
+                echo "::error::BANK_CREDENTIALS_KEY has CHANGED since the last deploy."
+                echo "::error::This does not fail loudly at runtime: stored credentials simply stop"
+                echo "::error::decrypting, and every bank connection reports 'Your saved credentials"
+                echo "::error::could not be read' until reconnected by hand."
+                echo "::error::If this was accidental, restore the previous key in $HOST_ENV."
+                echo "::error::If it was deliberate, set repository variable ALLOW_BANK_KEY_ROTATION=true."
+                exit 1
+              fi
+            fi
+          else
+            # First run after this guard was added: record what is already deployed.
+            printf '%s' "$fp" > "$KEY_FINGERPRINT_FILE"
+            echo "Recorded BANK_CREDENTIALS_KEY fingerprint for future drift detection."
+          fi
+
+          echo "Host .env looks good."
+        env:
+          ALLOW_BANK_KEY_ROTATION: ${{ vars.ALLOW_BANK_KEY_ROTATION }}
+
       - name: Checkout latest code
         uses: actions/checkout@v4
 
+      # Restores the workspace copy that checkout just wiped. Always overwrites, so the
+      # host file wins outright and a stale workspace copy can never survive a deploy.
       - name: Inject .env from host
-        run: cp /DATA/AppData/SmartFin/.env .env
+        run: |
+          set -euo pipefail
+          cp "$HOST_ENV" .env
+          echo "Injected $(grep -cE '^[A-Za-z_][A-Za-z0-9_]*=' .env) variables from $HOST_ENV"
 
       - name: Backup DB before deploy
         run: |
@@ -41,6 +152,32 @@ jobs:
 
       - name: Deploy stack
         run: docker compose up --build -d
+
+      # Confirms the backend actually came up with a usable env, rather than exiting on a
+      # FATAL check and leaving a restart loop nobody notices until a user reports it.
+      - name: Verify backend is healthy
+        run: |
+          # Probed inside the container, NOT through nginx on :8080 — nginx has no /health
+          # route, so the SPA fallback would answer 200 with index.html and this check
+          # would pass while the backend sat in a restart loop.
+          #
+          # docker exec failing is itself a failure: a container that exited on a FATAL
+          # env check has no shell to run this in.
+          for i in $(seq 1 30); do
+            if docker exec smartfin_backend node -e "
+                require('http')
+                  .get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1))
+                  .on('error', () => process.exit(1));
+              " >/dev/null 2>&1; then
+              echo "Backend healthy."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Backend did not become healthy within 5 minutes."
+          echo "::error::A missing JWT_SECRET or BANK_CREDENTIALS_KEY exits the process on boot."
+          docker logs --tail 50 smartfin_backend || true
+          exit 1
 
       - name: Remove unused images
         run: docker image prune -f

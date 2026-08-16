@@ -53,6 +53,26 @@ against it. It is the only way to see the real duplicate counts before they are 
 
 **This release adds no new environment variables.** Nothing to generate, nothing to rotate.
 
+> ### Where env actually lives, and why the key seemed to reset
+>
+> `/DATA/AppData/SmartFin/.env` on the host is the **only** source of truth. The `.env`
+> inside the CI workspace is a disposable copy: `actions/checkout` wipes untracked and
+> ignored files before every run, and `.env` is gitignored, so **anything edited in the
+> deployed workspace copy is destroyed on the next deploy**. Editing it there fixes exactly
+> one run, which is what made `BANK_CREDENTIALS_KEY` look like it reset itself. Nothing in
+> the workflow has ever generated a `.env` — it only copies the host file over.
+>
+> **Fix env on the host file, then redeploy. Never edit the checked-out copy.**
+>
+> The deploy now refuses to start unless `MYSQL_ROOT_PASSWORD`, `JWT_SECRET`,
+> `BANK_CREDENTIALS_KEY` and `GOOGLE_CLIENT_ID` are present on the host, and
+> `BANK_CREDENTIALS_KEY` is 64 hex characters. It also fingerprints the key
+> (`/DATA/AppData/SmartFin/.bank-key-fingerprint`, a SHA-256 prefix — never the key itself)
+> and **aborts if it changed**, because a rotated key fails silently: the backend boots
+> fine, then every bank connection reports "Your saved credentials could not be read".
+> To rotate deliberately, set repository variable `ALLOW_BANK_KEY_ROTATION=true`, deploy
+> once, then unset it — and expect to reconnect every bank and card by hand.
+
 Confirm what bank sync already needs is present, since cleanup is worthless without
 imported data:
 
