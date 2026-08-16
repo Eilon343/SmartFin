@@ -7,9 +7,9 @@ const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
 
 if (!TELEGRAM_WEBHOOK_SECRET) {
     console.warn(
-        'SECURITY: TELEGRAM_WEBHOOK_SECRET is not set — POST /webhook/telegram accepts ' +
-        'unauthenticated updates. Anyone who can reach it can forge a message from any ' +
-        'chat id. Set the variable and register it with Telegram:\n' +
+        'TELEGRAM_WEBHOOK_SECRET is not set — POST /webhook/telegram will refuse every ' +
+        'request with 503. This is fine if the bot long-polls, which is the default. To ' +
+        'serve the webhook, set the variable and register it with Telegram:\n' +
         '  curl -F "url=<public-url>/webhook/telegram" -F "secret_token=<value>" \\\n' +
         '       https://api.telegram.org/bot<TOKEN>/setWebhook'
     );
@@ -213,14 +213,21 @@ exports.handleTelegram = async (req, res) => {
     // forged POST can log expenses into any account and — via /link_google — attach a
     // stranger's SmartFin account to the attacker's Telegram chat.
     //
-    // Enforced only when configured, so an existing deployment that has not yet
-    // registered a secret keeps working rather than losing its bot on deploy. The
-    // startup warning above says how to close it.
-    if (TELEGRAM_WEBHOOK_SECRET) {
-        const presented = req.headers['x-telegram-bot-api-secret-token'];
-        if (presented !== TELEGRAM_WEBHOOK_SECRET) {
-            return res.sendStatus(401);
-        }
+    // Fails CLOSED. This used to enforce only when a secret was configured, so an
+    // unconfigured deployment accepted anything — and "unconfigured" is the default,
+    // because the bot long-polls and most deployments never register a webhook at all.
+    // An endpoint that is usually unused but always open is the worst combination: no
+    // one notices it, and reaching it is enough to log expenses into any account or,
+    // via /link_google, attach someone else's SmartFin account to an attacker's chat.
+    //
+    // Refusing when unset costs nothing in the default configuration and closes the door
+    // in the one that matters.
+    if (!TELEGRAM_WEBHOOK_SECRET) {
+        return res.sendStatus(503);
+    }
+    const presented = req.headers['x-telegram-bot-api-secret-token'];
+    if (presented !== TELEGRAM_WEBHOOK_SECRET) {
+        return res.sendStatus(401);
     }
 
     res.sendStatus(200); // always ack Telegram immediately

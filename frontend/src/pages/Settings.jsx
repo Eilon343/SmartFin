@@ -227,8 +227,10 @@ function BankSyncCard() {
 
       {connections.map(c => (
         <div key={c.id} style={{ padding: '12px 0', borderTop: '1px solid var(--line)' }}>
-          <div className="between">
-            <div className="stack">
+          {/* Wraps on a phone: the name plus a full timestamp plus two buttons does not
+              fit 360px, and without wrapping the buttons were pushed off the card. */}
+          <div className="between conn-row" style={{ gap: 10, flexWrap: 'wrap' }}>
+            <div className="stack" style={{ minWidth: 0, flex: '1 1 180px' }}>
               <span style={{ fontWeight: 500, fontSize: 14 }}>{c.display_name || c.company_id}</span>
               <span className="muted-2" style={{ fontSize: 12 }}>
                 <span style={{ color: statusColor(c.status) }}>{t(`settings_bank_status_${c.status}`)}</span>
@@ -236,7 +238,7 @@ function BankSyncCard() {
                 {t('settings_bank_last_sync')}: {c.last_sync_at ? new Date(c.last_sync_at).toLocaleString() : t('settings_bank_last_sync_never')}
               </span>
             </div>
-            <div className="row" style={{ gap: 8 }}>
+            <div className="row conn-actions" style={{ gap: 8 }}>
               <button className="btn" onClick={() => syncNow(c.id)}>{t('settings_bank_sync_now')}</button>
               <button className="btn" style={{ color: 'var(--rose)', borderColor: 'var(--rose-soft)' }} onClick={() => disconnect(c.id)}>
                 {t('settings_bank_disconnect')}

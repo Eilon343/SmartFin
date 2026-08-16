@@ -42,22 +42,32 @@ function PairRow({ row, checked, onToggle, t }) {
         onChange={onToggle}
         style={{ marginTop: 3, width: 14, height: 14, flexShrink: 0, accentColor: 'var(--rose)' }}
       />
+      {/* minWidth:0 is load-bearing on every level down to the truncating span. A flex
+          item defaults to min-width:auto and refuses to shrink below its own content, so
+          without it a long Hebrew merchant name widens the row instead of ellipsing —
+          and the whole card scrolls sideways on a phone. */}
       <div className="stack" style={{ gap: 2, minWidth: 0, flex: 1 }}>
-        <div className="row" style={{ gap: 8, fontSize: 12.5 }}>
-          <span className="muted-2" style={{ minWidth: 48 }}>{shortDate(row.date)}</span>
-          <span dir="ltr" style={{ fontWeight: 500 }}>{fmt(row.amount)}</span>
-          <span className="muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div className="row" style={{ gap: 8, fontSize: 12.5, minWidth: 0 }}>
+          <span className="muted-2" style={{ minWidth: 48, flexShrink: 0 }}>{shortDate(row.date)}</span>
+          <span dir="ltr" style={{ fontWeight: 500, flexShrink: 0 }}>{fmt(row.amount)}</span>
+          <span
+            className="muted"
+            style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
             {row.description || t('cleanup_no_description')}
           </span>
         </div>
         {/* The evidence it is safe to go. */}
-        <div className="row" style={{ gap: 8, fontSize: 12 }}>
-          <span className="muted-2" style={{ minWidth: 48 }}>↔ {shortDate(row.match.date)}</span>
-          <span className="muted-2" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div className="row" style={{ gap: 8, fontSize: 12, minWidth: 0 }}>
+          <span className="muted-2" style={{ minWidth: 48, flexShrink: 0 }}>↔ {shortDate(row.match.date)}</span>
+          <span
+            className="muted-2"
+            style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
             {row.match.description}
           </span>
           {row.match.account && (
-            <span className="muted-2" style={{ fontSize: 11, opacity: 0.7 }}>·{row.match.account}</span>
+            <span className="muted-2" style={{ fontSize: 11, opacity: 0.7, flexShrink: 0 }}>·{row.match.account}</span>
           )}
         </div>
       </div>
@@ -202,10 +212,13 @@ export default function DuplicateCleanupCard() {
       ) : (
         <>
           {/* The summary is the whole story for most people. */}
+          {/* Grid rather than a flex row: four stats wrapped unevenly on a phone, leaving
+              an orphan on its own line. auto-fit gives 4 across on desktop and a tidy 2x2
+              once the width drops. */}
           <div
-            className="row"
             style={{
-              gap: 26, flexWrap: 'wrap', padding: '14px 16px', borderRadius: 10,
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(118px, 1fr))',
+              gap: '14px 18px', padding: '14px 16px', borderRadius: 10,
               background: 'var(--hover-bg-2)', marginBottom: 12,
             }}
           >
@@ -248,30 +261,37 @@ export default function DuplicateCleanupCard() {
             </div>
           )}
 
-          <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button
-              className="btn primary"
-              style={{ background: 'var(--rose)', borderColor: 'var(--rose)' }}
-              disabled={busy || totalSelected === 0}
-              onClick={confirm}
-            >
-              <Icon name="trash-2" size={13} /> {t('cleanup_remove_btn').replace('{count}', totalSelected)}
-            </button>
-            <button className="btn" onClick={() => setExpanded((v) => !v)} disabled={busy}>
-              <Icon name={expanded ? 'chevron-up' : 'sliders-horizontal'} size={13} />
-              {expanded ? t('cleanup_review_hide') : t('cleanup_review_show')}
-            </button>
+          {/* The undo reassurance is on its own line rather than trailing the buttons —
+              squeezed onto a phone it wrapped to one word per line beside them. */}
+          <div className="stack" style={{ gap: 8 }}>
+            <div className="row cleanup-actions" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                className="btn primary"
+                style={{ background: 'var(--rose)', borderColor: 'var(--rose)' }}
+                disabled={busy || totalSelected === 0}
+                onClick={confirm}
+              >
+                <Icon name="trash-2" size={13} /> {t('cleanup_remove_btn').replace('{count}', totalSelected)}
+              </button>
+              <button className="btn" onClick={() => setExpanded((v) => !v)} disabled={busy}>
+                <Icon name={expanded ? 'chevron-up' : 'sliders-horizontal'} size={13} />
+                {expanded ? t('cleanup_review_hide') : t('cleanup_review_show')}
+              </button>
+            </div>
             <span className="muted-2" style={{ fontSize: 12 }}>
               {t('cleanup_undo_hint').replace('{days}', scan.restore_window_days)}
             </span>
           </div>
 
           {/* Every pair, for anyone who wants to check or keep one. Scrolls in place so a
-              hundred rows cannot push the rest of Settings off the screen. */}
+              hundred rows cannot push the rest of Settings off the screen — capped against
+              the viewport as well, since a flat 420px is most of a phone screen and would
+              leave two nested scrollbars fighting each other. */}
           {expanded && (
             <div
               style={{
-                marginTop: 6, maxHeight: 420, overflowY: 'auto',
+                marginTop: 6, maxHeight: 'min(420px, 55vh)', overflowY: 'auto',
+                overscrollBehavior: 'contain',
                 paddingInlineEnd: 6, borderRadius: 8,
               }}
             >

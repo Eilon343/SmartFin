@@ -47,6 +47,16 @@ exports.createConnection = async (req, res) => {
         );
         res.status(201).json({ id: result.insertId, status: 'pending_first_sync' });
     } catch (err) {
+        // The check above is not atomic: two requests can interleave between it and the
+        // insert, and a double-clicked Connect button is enough. The UNIQUE key added in
+        // migration 009 is what actually prevents the duplicate; catching it here turns
+        // the loser of that race into the same friendly 409 rather than a 500.
+        if (err.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({
+                error: `${company.name} is already connected. Disconnect it first to reconnect with different credentials.`,
+                code: 'already_connected',
+            });
+        }
         console.error('createConnection error:', err);
         res.status(500).json({ error: 'Failed to create bank connection' });
     }

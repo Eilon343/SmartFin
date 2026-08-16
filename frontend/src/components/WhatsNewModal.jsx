@@ -69,15 +69,17 @@ export default function WhatsNewModal({ open, onClose }) {
           {t(`whatsnew_${current.key}_title`)}
         </h3>
 
-        {/* Fixed min-height so the dots and buttons do not jump between pages. */}
+        {/* Reserves height so the footer does not jump between pages, but only where
+            there is room to spare — on a phone the copy is already several lines tall and
+            a floor would just push the buttons off a short screen. */}
         <p
-          className="muted"
-          style={{ fontSize: 13.5, lineHeight: 1.6, margin: 0, minHeight: 112, whiteSpace: 'pre-line' }}
+          className="muted whatsnew-body"
+          style={{ fontSize: 13.5, lineHeight: 1.6, margin: 0, whiteSpace: 'pre-line' }}
         >
           {t(`whatsnew_${current.key}_body`)}
         </p>
 
-        <div className="between" style={{ marginTop: 18 }}>
+        <div className="between whatsnew-footer" style={{ marginTop: 18, gap: 12, flexWrap: 'wrap' }}>
           <div className="row" style={{ gap: 6 }}>
             {PAGES.map((p, i) => (
               <button
@@ -95,7 +97,7 @@ export default function WhatsNewModal({ open, onClose }) {
             ))}
           </div>
 
-          <div className="row" style={{ gap: 8 }}>
+          <div className="row whatsnew-actions" style={{ gap: 8 }}>
             {page > 0 && (
               <button className="btn" onClick={() => setPage((p) => p - 1)}>
                 <Icon name={rtl ? 'chevron-right' : 'chevron-left'} size={14} />

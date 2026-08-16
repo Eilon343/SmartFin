@@ -134,6 +134,11 @@ CREATE TABLE IF NOT EXISTS bank_connections (
     last_sync_status      VARCHAR(50) NULL,
     last_sync_error       TEXT NULL,
     created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- One connection per provider per user (migration 009). createConnection also checks,
+    -- but two interleaved requests both pass that check and the duplicate connections then
+    -- scrape the same account into separate staging rows — the UNIQUE key on
+    -- bank_transactions_raw is per-connection, so nothing dedupes them.
+    UNIQUE KEY uq_bank_conn_user_company (user_id, company_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 

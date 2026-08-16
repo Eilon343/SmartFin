@@ -43,28 +43,74 @@ describe('POST /webhook/apple-pay — removed', () => {
 });
 
 describe('POST /webhook/telegram — still active', () => {
+    // These exercise the ACK behaviour, which only applies to an authenticated update.
+    // The secret has to be set before the controller is loaded, since it reads it once.
+    const SECRET = 'telegram-webhook-secret';
+    let freshApp;
+    let freshDb;
+
     beforeEach(() => {
         global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+        jest.resetModules();
+        process.env.TELEGRAM_WEBHOOK_SECRET = SECRET;
+        const express = require('express');
+        freshApp = express();
+        freshApp.use(express.json());
+        freshApp.use('/webhook', require('../../backend/src/routes/webhookRoutes'));
+        freshDb = require('./setup/dbMock');
+        freshDb.query.mockResolvedValue([[]]);
     });
     afterEach(() => {
+        delete process.env.TELEGRAM_WEBHOOK_SECRET;
         delete global.fetch;
+        jest.resetModules();
         jest.restoreAllMocks();
     });
 
     test('acknowledges immediately so Telegram does not retry', async () => {
-        db.query.mockResolvedValue([[]]);
-        const res = await request(app)
+        const res = await request(freshApp)
             .post('/webhook/telegram')
+            .set('X-Telegram-Bot-Api-Secret-Token', SECRET)
             .send({ message: { chat: { id: 123 }, text: '/help' } });
 
         expect(res.status).toBe(200);
     });
 
     test('acknowledges even on a malformed update', async () => {
-        db.query.mockResolvedValue([[]]);
-        const res = await request(app).post('/webhook/telegram').send({});
+        const res = await request(freshApp)
+            .post('/webhook/telegram')
+            .set('X-Telegram-Bot-Api-Secret-Token', SECRET)
+            .send({});
 
         expect(res.status).toBe(200);
+    });
+});
+
+describe('POST /webhook/telegram — unconfigured', () => {
+    /**
+     * Fails CLOSED when no secret is set. This is the DEFAULT configuration, because the
+     * bot long-polls and most deployments never register a webhook — so an endpoint that
+     * accepted anything here was both permanently open and unlikely to be noticed.
+     * The update body carries its own chat id, so reaching it was enough to log expenses
+     * into any account, or to attach someone else's account to an attacker's chat via
+     * /link_google.
+     */
+    test('refuses every update when no secret is configured', async () => {
+        db.query.mockResolvedValue([[]]);
+        const res = await request(app)
+            .post('/webhook/telegram')
+            .send({ message: { chat: { id: 123 }, text: '/help' } });
+
+        expect(res.status).toBe(503);
+    });
+
+    test('a forged update cannot reach the database', async () => {
+        db.query.mockResolvedValue([[]]);
+        await request(app)
+            .post('/webhook/telegram')
+            .send({ message: { chat: { id: 999 }, text: '/link_google victim@example.com' } });
+
+        expect(db.query).not.toHaveBeenCalled();
     });
 });
 
