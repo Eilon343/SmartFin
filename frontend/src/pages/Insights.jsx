@@ -31,6 +31,11 @@ function fmt(n) {
   if (n == null || Number.isNaN(n)) return '—';
   return `‎₪${Math.round(n).toLocaleString('en-US')}‎`;
 }
+// Sign before the symbol, LTR-marked, same convention as the dashboard's fmtSign.
+function fmtSign(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  return `‎${n < 0 ? '−' : '+'}₪${Math.round(Math.abs(n)).toLocaleString('en-US')}‎`;
+}
 function ordinal(n) {
   const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
@@ -191,7 +196,17 @@ function ExpenseDonutCard({ data, t }) {
 
 /* ---------- Momentum ---------- */
 function MomentumChart({ data, t }) {
-  const target = data.budget_total > 0 ? data.budget_total : data.three_mo_avg_total;
+  // The target and the ideal curve both come from the server now (forecastMath.pacingTarget
+  // / momentumIdeal). They used to be `budget_total || three_mo_avg_total` with the curve
+  // rebuilt here from dow_weights — which meant the target covered only budgeted categories
+  // while the line below sums all of them, and the curve smeared fixed costs evenly across
+  // a month they land on the 1st of. Keeping the arithmetic on one side of the wire is also
+  // what stops this drifting from the backend the way the dashboard sparkline did.
+  const pacing = data.pacing_target || null;
+  const target = pacing ? pacing.total : 0;
+  const idealCurve = Array.isArray(data.ideal) && data.ideal.length === data.days_in_month
+    ? data.ideal
+    : [];
   const cum = [];
   let running = 0;
   for (const v of data.daily) {
@@ -208,8 +223,11 @@ function MomentumChart({ data, t }) {
   const pts = cum.map((v, i) => v == null ? null : [x(i), y(v)]).filter(Boolean);
   const linePath = pts.map((p, i) => (i === 0 ? `M${p[0]},${p[1]}` : `L${p[0]},${p[1]}`)).join(' ');
   const areaPath = pts.length ? `${linePath} L${pts[pts.length - 1][0]},${y(0)} L${pts[0][0]},${y(0)} Z` : '';
+
+  const idealPath = target > 0 && idealCurve.length
+    ? idealCurve.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(v)}`).join(' ')
+    : '';
   const idealEnd = [x(data.days_in_month - 1), y(target)];
-  const idealStart = [x(0), y(0)];
 
   const [hover, setHover] = useState(null);
   const svgRef = useRef(null);
@@ -224,18 +242,30 @@ function MomentumChart({ data, t }) {
   };
 
   const todayValue = cum[data.today_day - 1] || 0;
-  const idealAtToday = (target * (data.today_day - 1)) / Math.max(1, data.days_in_month - 1);
+  const idealAtToday = idealCurve[data.today_day - 1] ?? target;
   const overUnder = todayValue - idealAtToday;
   const isOver = overUnder > 0;
+
+  // What the target is made of, said plainly. "₪3,400 target" was ambiguous even when the
+  // number was right, and it is the sentence that has to carry the fix: the target is the
+  // user's budgets where they set them and their own typical spending everywhere else.
+  const targetNote = !pacing || pacing.budgeted_categories === 0
+    ? t('ins_mom_target_habit')
+    : pacing.habit > 0
+      ? t('ins_mom_target_mix')
+          .replace('{budgeted}', fmt(pacing.budgeted))
+          .replace('{habit}', fmt(pacing.habit))
+      : t('ins_mom_target_budget');
 
   return (
     <div className="card card-pad-lg">
       <div className="between" style={{ marginBottom: 4 }}>
         <div className="stack" style={{ gap: 4 }}>
           <h3 className="h2">{t('ins_mom_title')}</h3>
-          <span className="muted" style={{ fontSize: 12 }} dir="ltr">
+          <span className="muted" style={{ fontSize: 12 }}>
             {t('ins_mom_sub').replace('{target}', fmt(target))}
           </span>
+          <span className="muted-2" style={{ fontSize: 11.5 }}>{targetNote}</span>
         </div>
         {target > 0 && (
           <span className={`chip ${isOver ? 'down' : 'up'}`}>
@@ -276,7 +306,7 @@ function MomentumChart({ data, t }) {
 
           {target > 0 && (
             <>
-              <line x1={idealStart[0]} y1={idealStart[1]} x2={idealEnd[0]} y2={idealEnd[1]}
+              <path d={idealPath} fill="none"
                     stroke="var(--text-3)" strokeWidth="1.5" strokeDasharray="4 4" />
               <text x={idealEnd[0] - 8} y={idealEnd[1] - 6} textAnchor="end"
                     fontSize="10.5" fill="var(--text-3)">{t('ins_mom_ideal')}</text>
@@ -468,6 +498,12 @@ function SmartInsights({ data, t, lang }) {
   const wd = data.weekday_daily_avg || 0;
   const wkndPct = wd > 0 ? ((we - wd) / wd) * 100 : 0;
   const isWkndHigher = wkndPct > 0;
+  // A percentage difference between two daily averages is only worth showing once both
+  // sides rest on a few days. Early in the month one weekend and a quiet Monday produce a
+  // confident-looking "+900% on weekends" that means nothing, and a near-zero weekday
+  // average makes the ratio explode no matter how small the actual shekel gap is. The
+  // absolute per-day gap is shown alongside for the same reason.
+  const wkndReliable = (data.weekend_days_elapsed ?? 0) >= 2 && (data.weekday_days_elapsed ?? 0) >= 3 && wd > 0;
 
   const cards = [];
 
@@ -496,12 +532,12 @@ function SmartInsights({ data, t, lang }) {
     });
   }
 
-  if (we > 0 || wd > 0) {
+  if (wkndReliable) {
     cards.push({
       tone: 'idg', toneVar: 'indigo', icon: 'calendar-days', title: t('ins_wknd_title'),
       body: (
         <>{t('ins_wknd_pre')} <strong>{Math.abs(wkndPct).toFixed(0)}% {isWkndHigher ? t('ins_wknd_more') : t('ins_wknd_less')}</strong> {t('ins_wknd_post')}{' '}
-        <span className="muted" dir="ltr">({fmt(we)} vs {fmt(wd)} {t('ins_wknd_per_day')})</span></>
+        <span className="muted" dir="ltr">({fmtSign(we - wd)} {t('ins_wknd_per_day')} · {fmt(we)} vs {fmt(wd)})</span></>
       ),
       stat: (
         <div className="row" style={{ gap: 4 }}>

@@ -629,6 +629,11 @@ function NetPosition({ pnl, expenses }) {
 
   const totalIncomeActual = pnl.total_income_actual ?? 0;
   const forecastColor = forecastNet >= 0 ? 'var(--emerald)' : 'var(--rose)';
+  // Both are null until there is enough history to stand behind them — the backend
+  // returns no interval below two months rather than a fabricated one, and the point
+  // estimate is shown alone in that case.
+  const hasRange = pnl.forecast_low != null && pnl.forecast_high != null;
+  const safePerDay = pnl.safe_to_spend_per_day;
 
   return (
     <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
@@ -670,9 +675,31 @@ function NetPosition({ pnl, expenses }) {
                 {isForecastDeficit
                   ? <>{t('dash_np_proj_red')} <strong style={{ color: forecastColor }} dir="ltr">{fmt(forecastNet)}</strong> {t('dash_np_in_red')}</>
                   : <>{t('dash_np_proj_at')} <strong style={{ color: forecastColor }} dir="ltr">{fmt(forecastNet)}</strong>.</>}
+                {hasRange && (
+                  <span className="muted"> {t('dash_np_likely')} <span dir="ltr">{fmt(pnl.forecast_low)}–{fmt(pnl.forecast_high)}</span>.</span>
+                )}
               </span>
             </div>
           </div>
+
+          {/* The one number that answers "can I buy this?". Absent for past months and
+              for anyone on the last day, where a per-day allowance means nothing. */}
+          {safePerDay != null && (
+            <div className="row" style={{ gap: 8, fontSize: 13, color: 'var(--text-2)' }}>
+              <Icon name="wallet" size={13} color={safePerDay >= 0 ? 'var(--emerald)' : 'var(--rose)'} />
+              {safePerDay >= 0 ? (
+                <span>
+                  {t('dash_safe_pre')} <strong style={{ color: 'var(--emerald)' }} dir="ltr">{fmt(safePerDay)}</strong>{' '}
+                  {t('dash_safe_post')} <strong>{pnl.days_left}</strong> {t('dash_safe_days')}
+                </span>
+              ) : (
+                <span>
+                  {t('dash_safe_over_pre')} <strong style={{ color: 'var(--rose)' }} dir="ltr">{fmt(Math.abs(pnl.safe_to_spend_headroom))}</strong>{' '}
+                  {t('dash_safe_over_post')}
+                </span>
+              )}
+            </div>
+          )}
 
           {lastNet != null && prevMonthName && (
             <div className="row" style={{ gap: 12, marginTop: 4 }}>

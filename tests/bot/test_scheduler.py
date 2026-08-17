@@ -12,38 +12,50 @@ from datetime import date
 
 class TestSpendingScoreMath:
     """
-    Spending score = week_total / weekly_avg, where:
+    Spending score = week_total / expected, where:
       weekly_avg = monthly_avg_over_3_months / 4.33 (weeks per month)
+      expected   = weekly_avg × (elapsed_days / 7)
+
+    This class used to re-implement the formula locally and assert against the copy, which
+    meant it kept passing while the real one compared a 6-day window against a 7-day
+    expectation. The grade now comes from the actual function; the exhaustive cases live
+    in tests/math/test_pnl_math.py.
     """
 
-    def _score(self, week_total, monthly_avg):
-        if monthly_avg == 0:
-            return 0.0
-        weekly_avg = monthly_avg / 4.33
-        return round(week_total / weekly_avg, 2)
+    def _grade(self, week_total, monthly_avg, elapsed_days=7):
+        from app.scheduler import _format_score_message
+        weekly_avg = monthly_avg / 4.33 if monthly_avg else 0.0
+        return _format_score_message({
+            "week_total": week_total,
+            "weekly_avg": weekly_avg,
+            "expected": weekly_avg * (elapsed_days / 7),
+            "elapsed_days": elapsed_days,
+        })
 
-    def test_no_spending_this_week_returns_zero(self):
-        assert self._score(week_total=0, monthly_avg=1000) == 0.0
+    def test_no_spending_this_week_grades_excellent(self):
+        assert "Excellent" in self._grade(week_total=0, monthly_avg=1000)
 
-    def test_no_historical_data_returns_zero(self):
-        assert self._score(week_total=500, monthly_avg=0) == 0.0
+    def test_no_historical_data_says_so(self):
+        assert "Not enough history" in self._grade(week_total=500, monthly_avg=0)
 
-    def test_on_track_returns_approximately_one(self):
-        # weekly_avg = 1000/4.33 ≈ 231
-        # spending 231 this week → score ≈ 1.0
+    def test_on_track_grades_good(self):
         weekly_avg = 1000 / 4.33
-        score = self._score(week_total=round(weekly_avg), monthly_avg=1000)
-        assert 0.9 <= score <= 1.1
+        assert "Good" in self._grade(week_total=round(weekly_avg), monthly_avg=1000)
 
-    def test_overspending_returns_score_above_one(self):
+    def test_overspending_grades_way_over(self):
         weekly_avg = 1000 / 4.33
-        score = self._score(week_total=weekly_avg * 2, monthly_avg=1000)
-        assert score > 1.5
+        assert "Way over budget" in self._grade(week_total=weekly_avg * 2, monthly_avg=1000)
 
-    def test_underspending_returns_score_below_one(self):
+    def test_underspending_grades_excellent(self):
         weekly_avg = 1000 / 4.33
-        score = self._score(week_total=weekly_avg * 0.3, monthly_avg=1000)
-        assert score < 0.5
+        assert "Excellent" in self._grade(week_total=weekly_avg * 0.3, monthly_avg=1000)
+
+    def test_a_partial_week_is_not_flattered_by_a_full_week_expectation(self):
+        # Six days at exactly the right pace. The old comparison called this ~14% under.
+        weekly_avg = 1000 / 4.33
+        msg = self._grade(week_total=weekly_avg * 6 / 7, monthly_avg=1000, elapsed_days=6)
+        assert "Good" in msg
+        assert "0%" in msg
 
 
 # ── Subscription due-date logic ───────────────────────────────────────────────
