@@ -196,7 +196,17 @@ function ExpenseDonutCard({ data, t }) {
 
 /* ---------- Momentum ---------- */
 function MomentumChart({ data, t }) {
-  const target = data.budget_total > 0 ? data.budget_total : data.three_mo_avg_total;
+  // The target and the ideal curve both come from the server now (forecastMath.pacingTarget
+  // / momentumIdeal). They used to be `budget_total || three_mo_avg_total` with the curve
+  // rebuilt here from dow_weights — which meant the target covered only budgeted categories
+  // while the line below sums all of them, and the curve smeared fixed costs evenly across
+  // a month they land on the 1st of. Keeping the arithmetic on one side of the wire is also
+  // what stops this drifting from the backend the way the dashboard sparkline did.
+  const pacing = data.pacing_target || null;
+  const target = pacing ? pacing.total : 0;
+  const idealCurve = Array.isArray(data.ideal) && data.ideal.length === data.days_in_month
+    ? data.ideal
+    : [];
   const cum = [];
   let running = 0;
   for (const v of data.daily) {
@@ -214,33 +224,8 @@ function MomentumChart({ data, t }) {
   const linePath = pts.map((p, i) => (i === 0 ? `M${p[0]},${p[1]}` : `L${p[0]},${p[1]}`)).join(' ');
   const areaPath = pts.length ? `${linePath} L${pts[pts.length - 1][0]},${y(0)} L${pts[0][0]},${y(0)} Z` : '';
 
-  // Ideal pace, day by day.
-  //
-  // Two things changed here. The old line was `target × (d−1)/(D−1)`, which made day 1's
-  // ideal exactly zero — anyone who bought a coffee on the 1st was "over pace" before the
-  // month had really started. Day 1 gets its own day's worth now.
-  //
-  // And it is a curve, not a line: `dow_weights` says what share of a typical week lands
-  // on each weekday, so the ideal climbs faster across a weekend than across a Tuesday.
-  // With no history the backend returns seven equal weights and this draws straight, so
-  // there is no separate empty state.
-  const idealCurve = useMemo(() => {
-    const w = Array.isArray(data.dow_weights) && data.dow_weights.length === 7
-      ? data.dow_weights
-      : new Array(7).fill(1 / 7);
-    const [yy, mm] = data.month.split('-').map(Number);
-    const out = [];
-    let acc = 0, whole = 0;
-    for (let d = 1; d <= data.days_in_month; d++) whole += w[new Date(yy, mm - 1, d).getDay()];
-    for (let d = 1; d <= data.days_in_month; d++) {
-      acc += w[new Date(yy, mm - 1, d).getDay()];
-      out.push(whole > 0 ? acc / whole : d / data.days_in_month);
-    }
-    return out;
-  }, [data.dow_weights, data.month, data.days_in_month]);
-
-  const idealPath = target > 0
-    ? idealCurve.map((f, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(target * f)}`).join(' ')
+  const idealPath = target > 0 && idealCurve.length
+    ? idealCurve.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(v)}`).join(' ')
     : '';
   const idealEnd = [x(data.days_in_month - 1), y(target)];
 
@@ -257,18 +242,30 @@ function MomentumChart({ data, t }) {
   };
 
   const todayValue = cum[data.today_day - 1] || 0;
-  const idealAtToday = target * (idealCurve[data.today_day - 1] ?? 1);
+  const idealAtToday = idealCurve[data.today_day - 1] ?? target;
   const overUnder = todayValue - idealAtToday;
   const isOver = overUnder > 0;
+
+  // What the target is made of, said plainly. "₪3,400 target" was ambiguous even when the
+  // number was right, and it is the sentence that has to carry the fix: the target is the
+  // user's budgets where they set them and their own typical spending everywhere else.
+  const targetNote = !pacing || pacing.budgeted_categories === 0
+    ? t('ins_mom_target_habit')
+    : pacing.habit > 0
+      ? t('ins_mom_target_mix')
+          .replace('{budgeted}', fmt(pacing.budgeted))
+          .replace('{habit}', fmt(pacing.habit))
+      : t('ins_mom_target_budget');
 
   return (
     <div className="card card-pad-lg">
       <div className="between" style={{ marginBottom: 4 }}>
         <div className="stack" style={{ gap: 4 }}>
           <h3 className="h2">{t('ins_mom_title')}</h3>
-          <span className="muted" style={{ fontSize: 12 }} dir="ltr">
+          <span className="muted" style={{ fontSize: 12 }}>
             {t('ins_mom_sub').replace('{target}', fmt(target))}
           </span>
+          <span className="muted-2" style={{ fontSize: 11.5 }}>{targetNote}</span>
         </div>
         {target > 0 && (
           <span className={`chip ${isOver ? 'down' : 'up'}`}>

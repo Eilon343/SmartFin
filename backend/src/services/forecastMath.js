@@ -217,6 +217,138 @@ function idealPace(day, target, year, month1to12, daysInMonth, weights) {
     return target * elapsedShare(day, year, month1to12, daysInMonth, weights);
 }
 
+// ── Momentum pacing (Insights) ──────────────────────────────────────────────────
+
+/**
+ * What this month *should* cost, over exactly the categories the momentum line sums.
+ *
+ * The bug this replaces: the chart drew cumulative spend across every category against a
+ * target of `SUM(budgets.monthly_limit)`. Those are two different sets of categories.
+ * A user who budgets Food and Transport but not Housing was charged for their rent
+ * against a target that never contained rent, so the chip read "over pace by ₪5,837"
+ * for a month that was ~₪700 over on the things they had actually budgeted.
+ *
+ * The rule is one line, and it is uniform across every category on the page:
+ *
+ *     a category contributes its BUDGET if the user set one, and its HABIT
+ *     (the 3-month average) if they did not.
+ *
+ * That keeps the target like-for-like with the line without narrowing the line, and it
+ * subsumes the old `three_mo_avg_total` fallback rather than special-casing it: a user
+ * with no budgets has no budgeted categories, so the total collapses to exactly the sum
+ * of the 3-month averages — the same number the fallback produced, now reached by the
+ * general formula instead of a branch.
+ *
+ * `categories` is [{ is_fixed, three_mo_avg, budget_limit }] where `budget_limit` is null
+ * for an unbudgeted category. A limit of 0 is a real, deliberate budget of zero and is NOT
+ * treated as absent.
+ *
+ * The fixed/variable split comes back out because the two halves are paced differently —
+ * see `momentumIdeal`.
+ */
+function pacingTarget(categories = []) {
+    let budgeted = 0, habit = 0, fixed = 0, variable = 0, budgetedCount = 0;
+    for (const c of categories || []) {
+        const raw = c.budget_limit;
+        const hasBudget = raw != null && Number.isFinite(Number(raw));
+        const amount = hasBudget ? Number(raw) : (Number(c.three_mo_avg) || 0);
+        if (hasBudget) { budgeted += amount; budgetedCount += 1; } else { habit += amount; }
+        if (c.is_fixed) fixed += amount; else variable += amount;
+    }
+    return {
+        total: budgeted + habit,
+        budgeted,
+        habit,
+        fixed,
+        variable,
+        budgeted_categories: budgetedCount,
+    };
+}
+
+/**
+ * Cumulative share of a month's FIXED spending that has landed by each day, indexed
+ * `[0] = day 1`.
+ *
+ * `dowWeights` deliberately excludes `is_fixed` categories, because rent is charged on the
+ * 1st: that is a day-of-**month** event, and letting it into the day-of-week shape buried
+ * the real Fri/Sat signal. But that left the momentum chart half-corrected — the ideal
+ * curve's *shape* was variable-only while the target and the cumulative line were not. So
+ * the whole target, rent included, was smeared evenly across the month while the actual
+ * rent hit on day 1, and every user with a fixed cost read "over pace" from the 1st to
+ * roughly the 20th no matter how they behaved.
+ *
+ * Fixed spending gets its own axis instead. `totalsByDay[d]` is historical fixed spend on
+ * day-of-month `d` over the lookback; the cumulative normalisation of that is the curve.
+ *
+ * Deliberately NOT shrunk toward uniform, unlike `dowWeights`. The review's objection to
+ * per-day-of-month weights — 31 parameters from a thin history is noise — applies to
+ * discretionary spending, which is what it was aimed at. Fixed charges are the opposite
+ * case: a handful of near-deterministic direct debits on the same date every month.
+ * Shrinking them toward flat would re-smear the rent this function exists to place.
+ * Cumulative-and-normalised is already the robust form — a rent that moved from the 1st to
+ * the 3rd across the window softens the step rather than splitting it.
+ *
+ * Days beyond `daysInMonth` fold into the last day (a charge dated the 31st still has to
+ * land in a 30-day month). With no fixed history at all it returns `d / daysInMonth`,
+ * which is what the chart drew before and is the right agnostic answer.
+ */
+function fixedPaceShape(totalsByDay, daysInMonth) {
+    const buckets = new Array(daysInMonth + 1).fill(0);
+    let sum = 0;
+    for (let d = 1; d <= 31; d++) {
+        const v = Number(totalsByDay && totalsByDay[d]) || 0;
+        if (v <= 0) continue;
+        buckets[Math.min(d, daysInMonth)] += v;
+        sum += v;
+    }
+    const out = [];
+    if (!(sum > 0)) {
+        for (let d = 1; d <= daysInMonth; d++) out.push(d / daysInMonth);
+        return out;
+    }
+    let acc = 0;
+    for (let d = 1; d <= daysInMonth; d++) { acc += buckets[d]; out.push(acc / sum); }
+    return out;
+}
+
+/**
+ * The momentum chart's ideal curve: expected cumulative spend by each day of the month,
+ * indexed `[0] = day 1`.
+ *
+ * Two components, because the two kinds of spending arrive on different clocks:
+ *
+ *     ideal(d) = fixedTarget × fixedShare(d)  +  variableTarget × elapsedShare(d)
+ *
+ * The fixed half steps up on the days those charges actually land; the variable half
+ * follows the day-of-week seasonality, which is the only spending it was ever measured
+ * from. Both reach 1 at month end, so `ideal(D)` lands exactly on the target and the
+ * curve stays monotone.
+ *
+ * `idealPace` (single-component, whole target on the day-of-week shape) is what this
+ * replaces for the chart. It is kept because it is the correct form when there is no
+ * fixed/variable split to make.
+ */
+function momentumIdeal({
+    fixedTarget = 0,
+    variableTarget = 0,
+    fixedShape,
+    year,
+    month1to12,
+    daysInMonth,
+    weights,
+}) {
+    const F = Math.max(0, Number(fixedTarget) || 0);
+    const V = Math.max(0, Number(variableTarget) || 0);
+    const shape = Array.isArray(fixedShape) && fixedShape.length >= daysInMonth ? fixedShape : null;
+    const out = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+        const fShare = shape ? shape[d - 1] : d / daysInMonth;
+        const vShare = elapsedShare(d, year, month1to12, daysInMonth, weights);
+        out.push(F * fShare + V * vShare);
+    }
+    return out;
+}
+
 // ── The estimators ──────────────────────────────────────────────────────────────
 
 /**
@@ -377,6 +509,9 @@ module.exports = {
     dowWeights,
     elapsedShare,
     idealPace,
+    pacingTarget,
+    fixedPaceShape,
+    momentumIdeal,
     credibilityWeight,
     projectVariableExpenses,
     projectVariableIncome,

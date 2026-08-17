@@ -240,11 +240,12 @@ Pure client-side sum of non-paused subscription amounts. This is a *catalogue* t
 
 ## 3. Insights page — `GET /api/insights?month=YYYY-MM`
 
-`insightsController.getInsights` returns per-category totals (current / previous month / 3-month average), a daily array, weekend-vs-weekday averages, and `budget_total`.
+`insightsController.getInsights` returns per-category totals (current / previous month / 3-month average), a daily array, weekend-vs-weekday averages, `budget_total`, and the momentum chart's `pacing_target` + `ideal[]`.
 
 - **3-month average per category**: window is months `[m-3, m-2, m-1]`, and the denominator is again `months_with_data`, so a category that only existed for one of those months isn't averaged to a third of its real value.
 - **`daily[]`** is indexed 1..`days_in_month`. For the current month, days after today are `null` (not `0`) — this is what makes the momentum line stop at today instead of crashing to the floor.
-- **`budget_total`** = sum of **all** `budgets.monthly_limit` for the user (not filtered by category being in use).
+- **`budget_total`** = sum of **all** `budgets.monthly_limit` for the user (not filtered by category being in use). Reported for the budgets UI; it is **no longer** the pacing target.
+- **`ideal[]`** is indexed 1..`days_in_month` like `daily[]`, and is computed server-side. The frontend used to rebuild this curve from `dow_weights`; it now draws what it is given, so there is one implementation rather than two to keep in step.
 
 ### Donut — "where the money went"
 
@@ -252,24 +253,70 @@ Per-category `spent` for the month, zero-value categories dropped, sorted descen
 
 ### Momentum chart — pacing
 
+The cumulative line is **all** of a month's spending, so the target has to be too.
+
 ```
-target        = budget_total > 0 ? budget_total : three_mo_avg_total
+per category:  contribution = budget_limit if the user set one, else three_mo_avg
+pacing_target.total    = Σ contribution over every category (incl. Uncategorized)
+pacing_target.fixed    = Σ contribution over categories.is_fixed
+pacing_target.variable = total − fixed
+
 cumulative[d] = running sum of daily[1..d]
-ideal(d)      = target × (Σ w_i for days 1..d) / (Σ w_i for all days)
+ideal(d)      = fixed × fixedShare(d) + variable × elapsedShare(d)
 over_under    = cumulative[today] − ideal(today)
 ```
 
 The green area is actual cumulative spend; the dashed line is the ideal pace. `over_under > 0` →
 "over" chip in rose. The y-axis maxes at `max(target, peak) × 1.05`.
 
-Two changes from the old `target × (d − 1)/(D − 1)`:
+**One rule, not a branch: budget where the user stated an intention, habit where they did not.**
+This replaced `budget_total > 0 ? budget_total : three_mo_avg_total`, which paced *all* spending
+against the sum of only the limits the user happened to set. Anyone budgeting groceries but not
+rent was charged for their rent against a target that never contained rent — on the demo account,
+"over pace by ₪5,837" for a month that was ~₪700 over on the budgeted categories.
+
+The alternative fixes were rejected: **narrowing the line to budgeted categories** would have made
+the chart disagree with the donut and the page total beside it; a **coverage threshold** that falls
+back to `three_mo_avg_total` when budgets cover "most" spending needs a magic number and makes the
+target jump discontinuously as the user crosses it.
+
+`three_mo_avg_total` is still the answer for a user with no budgets — but as a *consequence* of the
+rule rather than a separate path: with nothing budgeted, every category contributes its 3-month
+average and the sum is exactly `three_mo_avg_total`. `budget_total` is still reported, and is still
+the sum of every limit; it is no longer the target.
+
+**The two halves are paced on different clocks**, and this is what the fix to `dow_weights` left
+outstanding. `dow_weights` excludes `is_fixed` categories on purpose (§3, and it is correct — rent
+on the 1st is a day-of-**month** event that buried the real Fri/Sat signal), so the ideal curve's
+*shape* was variable-only while its target and the cumulative line were not. The whole target,
+rent included, was smeared evenly across the month while the actual rent landed on day 1, and
+every user with a fixed cost read "over pace" from the 1st until roughly the 20th no matter what
+they did. So:
+
+- `elapsedShare(d)` — day-of-week seasonality — paces the **variable** half, which is the only
+  spending those weights were ever measured from.
+- `fixedShare(d)` — the cumulative share of historical **fixed** spend by day-of-month, over the
+  same 6-month lookback — paces the **fixed** half. Not shrunk toward uniform, unlike
+  `dow_weights`: the review's objection to day-of-month weights (31 noisy parameters) is about
+  discretionary spending, and fixed charges are the opposite case — a handful of near-deterministic
+  direct debits on the same date every month. Shrinking would re-smear the rent this exists to
+  place. With no fixed history it returns `d/D`, which is what the chart drew before.
+
+Both shares reach 1 at month end, so `ideal(D)` lands exactly on the target and the curve is
+monotone throughout.
+
+Two earlier changes from the original `target × (d − 1)/(D − 1)` still stand:
 
 - **The off-by-one is gone.** The old form made `ideal(1) = 0`, so anyone who bought a coffee on
   the 1st was flagged "over pace" before the month had really started. Day 1 now gets its own
   day's worth.
-- **It is a curve, not a line.** `dow_weights` makes it climb faster across a weekend than across
-  a Tuesday. With no history the backend returns seven equal weights and it draws straight, so
-  there is no separate empty state to design for.
+- **It is a curve, not a line.** `dow_weights` makes the variable half climb faster across a
+  weekend than across a Tuesday. With no history the backend returns seven equal weights and it
+  draws straight, so there is no separate empty state to design for.
+
+The chart's subtitle names the target and what it is made of — "₪X from your budgets, plus ₪Y of
+typical spending in categories you haven't budgeted", or "no budgets set, so the target is your own
+typical monthly spending". `₪3,400 target` on its own was ambiguous even when the number was right.
 
 ### Trend bars — this month vs 3-month average
 
@@ -330,12 +377,15 @@ Three things were wrong here and all three are fixed:
 
 ## 6. Known inconsistencies worth knowing about
 
-1. **Momentum target vs actual budgets.** `budget_total` sums *all* budget limits; the cumulative
-   line sums *all* spending, including categories with no budget. The two sides are not over the
-   same set of categories, so the "ideal" pace is a rough target whenever budgets cover only part
-   of a user's spending. Structural, not a bug — but worth knowing before reading the chip
-   literally. The fallback (`three_mo_avg_total`, used when no budgets exist) does not have this
-   problem.
+1. ~~**Momentum target vs actual budgets.**~~ **Fixed** — see §3. The target was
+   `budget_total`, the sum of the limits the user happened to set, while the cumulative line
+   summed *all* spending; the two sides were never over the same set of categories. It was
+   recorded here as structural, and it wasn't: the target is now built per category, taking the
+   budget where there is one and the 3-month average where there isn't, which covers exactly the
+   categories the line sums. The same change split the ideal curve into a fixed half paced by
+   day-of-month and a variable half paced by day-of-week, which removed the second, quieter
+   version of the same mismatch — the whole target being smeared evenly across a month whose rent
+   lands on the 1st.
 2. **Dead code**: `getPast3Months` in `incomeController.js` is unused — the summary endpoint
    returns actuals only, despite its comment claiming it averages variable income.
 3. **The dashboard sparkline is still computed client-side** from `/expenses`, while the Insights

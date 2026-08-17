@@ -288,6 +288,210 @@ describe('idealPace', () => {
     });
 });
 
+// ── pacingTarget ─────────────────────────────────────────────────────────────────
+
+/**
+ * The momentum chart drew cumulative spend over EVERY category against a target of
+ * `SUM(budgets.monthly_limit)` — two different sets of categories. The demo account is the
+ * case in miniature: ₪3,400 of budgets (Food, Transport, Entertainment, Shopping) against a
+ * line that also carries ₪4,200 of rent and ₪600 of utilities nobody budgeted, so the chip
+ * charged the user for their rent against a target that never contained it.
+ */
+describe('pacingTarget', () => {
+    // Food/Transport budgeted; Housing and Utilities fixed and unbudgeted, as in the demo.
+    const DEMO = [
+        { is_fixed: false, three_mo_avg: 1800, budget_limit: 1600 }, // Food
+        { is_fixed: false, three_mo_avg: 700, budget_limit: 600 },   // Transport
+        { is_fixed: true, three_mo_avg: 4200, budget_limit: null },  // Housing
+        { is_fixed: true, three_mo_avg: 600, budget_limit: null },   // Utilities
+        { is_fixed: false, three_mo_avg: 300, budget_limit: null },  // Uncategorized
+    ];
+
+    it('covers unbudgeted categories instead of ignoring them', () => {
+        const p = fx.pacingTarget(DEMO);
+        // 1600 + 600 budgeted, 4200 + 600 + 300 habit — not the bare 2,200 of budgets.
+        expect(p.budgeted).toBe(2200);
+        expect(p.habit).toBe(5100);
+        expect(p.total).toBe(7300);
+    });
+
+    it('prefers the budget over the habit wherever the user set one', () => {
+        // Food's habit is 1800 but the user asked for 1600; the target must say 1600.
+        const p = fx.pacingTarget([{ is_fixed: false, three_mo_avg: 1800, budget_limit: 1600 }]);
+        expect(p.total).toBe(1600);
+    });
+
+    it('collapses to the sum of 3-month averages when there are no budgets at all', () => {
+        // This is the old `three_mo_avg_total` fallback, now reached by the general rule
+        // rather than by a branch. Regressing this would break every budget-less user.
+        const noBudgets = DEMO.map(c => ({ ...c, budget_limit: null }));
+        const avgTotal = DEMO.reduce((s, c) => s + c.three_mo_avg, 0);
+
+        const p = fx.pacingTarget(noBudgets);
+        expect(p.total).toBe(avgTotal);
+        expect(p.budgeted).toBe(0);
+        expect(p.budgeted_categories).toBe(0);
+    });
+
+    it('treats a budget of zero as a real budget, not a missing one', () => {
+        // "I intend to spend nothing on Shopping" must not be silently replaced by
+        // "you usually spend ₪700 on Shopping".
+        const p = fx.pacingTarget([{ is_fixed: false, three_mo_avg: 700, budget_limit: 0 }]);
+        expect(p.total).toBe(0);
+        expect(p.budgeted_categories).toBe(1);
+    });
+
+    it('splits fixed from variable, and the two halves add back to the total', () => {
+        const p = fx.pacingTarget(DEMO);
+        expect(p.fixed).toBe(4800);      // Housing + Utilities
+        expect(p.variable).toBe(2500);   // Food 1600 + Transport 600 + Uncategorized 300
+        expect(p.fixed + p.variable).toBeCloseTo(p.total, 10);
+        expect(p.budgeted + p.habit).toBeCloseTo(p.total, 10);
+    });
+
+    it('follows the budget into a fixed category rather than assuming fixed means unbudgeted', () => {
+        // Nothing stops anyone budgeting Housing; the split is by is_fixed, not by whether
+        // a budget exists.
+        const p = fx.pacingTarget([{ is_fixed: true, three_mo_avg: 4200, budget_limit: 4000 }]);
+        expect(p.fixed).toBe(4000);
+        expect(p.budgeted).toBe(4000);
+    });
+
+    it('is zero, not NaN, for no categories at all', () => {
+        const p = fx.pacingTarget([]);
+        expect(p.total).toBe(0);
+        expect(Number.isFinite(p.total)).toBe(true);
+    });
+});
+
+// ── fixedPaceShape ───────────────────────────────────────────────────────────────
+
+describe('fixedPaceShape', () => {
+    it('steps up on the day the charge lands, not smoothly across the month', () => {
+        const shape = fx.fixedPaceShape({ 1: 4200 }, AUG.days);
+        expect(shape[0]).toBeCloseTo(1, 10);  // day 1: all of it
+        expect(shape[30]).toBeCloseTo(1, 10);
+    });
+
+    it('is the reason a rent payer is no longer over pace from the 1st', () => {
+        // Uniform would put 1/31 of the rent on day 1 while the whole ₪4,200 has left the
+        // account — a ~₪4,065 phantom overspend on the 1st of every month.
+        const shape = fx.fixedPaceShape({ 1: 4200 }, AUG.days);
+        expect(shape[0] * 4200).toBeCloseTo(4200, 6);
+        expect(shape[0] * 4200 - (4200 / AUG.days)).toBeGreaterThan(4000);
+    });
+
+    it('orders two charges by their day of month', () => {
+        const shape = fx.fixedPaceShape({ 1: 4200, 10: 600 }, AUG.days);
+        expect(shape[0]).toBeCloseTo(4200 / 4800, 10);
+        expect(shape[8]).toBeCloseTo(4200 / 4800, 10);  // day 9, before utilities
+        expect(shape[9]).toBeCloseTo(1, 10);            // day 10, after
+    });
+
+    it('reaches exactly 1 on the last day, so the ideal lands on the target', () => {
+        const shape = fx.fixedPaceShape({ 3: 100, 17: 250, 28: 40 }, AUG.days);
+        expect(shape[AUG.days - 1]).toBeCloseTo(1, 10);
+    });
+
+    it('is monotonically non-decreasing', () => {
+        const shape = fx.fixedPaceShape({ 1: 4200, 5: 600, 22: 130 }, AUG.days);
+        for (let i = 1; i < shape.length; i++) {
+            expect(shape[i]).toBeGreaterThanOrEqual(shape[i - 1]);
+        }
+    });
+
+    it('folds a day-31 charge into the last day of a shorter month', () => {
+        // February has no 31st, but the direct debit still has to land somewhere.
+        const shape = fx.fixedPaceShape({ 31: 500 }, 28);
+        expect(shape).toHaveLength(28);
+        expect(shape[26]).toBe(0);
+        expect(shape[27]).toBeCloseTo(1, 10);
+    });
+
+    it('falls back to a flat d/D with no fixed history', () => {
+        const shape = fx.fixedPaceShape({}, AUG.days);
+        for (let d = 1; d <= AUG.days; d++) expect(shape[d - 1]).toBeCloseTo(d / AUG.days, 10);
+    });
+});
+
+// ── momentumIdeal ────────────────────────────────────────────────────────────────
+
+describe('momentumIdeal', () => {
+    const WEEKEND_W = fx.dowWeights([50, 50, 50, 50, 50, 300, 300], new Array(7).fill(26));
+
+    const curve = (over = {}) => fx.momentumIdeal({
+        fixedTarget: 4800,
+        variableTarget: 2500,
+        fixedShape: fx.fixedPaceShape({ 1: 4200, 5: 600 }, AUG.days),
+        year: AUG.year,
+        month1to12: AUG.month,
+        daysInMonth: AUG.days,
+        weights: WEEKEND_W,
+        ...over,
+    });
+
+    it('lands exactly on the total target on the last day', () => {
+        expect(curve()[AUG.days - 1]).toBeCloseTo(7300, 6);
+    });
+
+    it('charges the fixed half on the day it lands, not one day at a time', () => {
+        const c = curve();
+        // Rent is ₪4,200 of the ₪4,800 fixed target and it hits on the 1st, so day 1's
+        // ideal is already most of the fixed half — plus one day's worth of variable.
+        expect(c[0]).toBeGreaterThan(4200);
+        expect(c[0]).toBeLessThan(4400);
+    });
+
+    it('would have flagged a perfectly-behaved rent payer as over pace without the split', () => {
+        // The whole target on the day-of-week shape — what the chart used to draw.
+        const oneComponent = fx.idealPace(1, 7300, AUG.year, AUG.month, AUG.days, WEEKEND_W);
+        const twoComponent = curve()[0];
+        // A user who paid ₪4,200 rent on the 1st and nothing else. The old curve had
+        // accrued only one Saturday's share of the whole target by then, so it reported
+        // thousands of shekels of overspend for a month that had done nothing wrong.
+        expect(4200 - oneComponent).toBeGreaterThan(3000);
+        expect(4200 - twoComponent).toBeLessThan(0); // correctly under pace
+    });
+
+    it('is monotonically non-decreasing', () => {
+        const c = curve();
+        for (let i = 1; i < c.length; i++) expect(c[i]).toBeGreaterThanOrEqual(c[i - 1]);
+    });
+
+    it('reduces to idealPace when there is nothing fixed', () => {
+        const c = curve({ fixedTarget: 0, variableTarget: 3100 });
+        for (const d of [1, 9, 17, 31]) {
+            expect(c[d - 1]).toBeCloseTo(
+                fx.idealPace(d, 3100, AUG.year, AUG.month, AUG.days, WEEKEND_W), 6
+            );
+        }
+    });
+
+    it('paces the variable half on day-of-week and the fixed half on day-of-month', () => {
+        // Aug 2026: the 7th is a Friday, the 8th a Saturday; the 11th/12th are Tue/Wed.
+        // No fixed charges in either window, so any difference is the variable half.
+        const c = fx.momentumIdeal({
+            fixedTarget: 4200,
+            variableTarget: 3100,
+            fixedShape: fx.fixedPaceShape({ 1: 4200 }, AUG.days),
+            year: AUG.year, month1to12: AUG.month, daysInMonth: AUG.days, weights: WEEKEND_W,
+        });
+        expect(c[7] - c[5]).toBeGreaterThan(c[11] - c[9]);
+    });
+
+    it('draws a flat line rather than NaN with a zero target', () => {
+        const c = curve({ fixedTarget: 0, variableTarget: 0 });
+        expect(c).toHaveLength(AUG.days);
+        for (const v of c) expect(v).toBe(0);
+    });
+
+    it('treats a missing fixed shape as uniform rather than crashing', () => {
+        const c = curve({ fixedShape: undefined, variableTarget: 0 });
+        expect(c[0]).toBeCloseTo(4800 / AUG.days, 6);
+        expect(c[AUG.days - 1]).toBeCloseTo(4800, 6);
+    });
+});
+
 // ── credibilityWeight ────────────────────────────────────────────────────────────
 
 describe('credibilityWeight', () => {

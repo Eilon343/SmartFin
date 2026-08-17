@@ -6,7 +6,8 @@ const fx = require('../services/forecastMath');
 //  - per-category totals (current, previous, 3-mo avg)
 //  - daily totals for the requested month (1..days_in_month)
 //  - weekend vs weekday averages (computed from daily)
-//  - budget_total (sum of all category monthly_limits) used as the pacing target
+//  - pacing_target + ideal[] for the momentum chart (see forecastMath.pacingTarget)
+//  - budget_total (sum of all category monthly_limits) — reported for the budgets UI
 exports.getInsights = async (req, res) => {
     const user_id = req.user.user_id;
     const month = req.query.month || new Date().toISOString().slice(0, 7);
@@ -35,7 +36,7 @@ exports.getInsights = async (req, res) => {
     const dowWindowStart = dowMonths[dowMonths.length - 1];
 
     try {
-        const [catRows, curBuckets, prevBuckets, avgBuckets, dailyRows, budgetSumRow, dowRows] = await Promise.all([
+        const [catRows, curBuckets, prevBuckets, avgBuckets, dailyRows, budgetRows, dowRows, fixedDomRows] = await Promise.all([
             db.query(
                 `SELECT category_id, name, COALESCE(is_fixed, FALSE) AS is_fixed
                  FROM categories WHERE user_id IS NULL OR user_id = ?
@@ -87,8 +88,13 @@ exports.getInsights = async (req, res) => {
                  ORDER BY d`,
                 [user_id, month, month]
             ),
+            // Per-category, not a bare SUM. The momentum target is built category by
+            // category — budget where the user set one, 3-month habit where they did not —
+            // so a total is no longer enough information. GROUP BY guards the case of two
+            // budget rows for one category; `budget_total` stays the sum of them all.
             db.query(
-                `SELECT COALESCE(SUM(monthly_limit), 0) AS total FROM budgets WHERE user_id = ?`,
+                `SELECT category_id, COALESCE(SUM(monthly_limit), 0) AS monthly_limit
+                 FROM budgets WHERE user_id = ? GROUP BY category_id`,
                 [user_id]
             ),
             // Day-of-week spending shape, for the momentum chart's ideal curve. A flat
@@ -109,6 +115,22 @@ exports.getInsights = async (req, res) => {
                    AND e.created_at >= CONCAT(?, '-01')
                    AND e.created_at < CONCAT(?, '-01')
                  GROUP BY dow`,
+                [user_id, dowWindowStart, month]
+            ),
+            // Day-of-MONTH shape of fixed spending, the other half of the ideal curve.
+            // This is the exact complement of the query above: that one models habitual
+            // spending on a day-of-week axis and excludes fixed costs, this one models
+            // fixed costs on the axis they actually live on. Rent lands on the 1st every
+            // month, so smearing it evenly across the month — which is what the chart did
+            // before — reported everyone as over pace for the first three weeks.
+            db.query(
+                `SELECT DAY(e.created_at) AS dom, COALESCE(SUM(e.amount), 0) AS total
+                 FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
+                 WHERE e.user_id = ?
+                   AND e.is_virtual = FALSE AND COALESCE(c.is_fixed, FALSE) = TRUE
+                   AND e.created_at >= CONCAT(?, '-01')
+                   AND e.created_at < CONCAT(?, '-01')
+                 GROUP BY dom`,
                 [user_id, dowWindowStart, month]
             ),
         ]);
@@ -196,7 +218,12 @@ exports.getInsights = async (req, res) => {
 
         const total_spent = Math.round(by_category.reduce((s, c) => s + c.spent, 0) * 100) / 100;
         const three_mo_avg_total = Math.round(by_category.reduce((s, c) => s + c.three_mo_avg, 0) * 100) / 100;
-        const budget_total = Math.round(Number(budgetSumRow[0][0]?.total || 0) * 100) / 100;
+
+        const budgetMap = {};
+        for (const r of budgetRows[0] || []) budgetMap[r.category_id] = Number(r.monthly_limit);
+        const budget_total = Math.round(
+            Object.values(budgetMap).reduce((s, v) => s + v, 0) * 100
+        ) / 100;
 
         const dowTotals = new Array(7).fill(0);
         for (const r of dowRows[0] || []) {
@@ -205,6 +232,40 @@ exports.getInsights = async (req, res) => {
         }
         const dow_weights = fx.dowWeights(dowTotals, fx.weekdayCounts(dowWindowStart, month));
 
+        // Momentum pacing target — every category contributes its budget if the user set
+        // one and its 3-month habit if they did not, so the target covers exactly the
+        // categories the cumulative line sums. `by_category` is the right list to walk
+        // because it already carries the Uncategorized row.
+        const pacing = fx.pacingTarget(by_category.map(c => ({
+            is_fixed: c.is_fixed,
+            three_mo_avg: c.three_mo_avg,
+            budget_limit: c.category_id != null && budgetMap[c.category_id] !== undefined
+                ? budgetMap[c.category_id]
+                : null,
+        })));
+
+        const fixedDomTotals = {};
+        for (const r of fixedDomRows[0] || []) fixedDomTotals[Number(r.dom)] = Number(r.total);
+
+        const ideal = fx.momentumIdeal({
+            fixedTarget: pacing.fixed,
+            variableTarget: pacing.variable,
+            fixedShape: fx.fixedPaceShape(fixedDomTotals, daysInMonth),
+            year: y,
+            month1to12: m,
+            daysInMonth,
+            weights: dow_weights,
+        }).map(v => Math.round(v * 100) / 100);
+
+        const pacing_target = {
+            total: Math.round(pacing.total * 100) / 100,
+            budgeted: Math.round(pacing.budgeted * 100) / 100,
+            habit: Math.round(pacing.habit * 100) / 100,
+            fixed: Math.round(pacing.fixed * 100) / 100,
+            variable: Math.round(pacing.variable * 100) / 100,
+            budgeted_categories: pacing.budgeted_categories,
+        };
+
         res.json({
             month,
             prev_month: prevMonth,
@@ -212,6 +273,8 @@ exports.getInsights = async (req, res) => {
             today_day: todayDay,
             is_current_month: isCurrentMonth,
             budget_total,
+            pacing_target,
+            ideal,
             total_spent,
             three_mo_avg_total,
             by_category,

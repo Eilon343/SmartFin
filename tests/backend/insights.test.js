@@ -15,8 +15,11 @@ const { authHeader, TEST_USER } = require('./setup/authHelper');
  *      category_id, so NULL-category rows matched nothing and vanished from total_spent —
  *      while `daily[]`, grouped by DAY rather than category, always included them. One
  *      response contradicted itself.
+ *   3. The momentum chart paced ALL spending against a target of only the categories the
+ *      user had budgeted, so anyone who budgets groceries but not rent was charged for
+ *      their rent against a target that never contained it.
  *
- * Both are pinned below.
+ * All three are pinned below.
  */
 
 const MONTH = '2025-03'; // a past month, so today_day is deterministic (= days_in_month)
@@ -27,8 +30,9 @@ function mockInsights({
     previous = [],
     lookback = [],
     daily = [],
-    budgetTotal = '0',
+    budgets = [],
     dow = [],
+    fixedDom = [],
 } = {}) {
     db.query
         .mockResolvedValueOnce([[{ user_id: TEST_USER.user_id }]]) // auth
@@ -37,8 +41,9 @@ function mockInsights({
         .mockResolvedValueOnce([previous])
         .mockResolvedValueOnce([lookback])
         .mockResolvedValueOnce([daily])
-        .mockResolvedValueOnce([[{ total: budgetTotal }]])
-        .mockResolvedValueOnce([dow]);
+        .mockResolvedValueOnce([budgets])
+        .mockResolvedValueOnce([dow])
+        .mockResolvedValueOnce([fixedDom]);
 }
 
 /** Every expense query the endpoint issues, for clause assertions. */
@@ -251,6 +256,144 @@ describe('GET /api/insights - weekend habit inputs', () => {
         expect(res.body.weekend_daily_avg).toBe(0);
         expect(res.body.daily[0]).toBe(4200);   // still counted as spending in daily[]
         expect(res.body.weekday_daily_avg).toBeGreaterThan(0); // the Monday still counts
+    });
+});
+
+// ── Momentum pacing target ────────────────────────────────────────────────────
+
+/**
+ * The third counting bug, and the one that was documented as structural rather than
+ * fixed: the momentum line summed every category while the target summed only the
+ * budgets the user happened to set. On the demo account that was ₪3,400 of budgets
+ * against a line carrying ₪4,200 of rent, and the chip read "over pace by ₪5,837" for a
+ * month that was ~₪700 over on the categories the user had actually budgeted.
+ */
+const CATS = [
+    { category_id: 1, name: 'Food', is_fixed: 0 },
+    { category_id: 2, name: 'Transport', is_fixed: 0 },
+    { category_id: 3, name: 'Housing', is_fixed: 1 },
+    { category_id: 4, name: 'Utilities', is_fixed: 1 },
+];
+
+/** Three months of identical history, so each category's 3-month average is obvious. */
+const HISTORY = ['2024-12', '2025-01', '2025-02'].flatMap((mo) => [
+    { category_id: 1, mo, total: '1800' },
+    { category_id: 2, mo, total: '700' },
+    { category_id: 3, mo, total: '4200' },
+    { category_id: 4, mo, total: '600' },
+]);
+
+const BUDGETS = [
+    { category_id: 1, monthly_limit: '1600' },
+    { category_id: 2, monthly_limit: '600' },
+];
+
+describe('GET /api/insights - momentum pacing target', () => {
+    it('covers unbudgeted categories rather than pacing all spend against ₪2,200 of budgets', async () => {
+        mockInsights({ categories: CATS, lookback: HISTORY, budgets: BUDGETS });
+
+        const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
+
+        expect(res.body.budget_total).toBe(2200);
+        // Budgets where the user set them, habit where they did not.
+        expect(res.body.pacing_target.budgeted).toBe(2200);
+        expect(res.body.pacing_target.habit).toBe(4800); // Housing 4200 + Utilities 600
+        expect(res.body.pacing_target.total).toBe(7000);
+    });
+
+    it('splits the target the same way the ideal curve paces it', async () => {
+        mockInsights({ categories: CATS, lookback: HISTORY, budgets: BUDGETS });
+
+        const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
+        const p = res.body.pacing_target;
+
+        expect(p.fixed).toBe(4800);
+        expect(p.variable).toBe(2200);
+        expect(p.fixed + p.variable).toBeCloseTo(p.total, 2);
+        expect(p.budgeted_categories).toBe(2);
+    });
+
+    it('falls back to typical spending, unchanged, for a user with no budgets', async () => {
+        // The path that was never broken. `three_mo_avg_total` is now reached by the
+        // general rule instead of a separate branch, and must still produce the same
+        // number — a budget-less user is the majority case.
+        mockInsights({ categories: CATS, lookback: HISTORY, budgets: [] });
+
+        const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
+
+        expect(res.body.budget_total).toBe(0);
+        expect(res.body.pacing_target.total).toBe(res.body.three_mo_avg_total);
+        expect(res.body.pacing_target.budgeted_categories).toBe(0);
+        expect(res.body.ideal[res.body.days_in_month - 1])
+            .toBeCloseTo(res.body.three_mo_avg_total, 2);
+    });
+
+    it('counts uncategorized spend toward the target, since the line counts it too', async () => {
+        mockInsights({
+            categories: CATS,
+            lookback: [...HISTORY, { category_id: null, mo: '2025-01', total: '400' }],
+            budgets: BUDGETS,
+        });
+
+        const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
+
+        // 7,000 + the ₪400 uncategorized average, in the variable half.
+        expect(res.body.pacing_target.total).toBe(7400);
+        expect(res.body.pacing_target.variable).toBe(2600);
+    });
+});
+
+describe('GET /api/insights - the ideal curve', () => {
+    it('reaches exactly the target on the last day of the month', async () => {
+        mockInsights({ categories: CATS, lookback: HISTORY, budgets: BUDGETS });
+
+        const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
+
+        expect(res.body.ideal).toHaveLength(res.body.days_in_month);
+        expect(res.body.ideal[res.body.days_in_month - 1])
+            .toBeCloseTo(res.body.pacing_target.total, 2);
+    });
+
+    it('charges rent on the day it lands instead of smearing it across the month', async () => {
+        // Every fixed shekel in the history was charged on the 1st, so by day 1 the ideal
+        // already carries the whole ₪4,800 fixed half. Without this the chart spread the
+        // rent evenly and reported a rent payer as ~₪4,600 over pace on the 1st.
+        mockInsights({
+            categories: CATS,
+            lookback: HISTORY,
+            budgets: BUDGETS,
+            fixedDom: [{ dom: 1, total: '14400' }],
+        });
+
+        const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
+
+        expect(res.body.ideal[0]).toBeGreaterThan(4800);
+        expect(res.body.ideal[0]).toBeLessThan(4900); // 4,800 + one day of the variable half
+    });
+
+    it('is monotonically non-decreasing', async () => {
+        mockInsights({
+            categories: CATS,
+            lookback: HISTORY,
+            budgets: BUDGETS,
+            fixedDom: [{ dom: 1, total: '12600' }, { dom: 10, total: '1800' }],
+        });
+
+        const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
+
+        for (let i = 1; i < res.body.ideal.length; i++) {
+            expect(res.body.ideal[i]).toBeGreaterThanOrEqual(res.body.ideal[i - 1]);
+        }
+    });
+
+    it('reads the fixed shape from fixed categories only, over the full lookback', async () => {
+        mockInsights();
+        const queries = await expenseQueries();
+        const domQuery = queries.find((sql) => /DAY\(e\.created_at\)\s+AS\s+dom/i.test(sql));
+
+        expect(domQuery).toBeDefined();
+        expect(domQuery).toMatch(/is_fixed.*=\s*TRUE/is);
+        expect(domQuery).toMatch(/is_virtual\s*=\s*FALSE/i);
     });
 });
 
