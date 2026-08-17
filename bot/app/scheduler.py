@@ -5,16 +5,32 @@ from apscheduler.triggers.cron import CronTrigger
 from aiogram import Bot
 
 
+def _week_start(today: date) -> date:
+    """Sunday of the week `today` falls in.
+
+    The Israeli week starts on Sunday, and this job runs on a Saturday — so anchoring to
+    Monday, as this used to, pushed Sunday (the first working day) into the *previous*
+    week's total. Every score was computed over a window that both omitted a real spending
+    day and straddled two weeks as the user experiences them.
+
+    date.weekday() is Mon=0..Sun=6, so Sunday needs 0 days taken off and Monday needs 1.
+    """
+    return today - timedelta(days=(today.weekday() + 1) % 7)
+
+
 async def _compute_spending_score(db_manager, user_id: int) -> dict:
     pool = await db_manager.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            # This week (Mon–today)
+            # This week (Sunday–today)
             today = datetime.now().date()
-            week_start = today - timedelta(days=today.weekday())
+            week_start = _week_start(today)
+            elapsed_days = (today - week_start).days + 1
+            # is_virtual rows are savings-goal transfers, not spending. Counting them
+            # graded people worse for saving money, which is the opposite of the point.
             await cur.execute(
                 "SELECT COALESCE(SUM(amount), 0) FROM expenses "
-                "WHERE user_id = %s AND created_at >= %s",
+                "WHERE user_id = %s AND is_virtual = FALSE AND created_at >= %s",
                 (user_id, week_start),
             )
             (week_total,) = await cur.fetchone()
@@ -23,7 +39,8 @@ async def _compute_spending_score(db_manager, user_id: int) -> dict:
             await cur.execute(
                 "SELECT COALESCE(SUM(amount), 0), COUNT(DISTINCT DATE_FORMAT(created_at,'%%Y-%%m')) "
                 "FROM expenses "
-                "WHERE user_id = %s AND created_at < DATE_FORMAT(NOW(),'%%Y-%%m-01') "
+                "WHERE user_id = %s AND is_virtual = FALSE "
+                "  AND created_at < DATE_FORMAT(NOW(),'%%Y-%%m-01') "
                 "  AND created_at >= DATE_FORMAT(NOW() - INTERVAL 3 MONTH,'%%Y-%%m-01')",
                 (user_id,),
             )
@@ -33,19 +50,31 @@ async def _compute_spending_score(db_manager, user_id: int) -> dict:
             # Weekly equivalent of monthly average (month ≈ 4.33 weeks)
             weekly_avg = monthly_avg / 4.33
 
+    # Compare elapsed days against elapsed days. The job fires on Saturday, so the week is
+    # 6 days old, not 7 — measuring it against a full week's expectation told every user
+    # they were ~14% under budget no matter what they actually spent.
+    expected = weekly_avg * (elapsed_days / 7)
+
     return {
         "week_total": float(week_total),
         "weekly_avg": round(weekly_avg, 2),
+        "expected": round(expected, 2),
+        "elapsed_days": elapsed_days,
     }
 
 
 def _format_score_message(data: dict) -> str:
     week = data["week_total"]
     avg = data["weekly_avg"]
-    if avg == 0:
+    expected = data.get("expected", avg)
+    days = data.get("elapsed_days", 7)
+    if avg == 0 or expected == 0:
         return "📊 *Weekly Spending Score*\nNot enough history yet — keep logging expenses!"
 
-    ratio = week / avg
+    # Rounded to the precision the message actually reports. Without this the grade and
+    # the percentage below it could disagree — being 0.02% over the expectation printed
+    # "Over budget" next to "you spent 0% more than usual", which just reads as a bug.
+    ratio = round(week / expected, 2)
     if ratio <= 0.8:
         grade, emoji = "Excellent", "🟢"
     elif ratio <= 1.0:
@@ -60,8 +89,8 @@ def _format_score_message(data: dict) -> str:
     return (
         f"📊 *Weekly Spending Score*\n"
         f"━━━━━━━━━━━━━━\n"
-        f"This week: `₪ {week:.2f}`\n"
-        f"Weekly avg: `₪ {avg:.2f}`\n"
+        f"This week ({days}d): `₪ {week:.2f}`\n"
+        f"Expected by now: `₪ {expected:.2f}`\n"
         f"Result: {emoji} *{grade}*\n"
         f"You spent `{abs(pct):.0f}%` {direction} than usual."
     )

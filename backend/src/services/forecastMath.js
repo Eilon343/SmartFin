@@ -1,0 +1,386 @@
+/**
+ * Every forecasting formula SmartFin shows the user.
+ *
+ * This module is pure — no DB, no `new Date()`, no config reads. Today's date, the user's
+ * history and their month-to-date totals are all passed in. That is what makes the money
+ * logic testable in isolation, the same arrangement as `duplicateMatcher.js` and
+ * `classifyRow()`: the rules live in one place and the controller only fetches rows and
+ * shapes a response.
+ *
+ * THE CORE RULE: a forecast must use BOTH the user's history and their current pace, and
+ * must weight them by how much evidence this month has actually produced. Two estimators
+ * were rejected for getting this wrong in opposite directions:
+ *
+ *   1. Naive run-rate — `(S_d / d) × D`, what the app used to do. On day 2 it turns one
+ *      ₪400 grocery run into a ₪6,000 month. It ignores the user's history entirely and
+ *      its variance goes as D/d, so it is at its loudest exactly when it knows least. The
+ *      `MIN_DAYS_FOR_FULL_PROJECTION = 5` blend was a patch over this: it damped days 1–4
+ *      and then stopped, which left the estimator just as noisy on day 6.
+ *
+ *   2. Pure historical accrual — `S_d + μ × (D − d)/D`, proposed in the mathematical
+ *      review as "Bayesian shrinkage". It shrinks nothing. Every remaining day is
+ *      forecast at the historical average regardless of what this month is doing, so a
+ *      user spending triple their usual rate for twenty days gets a forecast that never
+ *      says so. Correct for the *expected* month, useless for *this* month.
+ *
+ * What we do instead is credibility weighting: forecast the remaining days as a blend of
+ * both, with the weight on this month's pace rising as the month supplies evidence. See
+ * `projectVariableExpenses`.
+ *
+ * SECOND RULE: fixed costs are never run-rated. `categories.is_fixed` (Housing, Utilities,
+ * Savings) are flat monthly charges that already landed; scaling them to month-end would
+ * bill the user for their rent twice.
+ */
+
+// ── Tunables ────────────────────────────────────────────────────────────────────
+
+/**
+ * Credibility constant, in days. The weight on this month's own pace is `d / (d + K)`, so
+ * K is the number of elapsed days at which the current month and the historical prior
+ * carry equal weight: at K = 10, ten days of observed spending is worth as much as
+ * everything previous months say about you.
+ *
+ * K also bounds how much a single early purchase can move the forecast. The month's spend
+ * enters the remainder as `S_d × (D − d)/(d + K)` — the `+ K` is what stops the leverage
+ * exploding as d → 1, which is the whole failure mode of a raw run-rate. Tuned on the two
+ * cases that matter and pull in opposite directions: one ₪400 purchase on day 1 against a
+ * ₪3,000 habit (K=7 forecast ₪4,440, K=10 ₪4,130, K=14 ₪3,910) versus twenty days at
+ * triple the usual rate, which must still be reported loudly (K=7 ₪8,447, K=10 ₪8,290,
+ * K=14 ₪8,123). Past ~10 the early-month gain costs real late-month responsiveness.
+ */
+const CREDIBILITY_K = 10;
+
+/**
+ * Strength of the uniform prior on the day-of-week weights, in day-observations. Each
+ * weekday gets ~26 observations from a 6-month window, so at m = 10 the data carries
+ * 26/36 ≈ 72% and a thin history degrades smoothly toward a flat week rather than toward
+ * noise. This is why we weight by day-of-week (7 parameters) and not by day-of-month as
+ * the review proposed (31 parameters, ~6 observations each — almost entirely noise).
+ */
+const DOW_PRIOR_STRENGTH = 10;
+
+/** Months of history feeding every average. */
+const LOOKBACK_MONTHS = 6;
+
+/**
+ * Half-life of the exponential decay applied across the lookback, in months. At 2 months,
+ * the month before last counts ~71% of last month, and the 6th month back ~18%. This is
+ * what lets the window be long (more data, less noise) without being slow to notice that
+ * someone's spending genuinely changed.
+ */
+const LOOKBACK_HALF_LIFE = 2;
+
+const DECAY = Math.pow(0.5, 1 / LOOKBACK_HALF_LIFE);
+
+// ── Helpers ─────────────────────────────────────────────────────────────────────
+
+/** Number of whole months from `from` (YYYY-MM) forward to `to`. Both are strings. */
+function monthsBetween(from, to) {
+    const [fy, fm] = from.split('-').map(Number);
+    const [ty, tm] = to.split('-').map(Number);
+    return (ty - fy) * 12 + (tm - fm);
+}
+
+/** The `count` months immediately before `month`, most recent first. */
+function pastMonths(month, count = LOOKBACK_MONTHS) {
+    if (!Number.isInteger(count) || count < 1 || count > 24) {
+        throw new Error(`Invalid lookback count: ${count}`);
+    }
+    const [y, m] = month.split('-').map(Number);
+    const out = [];
+    for (let i = 1; i <= count; i++) {
+        let yy = y, mm = m - i;
+        while (mm <= 0) { mm += 12; yy--; }
+        out.push(`${yy}-${String(mm).padStart(2, '0')}`);
+    }
+    return out;
+}
+
+/**
+ * How many of each weekday fall in `[fromMonth-01, toMonth-01)`. Index 0 = Sunday.
+ *
+ * `dowWeights` needs this: a ~181-day window does not contain an equal number of each
+ * weekday, so without it a weekday that happened to occur 27 times would look like a
+ * bigger spending day than one that occurred 25 times.
+ */
+function weekdayCounts(fromMonth, toMonth) {
+    const counts = new Array(7).fill(0);
+    const [fy, fm] = fromMonth.split('-').map(Number);
+    const [ty, tm] = toMonth.split('-').map(Number);
+    const end = new Date(ty, tm - 1, 1);
+    for (const cur = new Date(fy, fm - 1, 1); cur < end; cur.setDate(cur.getDate() + 1)) {
+        counts[cur.getDay()]++;
+    }
+    return counts;
+}
+
+/**
+ * Exponentially decayed mean of a set of monthly totals.
+ *
+ * `rows` is [{ month: 'YYYY-MM', total: Number }] — only months that actually have data,
+ * which keeps the denominator `months_with_data`. A user with two months of history is
+ * never divided by six, the same guarantee the old 3-month average made.
+ */
+function decayedMean(rows, anchorMonth) {
+    if (!rows || rows.length === 0) return 0;
+    let num = 0, den = 0;
+    for (const r of rows) {
+        const age = monthsBetween(r.month, anchorMonth); // 1 = last month
+        if (age < 1) continue;
+        const w = Math.pow(DECAY, age - 1);
+        num += w * Number(r.total);
+        den += w;
+    }
+    return den > 0 ? num / den : 0;
+}
+
+/**
+ * Sample standard deviation of the monthly totals, unweighted.
+ *
+ * Deliberately not decay-weighted: the decay exists to track a moving mean, but the spread
+ * we want is "how much do this user's months differ from each other at all", and weighting
+ * it would understate the older, equally real variation. Returns null below two months —
+ * one observation has no spread, and inventing one would be the exact false precision this
+ * range is meant to remove.
+ */
+function monthlyStdDev(rows) {
+    if (!rows || rows.length < 2) return null;
+    const xs = rows.map(r => Number(r.total));
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    const variance = xs.reduce((a, x) => a + (x - mean) ** 2, 0) / (xs.length - 1);
+    return Math.sqrt(variance);
+}
+
+// ── Day-of-week seasonality ─────────────────────────────────────────────────────
+
+/**
+ * Seven weights, summing to 1, describing what share of a typical week's spending lands on
+ * each weekday. Index 0 = Sunday … 6 = Saturday (JS `getDay()` order).
+ *
+ * `totals[i]` is the summed spend on that weekday across the lookback and `dayCounts[i]`
+ * how many such days the window contained — the second is required because a 181-day
+ * window does not hold an equal number of each weekday, and dividing by it turns a total
+ * into a rate that can be compared across weekdays.
+ *
+ * Each rate is then shrunk toward the flat 1/7 by `DOW_PRIOR_STRENGTH`, so a user with two
+ * weeks of history gets a nearly-flat week instead of a confident claim that they never
+ * spend on Tuesdays.
+ */
+function dowWeights(totals = [], dayCounts = []) {
+    const flat = 1 / 7;
+    const rates = [];
+    for (let i = 0; i < 7; i++) {
+        const n = Number(dayCounts[i]) || 0;
+        rates.push(n > 0 ? (Number(totals[i]) || 0) / n : 0);
+    }
+    const rateSum = rates.reduce((a, b) => a + b, 0);
+    if (rateSum <= 0) return new Array(7).fill(flat);
+
+    const shrunk = rates.map((r, i) => {
+        const n = Number(dayCounts[i]) || 0;
+        return (n * (r / rateSum) + DOW_PRIOR_STRENGTH * flat) / (n + DOW_PRIOR_STRENGTH);
+    });
+    // Re-normalise: the shrinkage above only sums to 1 exactly when every dayCount is
+    // equal, which a real calendar window never guarantees.
+    const s = shrunk.reduce((a, b) => a + b, 0);
+    return shrunk.map(w => w / s);
+}
+
+/**
+ * The share of a whole month's expected spending that falls on days 1..`throughDay`.
+ *
+ * This is the seasonality-aware replacement for `d / D`. A month whose remaining days hold
+ * two weekends should forecast higher than one ending mid-week, and this is the term that
+ * knows it. With flat weights it reduces exactly to `d / D`, so there is no separate
+ * code path for a user without history.
+ */
+function elapsedShare(throughDay, year, month1to12, daysInMonth, weights) {
+    const w = weights && weights.length === 7 ? weights : new Array(7).fill(1 / 7);
+    let elapsed = 0, whole = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+        const wd = w[new Date(year, month1to12 - 1, d).getDay()];
+        whole += wd;
+        if (d <= throughDay) elapsed += wd;
+    }
+    return whole > 0 ? elapsed / whole : 0;
+}
+
+/**
+ * Ideal cumulative spend by day `d` for the momentum chart.
+ *
+ * Fixes an off-by-one in the old `target × (d−1)/(D−1)`, which made ideal(1) = 0 — every
+ * user was "over pace" the moment they bought anything on the 1st. Day 1 should be
+ * allowed its own day's worth of spending.
+ */
+function idealPace(day, target, year, month1to12, daysInMonth, weights) {
+    if (!(target > 0)) return 0;
+    return target * elapsedShare(day, year, month1to12, daysInMonth, weights);
+}
+
+// ── The estimators ──────────────────────────────────────────────────────────────
+
+/**
+ * Weight on this month's own pace, rising from ~0 on day 0 toward 1 at month end.
+ * Continuous and monotone in `d`, which is what removes the day-5 boundary the old
+ * dampening needed. With no history there is no prior to blend toward, so the current
+ * month is all the evidence there is and the weight is 1 — shrinking a new user's forecast
+ * toward a μ of zero would tell them they are about to spend nothing.
+ */
+function credibilityWeight(dayOfMonth, monthsWithData) {
+    if (!(monthsWithData > 0)) return 1;
+    const d = Math.max(0, dayOfMonth);
+    return d / (d + CREDIBILITY_K);
+}
+
+/**
+ * Projected variable spend for the whole month.
+ *
+ *   run-rate remaining  = S_d × (remaining share / elapsed share)   ← this month's pace
+ *   historical remaining = μ × remaining share                      ← this user's habit
+ *   projection = S_d + w × run-rate + (1 − w) × historical
+ *
+ * Properties worth keeping, each pinned by a test:
+ *   • continuous and monotone in `d` — no boundary anywhere in the month
+ *   • at d = D the remaining share is 0, so the projection lands exactly on actuals
+ *   • early in the month w is small, so one large purchase cannot run away with the month
+ *   • late in the month w is large, so a genuinely unusual month is reported as unusual
+ */
+function projectVariableExpenses({
+    spentToDate,
+    dayOfMonth,
+    daysInMonth,
+    historicalMean = 0,
+    monthsWithData = 0,
+    year,
+    month1to12,
+    weights,
+}) {
+    const S = Number(spentToDate) || 0;
+    if (dayOfMonth >= daysInMonth) return S;
+
+    const elapsed = elapsedShare(dayOfMonth, year, month1to12, daysInMonth, weights);
+    const remaining = 1 - elapsed;
+    if (remaining <= 0) return S;
+
+    // elapsed is never 0 for dayOfMonth >= 1: every shrunk weight is strictly positive.
+    const runRateRemaining = elapsed > 0 ? S * (remaining / elapsed) : 0;
+    const histRemaining = (Number(historicalMean) || 0) * remaining;
+
+    const w = credibilityWeight(dayOfMonth, monthsWithData);
+    return S + w * runRateRemaining + (1 - w) * histRemaining;
+}
+
+/**
+ * Projected variable income for the whole month.
+ *
+ * Replaces `fixed + max(variable_actual, variable_avg)`. That `max` was a floor, not an
+ * estimator: late in the month it quietly propped a genuinely bad income month back up to
+ * the average, so the forecast could never warn anyone that their income had fallen short.
+ * Adding the still-expected remainder instead is the unbiased conditional expectation and
+ * lets a weak month read as weak.
+ *
+ * Adapted from the review's §3.2, which assumes income accrued *by day d* — `income.month`
+ * is a `YYYY-MM` column with no day granularity, so there is no `I_d` to read. What we have
+ * is everything recorded for the month so far, plus today's date, which is enough.
+ *
+ * Floored at what has already arrived: a forecast may never show less income than the user
+ * has already been paid.
+ */
+function projectVariableIncome({
+    receivedToDate,
+    dayOfMonth,
+    daysInMonth,
+    historicalMean = 0,
+    year,
+    month1to12,
+    weights,
+}) {
+    const I = Number(receivedToDate) || 0;
+    if (dayOfMonth >= daysInMonth) return I;
+    // Income does not follow the spending week — a salary is not likelier on a Friday —
+    // so this stays on plain calendar days rather than the day-of-week weights.
+    void year; void month1to12; void weights;
+    const remaining = (daysInMonth - dayOfMonth) / daysInMonth;
+    return Math.max(I, I + (Number(historicalMean) || 0) * remaining);
+}
+
+/**
+ * A ±1σ band around the forecast, or nulls when there is not enough history to have a
+ * defensible one.
+ *
+ * Only the *unspent* part of the month is uncertain — money already spent is known — so
+ * each standard deviation is scaled by the share of the month still ahead. Income and
+ * expense uncertainty are independent enough to add in quadrature rather than linearly;
+ * summing them would overstate the band by roughly 40%.
+ *
+ * Returns nulls rather than a zero-width band when history is too thin. A range the user
+ * cannot rely on is worse than no range at all — it is the same false precision as a
+ * point estimate, just wearing a confidence interval.
+ */
+function forecastRange(point, { expenseStdDev, incomeStdDev, remainingShare }) {
+    const rho = Math.max(0, Math.min(1, Number(remainingShare) || 0));
+    const se = expenseStdDev == null ? null : Number(expenseStdDev) * rho;
+    const si = incomeStdDev == null ? null : Number(incomeStdDev) * rho;
+    if (se == null && si == null) return { low: null, high: null, sigma: null };
+    const sigma = Math.sqrt((se || 0) ** 2 + (si || 0) ** 2);
+    if (!(sigma > 0)) return { low: null, high: null, sigma: null };
+    return { low: point - sigma, high: point + sigma, sigma };
+}
+
+/**
+ * How much is left to spend per remaining day without breaking the month.
+ *
+ * The one number that answers the question the app exists for. Everything already
+ * committed comes off the top — the fixed costs still to come, subscriptions not yet
+ * billed, the savings the user has chosen to set aside — and what remains is divided by
+ * the plain count of days left.
+ *
+ * Plain days, not seasonality-weighted days: a weighted figure would be larger before a
+ * weekend and smaller after it, which is arguably more accurate and definitely unusable —
+ * the user needs a number they can hold in their head for the rest of the month.
+ *
+ * Negative means the month is already committed past its income; the caller reports the
+ * overshoot rather than a negative allowance.
+ */
+function safeToSpendPerDay({
+    projectedIncome,
+    spentToDate,
+    fixedRemaining = 0,
+    subscriptionsAhead = 0,
+    savingsAllocation = 0,
+    dayOfMonth,
+    daysInMonth,
+}) {
+    const daysLeft = daysInMonth - dayOfMonth;
+    const headroom = Number(projectedIncome)
+        - Number(spentToDate)
+        - Number(fixedRemaining)
+        - Number(subscriptionsAhead)
+        - Number(savingsAllocation);
+    if (daysLeft <= 0) return { per_day: null, headroom, days_left: 0 };
+    return { per_day: headroom / daysLeft, headroom, days_left: daysLeft };
+}
+
+/** Round once, at the response boundary — never mid-formula. */
+const money = (n) => (n == null || !Number.isFinite(n) ? null : Math.round(n * 100) / 100);
+
+module.exports = {
+    CREDIBILITY_K,
+    DOW_PRIOR_STRENGTH,
+    LOOKBACK_MONTHS,
+    LOOKBACK_HALF_LIFE,
+    monthsBetween,
+    pastMonths,
+    weekdayCounts,
+    decayedMean,
+    monthlyStdDev,
+    dowWeights,
+    elapsedShare,
+    idealPace,
+    credibilityWeight,
+    projectVariableExpenses,
+    projectVariableIncome,
+    forecastRange,
+    safeToSpendPerDay,
+    money,
+};

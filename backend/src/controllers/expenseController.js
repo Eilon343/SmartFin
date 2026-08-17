@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const fx = require('../services/forecastMath');
 
 /**
  * A category may be used by a caller only if it is a shared base category
@@ -305,10 +306,24 @@ exports.togglePauseSubscription = async (req, res) => {
     }
 };
 
-// P&L = fixed_income + max(variable_actual, variable_avg) - projected_expenses - subscription_total - savings_transferred
+// P&L = projected_income - projected_expenses - subscription_total - savings_transferred
 // savings_transferred = SUM(amount) of virtual expenses this month (actual moves to savings goals).
-// variable_avg denominator = months with actual data (not always VARIABLE_INCOME_LOOKBACK)
-// projected_expenses scales actual spending to end of month (current month only)
+//
+// Every formula below lives in `services/forecastMath.js` and is pure — this controller
+// fetches rows and shapes a response, nothing more. Read that module's header before
+// changing any of it; it records which estimators were rejected and why.
+//
+//   projected_income   = fixed_income + variable_actual + μ_income × (remaining days / D)
+//                        (floored at variable_actual — never forecast less than received)
+//   projected_expenses = fixed_sum + credibility-weighted projection of variable spend,
+//                        blending this month's pace with the user's own history by
+//                        w = d / (d + 7). Fixed costs are never run-rated.
+//   forecast_low/high  = ±1σ of the *unspent* part of the month, or null below 2 months
+//                        of history — never a fabricated interval.
+//   safe_to_spend      = what is left per remaining day after everything committed.
+//
+// Averages use a 6-month window with a 2-month half-life, and the denominator is always
+// months_with_data — a user with two months of history is never divided by six.
 //
 // subscription_total counts ONLY subscriptions not yet billed in the requested month
 // (future month → all of them; current month → billing day still ahead; past month → 0).
@@ -317,7 +332,6 @@ exports.togglePauseSubscription = async (req, res) => {
 // already inside projected_expenses; counting the subscription as well subtracted the
 // same money twice. Being forward-only, it is NOT pro-rated by the MTD clamp, and it
 // belongs to forecasted_net_pnl alone — current_net_pnl is actuals only.
-const VARIABLE_INCOME_LOOKBACK = 3;
 
 exports.getPnL = async (req, res) => {
     const user_id = req.user.user_id;
@@ -342,7 +356,8 @@ exports.getPnL = async (req, res) => {
     const proRate = isMTD ? asOfDay / daysInMonth : 1;
 
     try {
-        const pastMonths = getPastMonthsStr(month, VARIABLE_INCOME_LOOKBACK);
+        const lookback = fx.pastMonths(month, fx.LOOKBACK_MONTHS);
+        const oldestLookback = lookback[lookback.length - 1];
 
         // Expenses have a real `created_at` timestamp, so we clamp them via SQL rather than pro-rating.
         // Split into fixed vs variable buckets via categories.is_fixed for smart forecasting.
@@ -358,7 +373,7 @@ exports.getPnL = async (req, res) => {
                GROUP BY COALESCE(c.is_fixed, FALSE)`;
         const expensesParams = isMTD ? [user_id, month, month, asOfDay] : [user_id, month, month];
 
-        const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows]] = await Promise.all([
+        const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows], [expPastRows], [dowRows]] = await Promise.all([
             db.query(expensesSql, expensesParams),
             // Only subscriptions that have NOT been charged yet in `month`. Once the
             // billing day passes, the real charge is already in `expenses` — imported by
@@ -396,9 +411,36 @@ exports.getPnL = async (req, res) => {
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month = ?",
                 [user_id, month]
             ),
+            // Per-month rows, not a pre-averaged total: the decay weighting and the
+            // standard deviation behind the forecast range both need the individual months.
             db.query(
-                `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(DISTINCT month) AS months_with_data FROM income WHERE user_id = ? AND type = 'variable' AND month IN (${pastMonths.map(() => '?').join(', ')})`,
-                [user_id, ...pastMonths]
+                `SELECT month, COALESCE(SUM(amount), 0) AS total FROM income
+                 WHERE user_id = ? AND type = 'variable' AND month IN (${lookback.map(() => '?').join(', ')})
+                 GROUP BY month`,
+                [user_id, ...lookback]
+            ),
+            // Historical VARIABLE spend per month — the prior the credibility weighting
+            // blends toward. Same fixed/variable split and is_virtual exclusion as the
+            // current-month query above, or the prior would not be comparable to S_d.
+            db.query(
+                `SELECT DATE_FORMAT(e.created_at, '%Y-%m') AS month, COALESCE(SUM(e.amount), 0) AS total
+                 FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
+                 WHERE e.user_id = ? AND e.is_virtual = FALSE AND COALESCE(c.is_fixed, FALSE) = FALSE
+                   AND e.created_at >= CONCAT(?, '-01')
+                   AND e.created_at < CONCAT(?, '-01')
+                 GROUP BY month`,
+                [user_id, oldestLookback, month]
+            ),
+            // Day-of-week spending shape over the same window. DAYOFWEEK() is 1=Sunday..7,
+            // shifted to JS getDay() order (0=Sunday) on the way out.
+            db.query(
+                `SELECT DAYOFWEEK(e.created_at) - 1 AS dow, COALESCE(SUM(e.amount), 0) AS total
+                 FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
+                 WHERE e.user_id = ? AND e.is_virtual = FALSE AND COALESCE(c.is_fixed, FALSE) = FALSE
+                   AND e.created_at >= CONCAT(?, '-01')
+                   AND e.created_at < CONCAT(?, '-01')
+                 GROUP BY dow`,
+                [user_id, oldestLookback, month]
             )
         ]);
 
@@ -416,8 +458,23 @@ exports.getPnL = async (req, res) => {
         const fixed_income = Number(fixedRows[0].total) * proRate;
         const variable_actual = Number(varActualRows[0].total) * proRate;
 
-        const monthsWithData = Number(varPastRows[0].months_with_data) || 0;
-        const variable_avg = (monthsWithData > 0 ? Number(varPastRows[0].total) / monthsWithData : 0) * proRate;
+        // Decayed means over the lookback. `months_with_data` is the row count, so a user
+        // with two months of history is divided by two, never by LOOKBACK_MONTHS.
+        const incomeHistory = (varPastRows || []).map(r => ({ month: r.month, total: Number(r.total) }));
+        const expenseHistory = (expPastRows || []).map(r => ({ month: r.month, total: Number(r.total) }));
+        const incomeMonths = incomeHistory.length;
+        const expenseMonths = expenseHistory.length;
+        const variable_avg = fx.decayedMean(incomeHistory, month) * proRate;
+        const variable_expense_avg = fx.decayedMean(expenseHistory, month);
+
+        // Day-of-week shape. dayCounts must come from the same window the totals did, or
+        // the rates are not comparable across weekdays.
+        const dowTotals = new Array(7).fill(0);
+        for (const r of dowRows || []) {
+            const i = Number(r.dow);
+            if (i >= 0 && i <= 6) dowTotals[i] = Number(r.total);
+        }
+        const dow_weights = fx.dowWeights(dowTotals, fx.weekdayCounts(oldestLookback, month));
 
         const actual_income = fixed_income + variable_actual;
         // Subscriptions are deliberately NOT subtracted here. subscription_total is money
@@ -428,40 +485,80 @@ exports.getPnL = async (req, res) => {
         // The forecast below is where subscription_total belongs.
         const current_net_pnl = actual_income - total_expenses - savings_allocation;
 
-        // Smart Forecast: fixed expenses (rent, utilities) are flat — already paid, won't recur this month.
-        // Only variable expenses get run-rated to end of month.
-        // projected_expenses = fixed_sum + (variable_sum / day) * days_in_month
+        // Smart Forecast. Fixed expenses (rent, utilities) are flat — already paid, won't
+        // recur this month — so only variable spend is projected forward, by the
+        // credibility blend in forecastMath. Unlike the run-rate this replaced, it needs
+        // no minimum-day guard and no special case for zero spend: with S_d = 0 it simply
+        // returns the historical expectation, which is the right answer on the 1st.
         // For MTD requests (prev-month comparison anchor), keep projection = actual.
-        const MIN_DAYS_FOR_FULL_PROJECTION = 5;
         const currentMonth = new Date().toISOString().slice(0, 7);
+        // A future month is day 0 — nothing has happened yet, so the whole month is still
+        // ahead and both estimators fall through to the historical expectation on their
+        // own. A past month is fully elapsed and its "projection" is simply its actuals.
+        const isFutureMonth = month > currentMonth;
+        const isLiveMonth = !isMTD && month >= currentMonth;
+        const dayOfMonth = isFutureMonth ? 0 : (month === currentMonth ? Math.max(1, new Date().getDate()) : daysInMonth);
+        const remaining_share = isLiveMonth
+            ? 1 - fx.elapsedShare(dayOfMonth, yQ, mQ, daysInMonth, dow_weights)
+            : 0;
+
         let projected_expenses = total_expenses;
         let projected_variable = variable_sum;
-        if (!isMTD && month === currentMonth && total_expenses > 0) {
-            const today = new Date();
-            const dayOfMonth = Math.max(1, today.getDate());
-            // Run-rate variable only. Skip if no variable spend yet (avoid div-by-zero, project 0).
-            if (variable_sum > 0) {
-                const dailyVarRate = variable_sum / dayOfMonth;
-                const naiveVarProjection = dailyVarRate * daysInMonth;
-                if (dayOfMonth >= MIN_DAYS_FOR_FULL_PROJECTION) {
-                    projected_variable = naiveVarProjection;
-                } else {
-                    // Early-month dampening: blend actual → naive projection
-                    const weight = dayOfMonth / MIN_DAYS_FOR_FULL_PROJECTION;
-                    projected_variable = variable_sum + (naiveVarProjection - variable_sum) * weight;
-                }
-            }
+        if (isLiveMonth) {
+            projected_variable = fx.projectVariableExpenses({
+                spentToDate: variable_sum,
+                dayOfMonth,
+                daysInMonth,
+                historicalMean: variable_expense_avg,
+                monthsWithData: expenseMonths,
+                year: yQ,
+                month1to12: mQ,
+                weights: dow_weights,
+            });
             projected_expenses = fixed_sum + projected_variable;
         }
 
-        const projected_income = isMTD
-            ? actual_income
-            : fixed_income + Math.max(variable_actual, variable_avg);
+        const projected_variable_income = isLiveMonth
+            ? fx.projectVariableIncome({
+                receivedToDate: variable_actual,
+                dayOfMonth,
+                daysInMonth,
+                historicalMean: variable_avg,
+                year: yQ,
+                month1to12: mQ,
+                weights: dow_weights,
+            })
+            : variable_actual;
+        const projected_income = isMTD ? actual_income : fixed_income + projected_variable_income;
         // The forecast is the only place subscription_total belongs — in both branches,
         // so "money still to come out" is never silently dropped by the MTD clamp.
         const forecasted_net_pnl = isMTD
             ? current_net_pnl - subscription_total
             : projected_income - projected_expenses - subscription_total - savings_allocation;
+
+        // ±1σ on the unspent part of the month only. Suppressed entirely outside the live
+        // month: a completed month has no uncertainty left to describe.
+        const range = isLiveMonth
+            ? fx.forecastRange(forecasted_net_pnl, {
+                expenseStdDev: fx.monthlyStdDev(expenseHistory),
+                incomeStdDev: fx.monthlyStdDev(incomeHistory),
+                remainingShare: remaining_share,
+            })
+            : { low: null, high: null, sigma: null };
+
+        // What is left per remaining day once everything already committed is off the top.
+        // fixed_remaining is 0: fixed costs are flat monthly charges that have already
+        // landed by the time they matter, and they are inside total_expenses via fixed_sum.
+        const safe = isLiveMonth
+            ? fx.safeToSpendPerDay({
+                projectedIncome: projected_income,
+                spentToDate: total_expenses,
+                subscriptionsAhead: subscription_total,
+                savingsAllocation: savings_allocation,
+                dayOfMonth,
+                daysInMonth,
+            })
+            : { per_day: null, headroom: null, days_left: 0 };
 
         res.json({
             month,
@@ -482,27 +579,20 @@ exports.getPnL = async (req, res) => {
             savings_allocation: Math.round(savings_allocation * 100) / 100,
             current_net_pnl: Math.round(current_net_pnl * 100) / 100,
             forecasted_net_pnl: Math.round(forecasted_net_pnl * 100) / 100,
+            // null below two months of history — the UI shows the point estimate alone
+            // rather than an interval nobody can stand behind.
+            forecast_low: fx.money(range.low),
+            forecast_high: fx.money(range.high),
+            safe_to_spend_per_day: fx.money(safe.per_day),
+            safe_to_spend_headroom: fx.money(safe.headroom),
+            days_left: safe.days_left,
+            history_months: Math.max(incomeMonths, expenseMonths),
         });
     } catch (err) {
         console.error('getPnL error:', err);
         res.status(500).json({ error: 'Failed to calculate P&L' });
     }
 };
-
-function getPastMonthsStr(month, count) {
-    if (!Number.isInteger(count) || count < 1 || count > 24) {
-        throw new Error(`Invalid lookback count: ${count}`);
-    }
-    const [y, m] = month.split('-').map(Number);
-    const result = [];
-    let cy = y, cm = m;
-    for (let i = 0; i < count; i++) {
-        cm--;
-        if (cm <= 0) { cm = 12; cy--; }
-        result.push(`${cy}-${String(cm).padStart(2, '0')}`);
-    }
-    return result;
-}
 
 exports.upsertBudget = async (req, res) => {
     const user_id = req.user.user_id;

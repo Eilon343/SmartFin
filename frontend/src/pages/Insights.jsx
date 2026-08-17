@@ -31,6 +31,11 @@ function fmt(n) {
   if (n == null || Number.isNaN(n)) return '—';
   return `‎₪${Math.round(n).toLocaleString('en-US')}‎`;
 }
+// Sign before the symbol, LTR-marked, same convention as the dashboard's fmtSign.
+function fmtSign(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  return `‎${n < 0 ? '−' : '+'}₪${Math.round(Math.abs(n)).toLocaleString('en-US')}‎`;
+}
 function ordinal(n) {
   const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
@@ -208,8 +213,36 @@ function MomentumChart({ data, t }) {
   const pts = cum.map((v, i) => v == null ? null : [x(i), y(v)]).filter(Boolean);
   const linePath = pts.map((p, i) => (i === 0 ? `M${p[0]},${p[1]}` : `L${p[0]},${p[1]}`)).join(' ');
   const areaPath = pts.length ? `${linePath} L${pts[pts.length - 1][0]},${y(0)} L${pts[0][0]},${y(0)} Z` : '';
+
+  // Ideal pace, day by day.
+  //
+  // Two things changed here. The old line was `target × (d−1)/(D−1)`, which made day 1's
+  // ideal exactly zero — anyone who bought a coffee on the 1st was "over pace" before the
+  // month had really started. Day 1 gets its own day's worth now.
+  //
+  // And it is a curve, not a line: `dow_weights` says what share of a typical week lands
+  // on each weekday, so the ideal climbs faster across a weekend than across a Tuesday.
+  // With no history the backend returns seven equal weights and this draws straight, so
+  // there is no separate empty state.
+  const idealCurve = useMemo(() => {
+    const w = Array.isArray(data.dow_weights) && data.dow_weights.length === 7
+      ? data.dow_weights
+      : new Array(7).fill(1 / 7);
+    const [yy, mm] = data.month.split('-').map(Number);
+    const out = [];
+    let acc = 0, whole = 0;
+    for (let d = 1; d <= data.days_in_month; d++) whole += w[new Date(yy, mm - 1, d).getDay()];
+    for (let d = 1; d <= data.days_in_month; d++) {
+      acc += w[new Date(yy, mm - 1, d).getDay()];
+      out.push(whole > 0 ? acc / whole : d / data.days_in_month);
+    }
+    return out;
+  }, [data.dow_weights, data.month, data.days_in_month]);
+
+  const idealPath = target > 0
+    ? idealCurve.map((f, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(target * f)}`).join(' ')
+    : '';
   const idealEnd = [x(data.days_in_month - 1), y(target)];
-  const idealStart = [x(0), y(0)];
 
   const [hover, setHover] = useState(null);
   const svgRef = useRef(null);
@@ -224,7 +257,7 @@ function MomentumChart({ data, t }) {
   };
 
   const todayValue = cum[data.today_day - 1] || 0;
-  const idealAtToday = (target * (data.today_day - 1)) / Math.max(1, data.days_in_month - 1);
+  const idealAtToday = target * (idealCurve[data.today_day - 1] ?? 1);
   const overUnder = todayValue - idealAtToday;
   const isOver = overUnder > 0;
 
@@ -276,7 +309,7 @@ function MomentumChart({ data, t }) {
 
           {target > 0 && (
             <>
-              <line x1={idealStart[0]} y1={idealStart[1]} x2={idealEnd[0]} y2={idealEnd[1]}
+              <path d={idealPath} fill="none"
                     stroke="var(--text-3)" strokeWidth="1.5" strokeDasharray="4 4" />
               <text x={idealEnd[0] - 8} y={idealEnd[1] - 6} textAnchor="end"
                     fontSize="10.5" fill="var(--text-3)">{t('ins_mom_ideal')}</text>
@@ -468,6 +501,12 @@ function SmartInsights({ data, t, lang }) {
   const wd = data.weekday_daily_avg || 0;
   const wkndPct = wd > 0 ? ((we - wd) / wd) * 100 : 0;
   const isWkndHigher = wkndPct > 0;
+  // A percentage difference between two daily averages is only worth showing once both
+  // sides rest on a few days. Early in the month one weekend and a quiet Monday produce a
+  // confident-looking "+900% on weekends" that means nothing, and a near-zero weekday
+  // average makes the ratio explode no matter how small the actual shekel gap is. The
+  // absolute per-day gap is shown alongside for the same reason.
+  const wkndReliable = (data.weekend_days_elapsed ?? 0) >= 2 && (data.weekday_days_elapsed ?? 0) >= 3 && wd > 0;
 
   const cards = [];
 
@@ -496,12 +535,12 @@ function SmartInsights({ data, t, lang }) {
     });
   }
 
-  if (we > 0 || wd > 0) {
+  if (wkndReliable) {
     cards.push({
       tone: 'idg', toneVar: 'indigo', icon: 'calendar-days', title: t('ins_wknd_title'),
       body: (
         <>{t('ins_wknd_pre')} <strong>{Math.abs(wkndPct).toFixed(0)}% {isWkndHigher ? t('ins_wknd_more') : t('ins_wknd_less')}</strong> {t('ins_wknd_post')}{' '}
-        <span className="muted" dir="ltr">({fmt(we)} vs {fmt(wd)} {t('ins_wknd_per_day')})</span></>
+        <span className="muted" dir="ltr">({fmtSign(we - wd)} {t('ins_wknd_per_day')} · {fmt(we)} vs {fmt(wd)})</span></>
       ),
       stat: (
         <div className="row" style={{ gap: 4 }}>
