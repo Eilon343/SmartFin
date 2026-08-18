@@ -24,6 +24,35 @@ const CONTAINER_BROWSER_ARGS = [
 const CLOSE_TIMEOUT_MS = 10000;
 
 /**
+ * How long a single scrape may run before it is abandoned.
+ *
+ * Nothing in the library bounds a scrape, and an unbounded one is not merely slow — it
+ * is fatal to auto-sync as a whole. The scheduler queues its next cycle only after the
+ * current one resolves, while holding a "busy" flag, so one bank page that hangs stops
+ * syncing for EVERY user until the container is restarted, with no error and no log
+ * line to notice. Generous enough for a slow three-month backfill.
+ */
+const SCRAPE_TIMEOUT_MS = 5 * 60 * 1000;
+
+class ScrapeTimeoutError extends Error {}
+
+/**
+ * Rejects with a ScrapeTimeoutError if `promise` has not settled within `ms`.
+ *
+ * The losing promise keeps running — it cannot be cancelled — so its eventual rejection
+ * is swallowed here. Left unhandled it would surface as an unhandled rejection and, on
+ * Node 20's default, take the whole API process down long after the scrape was given up on.
+ */
+function withTimeout(promise, ms, message) {
+    let timer;
+    promise.catch(() => {});
+    const expiry = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new ScrapeTimeoutError(message)), ms);
+    });
+    return Promise.race([promise, expiry]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Guarantees the browser process is gone once a scrape finishes.
  *
  * The library does close the browser in its own `terminate()`, but that isn't enough:
@@ -75,7 +104,11 @@ async function scrapeAccount({ companyId, credentials, startDate }) {
 
     try {
         const scraper = createScraper(options);
-        const result = await scraper.scrape(credentials);
+        const result = await withTimeout(
+            scraper.scrape(credentials),
+            SCRAPE_TIMEOUT_MS,
+            `Bank scrape exceeded ${SCRAPE_TIMEOUT_MS / 60000} minutes and was abandoned`
+        );
 
         if (!result.success) {
             return {
@@ -86,9 +119,23 @@ async function scrapeAccount({ companyId, credentials, startDate }) {
         }
 
         return { success: true, accounts: result.accounts };
+    } catch (err) {
+        if (!(err instanceof ScrapeTimeoutError)) throw err;
+        // Reported as the library's own 'Timeout' type so it flows through the normal
+        // transient-failure path and is retried on the usual backoff.
+        //
+        // The wording matters: syncFailureClassifier reads '/login', 'redirect' and
+        // 'signin' in the error detail as "stuck on the login page", which parks the
+        // connection as a credentials problem and STOPS the retries. None of those
+        // words may appear here — an abandoned scrape is not a rejected password.
+        console.error(`Bank scraper: ${companyId} —`, err.message);
+        return { success: false, errorType: 'Timeout', errorMessage: err.message };
     } finally {
+        // Runs on the timeout path too, which is the point: `prepareBrowser` has
+        // already handed us the Chromium the abandoned scrape is still holding, and
+        // nothing else will ever close it.
         await forceCloseBrowser(browser);
     }
 }
 
-module.exports = { scrapeAccount };
+module.exports = { scrapeAccount, SCRAPE_TIMEOUT_MS };

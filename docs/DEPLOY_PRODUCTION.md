@@ -280,7 +280,10 @@ than letting it retry.
 ### 7b. Wait for the first sync to finish
 
 A new connection is due immediately, so it starts within ~2 minutes; allow **5–10 minutes**
-for all connections. After that each re-syncs on a rolling 24h.
+for all connections. After that each re-syncs twice a day, at 07:00 and 19:00 Asia/Jerusalem.
+
+Note that `last_sync_at` is stored in **UTC** (nothing sets `TZ` in compose), so a raw DB
+reading of the query below runs 2–3 hours behind Israel time. The Settings screen converts it.
 
 ```bash
 docker exec smartfin_db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -D smartfin -e "

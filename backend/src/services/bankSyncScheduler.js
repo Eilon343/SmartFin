@@ -85,21 +85,35 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const DRAIN_INTERVAL_MS = 60 * 1000; // 1 minute
 const DRAIN_BATCH_SIZE = 40; // categorized in a single Gemini call, so this is 1 request per tick
-// How stale an active connection must be before it is scraped again — the actual sync
-// cadence. Measured from the last SUCCESS, so it is a rolling 24h rather than a fixed
-// hour: a connection first synced at 14:42 comes due around 14:42 each day, drifting
-// slightly later as each scrape takes time. Not "overnight" — that would need a
-// scheduled hour rather than an interval.
-const RESYNC_AFTER_MS = 24 * 60 * 60 * 1000;
+// When an active connection is scraped, as local wall-clock hours in BANK_TIMEZONE:
+// morning and evening, twice a day. A connection is due once it has not synced since
+// the most recent of these that has passed, so the times stay put instead of drifting.
+//
+// This replaced a rolling 24h interval measured from the last SUCCESS. That cadence
+// slid a few minutes later every day (each sync's stamp includes however long the
+// scrape took), so over a few months the sync time walked all the way around the clock.
+const SYNC_HOURS_LOCAL = [7, 19];
 const FIRST_SYNC_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000; // 3 months
 const INCREMENTAL_OVERLAP_MS = 3 * 24 * 60 * 60 * 1000; // 3 days, late-settling txns
 const RETRY_ERRORED_AFTER_MS = 60 * 60 * 1000; // a transient scrape failure gets another go in an hour
 const MAX_IMPORT_ATTEMPTS = 3; // tries before a staged row is parked as 'failed'
 const BANK_TIMEZONE = 'Asia/Jerusalem';
+// A cycle is presumed wedged after this long and the lock is broken. Must comfortably
+// exceed one full pass over every connection at SCRAPE_TIMEOUT_MS each.
+const STALE_CYCLE_MS = 30 * 60 * 1000;
+// Consecutive failed sends before an import notification is given up on, so a
+// permanently unreachable chat cannot grow `unannounced` without bound.
+const MAX_NOTIFY_ATTEMPTS = 5;
 
-let syncing = false;
+// When the running cycle started, or null when idle. A timestamp rather than a boolean
+// so a cycle that somehow never returns cannot leave the flag stuck and silently
+// suppress every future sync.
+let syncingSince = null;
+let cycleToken = 0;
 const forceSyncIds = new Set();
-// user_id -> transactions imported but not yet announced, accumulated across drain ticks.
+// user_id -> { count, parked, attempts } for transactions imported but not yet
+// announced, accumulated across drain ticks and RETAINED until Telegram actually
+// accepts the message.
 const unannounced = new Map();
 
 // A manual sync is a queued request, not an immediate one: the caller registers the
@@ -170,12 +184,70 @@ const DRAIN_QUERY =
      ORDER BY t.created_at ASC LIMIT ${DRAIN_BATCH_SIZE}`;
 
 /**
+ * The wall-clock fields BANK_TIMEZONE shows at a given instant.
+ *
+ * The containers run on UTC (nothing sets TZ), so local time cannot be read off a Date
+ * directly — Intl is what knows about Israel's DST, which is what makes 07:00 mean 07:00
+ * in both winter and summer rather than sliding an hour twice a year.
+ */
+function zonedParts(instant, timeZone) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        hourCycle: 'h23',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(instant);
+    const at = (type) => Number(parts.find((p) => p.type === type).value);
+    return {
+        year: at('year'), month: at('month'), day: at('day'),
+        hour: at('hour'), minute: at('minute'), second: at('second'),
+    };
+}
+
+/** How far ahead of UTC `timeZone` runs at `instant`, in ms. */
+function zoneOffsetMs(instant, timeZone) {
+    const p = zonedParts(instant, timeZone);
+    const asIfUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+    // zonedParts has second resolution, so the comparison must too.
+    return asIfUtc - Math.floor(instant.getTime() / 1000) * 1000;
+}
+
+/** The instant at which `timeZone`'s clock reads the given local date at `hour`:00. */
+function instantAtLocalHour({ year, month, day }, hour, timeZone) {
+    const naive = Date.UTC(year, month - 1, day, hour, 0, 0);
+    // The offset depends on the instant, and the instant on the offset. One correction
+    // pass settles it everywhere except inside a DST transition itself.
+    const firstPass = naive - zoneOffsetMs(new Date(naive), timeZone);
+    return new Date(naive - zoneOffsetMs(new Date(firstPass), timeZone));
+}
+
+/**
+ * The most recent scheduled sync time that has already passed.
+ *
+ * A connection is due when its last success predates this, which is what pins syncs to
+ * SYNC_HOURS_LOCAL instead of letting them drift. Exported for tests.
+ */
+function lastDueSlot(now = new Date(), timeZone = BANK_TIMEZONE) {
+    const hours = [...SYNC_HOURS_LOCAL].sort((a, b) => a - b);
+    const local = zonedParts(now, timeZone);
+
+    for (const hour of [...hours].reverse()) {
+        if (local.hour >= hour) return instantAtLocalHour(local, hour, timeZone);
+    }
+    // Before the day's first slot, so the most recent one was yesterday's last. Stepping
+    // back 24h can land on a 23h/25h DST day, but never outside the previous calendar
+    // day, which is all that is read off it.
+    const yesterday = zonedParts(new Date(now.getTime() - 24 * 60 * 60 * 1000), timeZone);
+    return instantAtLocalHour(yesterday, hours[hours.length - 1], timeZone);
+}
+
+/**
  * Which connections are due for a scrape.
  *
  * 'error' connections MUST be included — a bank timeout is transient, and the failure
  * notification tells the user the next scheduled sync will try again. Excluding them
  * (the original behaviour) meant one blip stopped a connection permanently, until the
- * user happened to press Sync now. They retry on a shorter backoff than the 24h
+ * user happened to press Sync now. They retry on a shorter backoff than the scheduled
  * cadence, paced by last_attempt_at so a persistently failing bank is not hammered.
  *
  * 'invalid_credentials' is deliberately absent: retrying a password the bank already
@@ -366,13 +438,24 @@ async function reconcileSettlements(userId, cardCompanyId) {
 }
 
 async function runSyncCycle() {
-    if (syncing) return;
-    syncing = true;
+    if (syncingSince) {
+        const runningFor = Date.now() - syncingSince;
+        if (runningFor < STALE_CYCLE_MS) return;
+        // Every scrape is individually bounded, so reaching this means something else
+        // wedged. Pressing on is the lesser evil: the alternative is a lock nobody ever
+        // releases and auto-sync that is silently dead until the container restarts.
+        console.error(
+            `runSyncCycle: previous cycle still running after ${Math.round(runningFor / 60000)} ` +
+            `minutes — breaking the lock and starting a new cycle`
+        );
+    }
+    const token = ++cycleToken;
+    syncingSince = Date.now();
     try {
         const [connections] = await db.query(
             DUE_CONNECTIONS_QUERY,
             [
-                new Date(Date.now() - RESYNC_AFTER_MS),
+                lastDueSlot(),
                 new Date(Date.now() - RETRY_ERRORED_AFTER_MS),
                 Array.from(forceSyncIds).length ? Array.from(forceSyncIds) : [0],
             ]
@@ -392,7 +475,9 @@ async function runSyncCycle() {
     } catch (err) {
         console.error('runSyncCycle error:', err);
     } finally {
-        syncing = false;
+        // Guarded: if this cycle's lock was broken and a newer cycle took over, that
+        // newer cycle now owns the flag and this one must not clear it.
+        if (cycleToken === token) syncingSince = null;
     }
 }
 
@@ -608,9 +693,19 @@ async function runCategorizationDrain() {
         // accumulate across those ticks — reporting only the final batch told a user
         // whose 177-row backfill took five ticks that 40 transactions were imported.
         for (const [userId, count] of importedBy) {
-            unannounced.set(userId, (unannounced.get(userId) || 0) + count);
+            const pending = unannounced.get(userId) || { count: 0, parked: 0, attempts: 0 };
+            pending.count += count;
+            unannounced.set(userId, pending);
         }
-        for (const [userId, total] of unannounced) {
+        // Rows that gave up in THIS drain ride along on the tally, so a notification
+        // that has to be retried still carries the warning it was meant to carry.
+        // Only users already awaiting a message are touched — a parked row on its own
+        // has never triggered a notification and should not start now.
+        for (const [userId, parked] of parkedBy) {
+            const pending = unannounced.get(userId);
+            if (pending) pending.parked += parked;
+        }
+        for (const [userId, pending] of unannounced) {
             // Pending rows are excluded for the same reason the drain skips them: they
             // are parked until they settle, and would otherwise hold the backlog open
             // forever and suppress the notification entirely.
@@ -626,23 +721,36 @@ async function runCategorizationDrain() {
             // drain trigger the warning — keying it on the standing 'failed' count would
             // repeat the same complaint after every future sync, with nothing the user
             // could do to clear it.
-            const parked = parkedBy.get(userId) || 0;
+            const { count: total, parked } = pending;
             const warning = parked > 0
                 ? `\n\n⚠️ ${parked} transaction${parked === 1 ? '' : 's'} could not be imported and ` +
                   `${parked === 1 ? 'is' : 'are'} missing from your totals.`
                 : '';
 
             const chatId = await getChatId(userId);
-            // Cleared only once the message is actually on its way, so a failure while
-            // resolving the chat id leaves the tally to be retried on the next tick
-            // instead of swallowing it.
-            unannounced.delete(userId);
-            await notifyUser(
+            const delivered = await notifyUser(
                 chatId,
                 `✅ *Bank transactions added*\n\n` +
                 `${total} transaction${total === 1 ? '' : 's'} imported and categorized. ` +
                 `Open SmartFin to review them.${warning}`
             );
+
+            // Cleared only once Telegram has actually taken the message. It used to be
+            // cleared BEFORE the send, so a one-second network blip destroyed the only
+            // signal the user gets that a sync worked — they saw nothing at all and
+            // concluded sync was broken. Now it survives to the next tick and retries.
+            if (delivered) {
+                unannounced.delete(userId);
+                continue;
+            }
+            pending.attempts++;
+            if (pending.attempts >= MAX_NOTIFY_ATTEMPTS) {
+                console.error(
+                    `Categorization drain: giving up on the import notification for user ${userId} ` +
+                    `after ${pending.attempts} failed sends (${total} transaction(s) went unannounced)`
+                );
+                unannounced.delete(userId);
+            }
         }
         if (parkedBy.size > 0) {
             console.error('Categorization drain: rows parked as failed by user —', [...parkedBy.entries()]);
@@ -664,14 +772,28 @@ exports.DRAIN_QUERY = DRAIN_QUERY;
 exports.STAGE_TXN_QUERY = STAGE_TXN_QUERY;
 exports.DUE_CONNECTIONS_QUERY = DUE_CONNECTIONS_QUERY;
 exports.syncWindowStart = syncWindowStart;
+exports.lastDueSlot = lastDueSlot;
+exports.SYNC_HOURS_LOCAL = SYNC_HOURS_LOCAL;
 
 exports.start = () => {
-    const loop = (fn, interval) => {
+    const loop = (fn, interval, label) => {
         const run = async () => {
-            try { await fn(); } finally { setTimeout(run, interval); }
+            // The next tick is queued from `finally`, so an exception must never escape
+            // — one throw here and this loop stops for the lifetime of the process.
+            try {
+                await fn();
+            } catch (err) {
+                console.error(`${label} loop error:`, err);
+            } finally {
+                setTimeout(run, interval);
+            }
         };
         run();
     };
-    loop(runSyncCycle, SYNC_INTERVAL_MS);
-    loop(runCategorizationDrain, DRAIN_INTERVAL_MS);
+    console.log(
+        `Bank sync scheduled for ${SYNC_HOURS_LOCAL.map((h) => `${String(h).padStart(2, '0')}:00`).join(' and ')} ` +
+        `${BANK_TIMEZONE} — next due slot passed at ${lastDueSlot().toISOString()}`
+    );
+    loop(runSyncCycle, SYNC_INTERVAL_MS, 'runSyncCycle');
+    loop(runCategorizationDrain, DRAIN_INTERVAL_MS, 'runCategorizationDrain');
 };

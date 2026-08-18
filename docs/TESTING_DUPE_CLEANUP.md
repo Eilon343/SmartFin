@@ -86,8 +86,9 @@ within a couple of minutes. Each scrape then takes a minute or two of headless C
 connections run sequentially, and `runCategorizationDrain` imports the staged rows on its own
 1-minute tick in batches of 40.
 
-Once a connection is `active` it is only re-scraped when `last_sync_at` is more than
-**24 hours** old, so the bank is contacted about once a day. Watch it with:
+Once a connection is `active` it is re-scraped twice a day, at **07:00 and 19:00
+Asia/Jerusalem** — it becomes due when `last_sync_at` predates the most recent of those
+that has passed. Watch it with:
 
 ```powershell
 docker logs -f smartfin_backend
