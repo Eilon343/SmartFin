@@ -8,7 +8,7 @@ SmartFin — personal finance app with **three user-facing surfaces sharing one 
 
 1. **Telegram bot** (`bot/`, Python 3 + aiogram 3) — users type natural language (`55 nis shawarma`, `got salary 15000`); parsed by Gemini.
 2. **Web PWA** (`frontend/`, React 19 + Vite 8) — dashboard, charts, budgets, savings, settings.
-3. **Bank & card sync** (`backend/src/services/`) — scrapes the user's banks and credit cards once every 24h with `israeli-bank-scrapers` (headless Chromium), stages transactions, categorizes them with Gemini, writes expenses/income. (Rolling 24h from the last success, not a fixed overnight hour — the 2-minute loop only polls for what is due.)
+3. **Bank & card sync** (`backend/src/services/`) — scrapes the user's banks and credit cards twice a day with `israeli-bank-scrapers` (headless Chromium), stages transactions, categorizes them with Gemini, writes expenses/income. (Fixed local hours — 07:00 and 19:00 Asia/Jerusalem, DST-aware — with the 2-minute loop only polling for what is due. Each scrape is bounded by a 5-minute timeout.)
 
 All three write the same DB, so a Telegram entry shows on the web dashboard immediately.
 

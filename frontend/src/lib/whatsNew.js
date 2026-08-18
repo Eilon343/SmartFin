@@ -8,7 +8,8 @@
  * re-open a tour everyone has already read. Bump it only when there is genuinely
  * something new to show.
  */
-// Unchanged through 1.3.0. The auth overhaul needs no tour — a sign-in screen explains
+// Unchanged through 1.3.1 (1.3.1 is a bank-sync scheduling fix, with nothing to show).
+// The auth overhaul needs no tour either — a sign-in screen explains
 // itself — and the first-run welcome is a separate, per-account tour. Bumping this would
 // re-open the bank-sync tour for everyone who has already read it.
 export const WHATS_NEW_VERSION = '1.2.0';

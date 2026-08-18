@@ -1,6 +1,6 @@
 const {
     classifyRow, settlementIssuerOf, isRefund, hashTxn, txnDateOf, bankDateOf,
-    syncWindowStart, DUE_CONNECTIONS_QUERY,
+    syncWindowStart, DUE_CONNECTIONS_QUERY, lastDueSlot, SYNC_HOURS_LOCAL,
 } = require('../../backend/src/services/bankSyncScheduler');
 const { encrypt, decrypt } = require('../../backend/src/utils/cryptoUtil');
 const bankCompanies = require('../../backend/src/config/bankCompanies');
@@ -256,6 +256,67 @@ describe('which connections are due for a sync', () => {
         // last_sync_at must keep pointing at the last SUCCESS or the incremental window
         // shrinks past a run of failures and transactions are missed.
         expect(DUE_CONNECTIONS_QUERY).toMatch(/status = 'error'\s+AND \(last_attempt_at IS NULL OR last_attempt_at < \?\)/);
+    });
+});
+
+/**
+ * The sync cadence is two fixed local hours, not a rolling interval. The interval
+ * version slid a few minutes later every day (each stamp included the scrape duration),
+ * so the sync time walked around the clock over a few months.
+ *
+ * These run against Asia/Jerusalem explicitly rather than the ambient zone — the
+ * containers are on UTC, so a helper that quietly used local time would pass on a
+ * developer machine in Israel and be three hours wrong in production.
+ */
+describe('lastDueSlot — the most recent scheduled sync time', () => {
+    const TZ = 'Asia/Jerusalem';
+    const slot = (iso) => lastDueSlot(new Date(iso), TZ).toISOString();
+
+    test('the schedule is morning and evening', () => {
+        expect(SYNC_HOURS_LOCAL).toEqual([7, 19]);
+    });
+
+    // Summer: Israel is UTC+3 (IDT), so 07:00 local is 04:00Z and 19:00 local is 16:00Z.
+    test('just after the morning slot, the morning slot is returned', () => {
+        expect(slot('2026-08-18T04:30:00Z')).toBe('2026-08-18T04:00:00.000Z');
+    });
+
+    test('just before the morning slot, yesterday evening is still the last one', () => {
+        expect(slot('2026-08-18T03:30:00Z')).toBe('2026-08-17T16:00:00.000Z');
+    });
+
+    test('after the evening slot, the evening slot is returned', () => {
+        expect(slot('2026-08-18T17:30:00Z')).toBe('2026-08-18T16:00:00.000Z');
+    });
+
+    // Winter: Israel is UTC+2 (IST). A helper that hardcoded +3 would be an hour out
+    // here, dragging both syncs an hour off for half the year.
+    test('winter time shifts the slot by the real offset, not a hardcoded one', () => {
+        expect(slot('2026-01-15T06:30:00Z')).toBe('2026-01-15T05:00:00.000Z');
+        expect(slot('2026-01-15T04:30:00Z')).toBe('2026-01-14T17:00:00.000Z');
+    });
+
+    test('the slot never lies in the future', () => {
+        const samples = ['2026-03-27T00:30:00Z', '2026-10-25T00:30:00Z', '2026-06-01T12:00:00Z'];
+        for (const iso of samples) {
+            expect(lastDueSlot(new Date(iso), TZ).getTime()).toBeLessThanOrEqual(Date.parse(iso));
+        }
+    });
+
+    // The whole point of the change: the same slot is returned all the way across a
+    // window, so a connection synced at 07:03 is not due again until 19:00.
+    test('a connection synced just after a slot is not due again within that window', () => {
+        const syncedAt = Date.parse('2026-08-18T04:03:00Z');
+        const laterThatMorning = lastDueSlot(new Date('2026-08-18T11:00:00Z'), TZ);
+        expect(syncedAt).toBeGreaterThan(laterThatMorning.getTime()); // not due
+        const afterEvening = lastDueSlot(new Date('2026-08-18T16:01:00Z'), TZ);
+        expect(syncedAt).toBeLessThan(afterEvening.getTime()); // due
+    });
+
+    test('consecutive days land on exactly the same clock time', () => {
+        const a = lastDueSlot(new Date('2026-08-18T05:00:00Z'), TZ);
+        const b = lastDueSlot(new Date('2026-08-19T05:00:00Z'), TZ);
+        expect(b.getTime() - a.getTime()).toBe(24 * 60 * 60 * 1000);
     });
 });
 
