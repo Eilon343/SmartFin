@@ -86,6 +86,48 @@ async function forceCloseBrowser(browser) {
     }
 }
 
+/**
+ * Logs what a rejected navigation actually returned.
+ *
+ * The library reduces a failed navigation to 'Failed to navigate to url <url>, status
+ * code: <n>' and drops the response itself, which is the only thing that says WHY.
+ * Isracard sits behind Cloudflare bot management, so the discriminating evidence is in
+ * the response headers — 'cf-mitigated' names a bot decision outright and 'cf-ray'
+ * identifies the request in Cloudflare's own logs — plus the first bytes of the body,
+ * which separate a challenge page from a plain origin error.
+ *
+ * Attached via 'preparePage', which the library runs before login, so it is in place
+ * for the very first navigation — the one that is failing. Document responses only: a
+ * blocked page drags in a pile of failed subresources, and logging every one of them
+ * buries the single line that matters.
+ */
+function attachFailureCapture(page, companyId) {
+    page.on('response', (response) => {
+        void (async () => {
+            try {
+                if (response.ok() || response.request().resourceType() !== 'document') return;
+                const headers = response.headers();
+                let body;
+                try {
+                    body = (await response.text()).slice(0, 300).replace(/\s+/g, ' ');
+                } catch {
+                    body = '<body unavailable>';
+                }
+                console.error(
+                    `Bank scraper: ${companyId} — ${response.status()} on ${response.url()}\n` +
+                    `  cf-ray=${headers['cf-ray'] || '-'} ` +
+                    `cf-mitigated=${headers['cf-mitigated'] || '-'} ` +
+                    `server=${headers.server || '-'}\n` +
+                    `  ua-sent=${response.request().headers()['user-agent'] || '-'}\n` +
+                    `  body=${body}`
+                );
+            } catch {
+                // Diagnostics must never be the thing that fails a scrape.
+            }
+        })();
+    });
+}
+
 async function scrapeAccount({ companyId, credentials, startDate }) {
     let browser = null;
 
@@ -97,6 +139,8 @@ async function scrapeAccount({ companyId, credentials, startDate }) {
         args: CONTAINER_BROWSER_ARGS,
         // The library's only hook that hands back the browser it launched.
         prepareBrowser: (launched) => { browser = launched; },
+        // Diagnostic only — see attachFailureCapture.
+        preparePage: (page) => attachFailureCapture(page, companyId),
     };
     if (process.env.PUPPETEER_EXECUTABLE_PATH) {
         options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
