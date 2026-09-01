@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useI18n } from '../context/I18nContext';
+import { useSettings } from '../context/SettingsContext';
+import { currentCycle } from '../lib/cycle';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import ProgressBar, { pct, tone } from '../components/ui/ProgressBar';
@@ -39,10 +41,6 @@ function fmt(n) {
 function formatDate(isoOrDateStr, lang) {
   const d = new Date(isoOrDateStr);
   return d.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'short', day: '2-digit' });
-}
-
-function currentMonth() {
-  return new Date().toISOString().slice(0, 7);
 }
 
 function CategoryCard({ budget, color, icon, onOpen }) {
@@ -261,7 +259,9 @@ function NewCategoryModal({ open, onClose, onSave }) {
 
 export default function Categories() {
   const { lang, t } = useI18n();
-  const [month] = useState(currentMonth());
+  const { settings } = useSettings();
+  // Budgets are scoped to the user's financial cycle, like every other figure.
+  const month = currentCycle(settings);
   const [budgets, setBudgets] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);

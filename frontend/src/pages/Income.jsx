@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useI18n } from '../context/I18nContext';
+import { currentMonth } from '../lib/month';
+import { useSettings } from '../context/SettingsContext';
+import { currentCycle, getCycleOptions, incomeMonthOf } from '../lib/cycle';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import Modal from '../components/ui/Modal';
@@ -11,10 +14,18 @@ const EMPTY_FORM = {
   amount: '',
   currency: 'ILS',
   type: 'fixed',
-  month: new Date().toISOString().slice(0, 7),
+  month: currentMonth(),
   description: '',
 };
 
+/**
+ * The month list for the ADD/EDIT FORM, which writes `income.month`.
+ *
+ * Deliberately still calendar months, and deliberately not the cycle picker at the top of
+ * the page: `income.month` records WHICH SALARY a row is ("my September pay"), while the
+ * page filter selects which CYCLE is being viewed. The mapping between the two is the
+ * user's salary_day, and the backend owns it — see cycle.incomeMonthOf.
+ */
 function getMonthOptions(lang) {
   const result = [];
   const now = new Date();
@@ -51,8 +62,12 @@ function TypeBadge({ type }) {
 
 export default function Income() {
   const { lang, t } = useI18n();
-  const now = new Date().toISOString().slice(0, 7);
-  const [month, setMonth] = useState(now);
+  const { settings } = useSettings();
+  // The page filter selects a CYCLE; the form below writes a calendar income.month.
+  // Derived, not synced — see Dashboard.
+  const [picked, setPicked] = useState(null);
+  const month = picked ?? currentCycle(settings);
+  const setMonth = setPicked;
   const [entries, setEntries] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -81,7 +96,9 @@ export default function Income() {
   useEffect(() => { reload(); }, [reload]);
 
   function openAdd() {
-    setForm({ ...EMPTY_FORM, month });
+    // Pre-fill with the salary the VIEWED CYCLE is funded by, not the cycle key itself:
+    // with a payday before the anchor those are different months.
+    setForm({ ...EMPTY_FORM, month: incomeMonthOf(month, settings) });
     setError('');
     setModalOpen(true);
   }
@@ -192,7 +209,7 @@ export default function Income() {
             value={month}
             onChange={e => setMonth(e.target.value)}
           >
-            {getMonthOptions(lang).map(o => (
+            {getCycleOptions(settings, lang).map(o => (
               <option key={o.iso} value={o.iso}>{o.label}</option>
             ))}
           </select>

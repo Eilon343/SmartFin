@@ -1,5 +1,14 @@
 const db = require('../config/db');
 const fx = require('../services/forecastMath');
+const cy = require('../services/cycle');
+
+/**
+ * Every endpoint below scopes its numbers to one financial CYCLE, not one calendar month.
+ * `?month=YYYY-MM` still names the period — it is the month the cycle starts in — but the
+ * boundary comes from services/cycle.js and the user's settings, never from `-01`.
+ * `req.cycleSettings` is attached by the auth middleware.
+ */
+const MONTH_KEY = /^\d{4}-\d{2}$/;
 
 /**
  * A category may be used by a caller only if it is a shared base category
@@ -20,8 +29,8 @@ async function categoryAllowed(category_id, user_id) {
 
 exports.getAllExpenses = async (req, res) => {
     const user_id = req.user.user_id;
-    const { month } = req.query; // optional: "2025-04"
-    if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
+    const { month } = req.query; // optional: "2025-04" — the cycle starting in that month
+    if (month && !MONTH_KEY.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
         // The category join is scoped too: a row already pointing at a foreign
@@ -30,8 +39,9 @@ exports.getAllExpenses = async (req, res) => {
         const params = [user_id, user_id];
 
         if (month) {
-            query += ' AND DATE_FORMAT(e.created_at, "%Y-%m") = ?';
-            params.push(month);
+            const cycle = cy.resolveCycle(month, req.cycleSettings);
+            query += ' AND e.created_at >= ? AND e.created_at < ?';
+            params.push(cycle.start, cycle.end);
         }
 
         query += ' ORDER BY e.created_at DESC';
@@ -45,18 +55,19 @@ exports.getAllExpenses = async (req, res) => {
 
 exports.getSummary = async (req, res) => {
     const user_id = req.user.user_id;
-    const month = req.query.month || new Date().toISOString().slice(0, 7); // default current month
-    if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
+    const month = req.query.month || cy.currentCycleKey(req.cycleSettings); // default current cycle
+    if (month && !MONTH_KEY.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
+        const cycle = cy.resolveCycle(month, req.cycleSettings);
         const [rows] = await db.query(
             `SELECT COALESCE(c.name, 'Uncategorized') AS category, SUM(e.amount) AS total
              FROM expenses e
              LEFT JOIN categories c ON e.category_id = c.category_id AND (c.user_id IS NULL OR c.user_id = ?)
-             WHERE e.user_id = ? AND DATE_FORMAT(e.created_at, '%Y-%m') = ? AND e.is_virtual = FALSE
+             WHERE e.user_id = ? AND e.created_at >= ? AND e.created_at < ? AND e.is_virtual = FALSE
              GROUP BY e.category_id
              ORDER BY total DESC`,
-            [user_id, user_id, month]
+            [user_id, user_id, cycle.start, cycle.end]
         );
         const grand_total = rows.reduce((sum, r) => sum + Number(r.total), 0);
         res.json({ month, grand_total, by_category: rows });
@@ -68,18 +79,23 @@ exports.getSummary = async (req, res) => {
 
 exports.getBudgets = async (req, res) => {
     const user_id = req.user.user_id;
-    const month = req.query.month || new Date().toISOString().slice(0, 7); // 'YYYY-MM'
-    if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
+    const month = req.query.month || cy.currentCycleKey(req.cycleSettings); // 'YYYY-MM' cycle key
+    if (month && !MONTH_KEY.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
     try {
+        const cycle = cy.resolveCycle(month, req.cycleSettings);
+        // Shifting a date back by (anchor - 1) days puts the anchor day on the 1st, so the
+        // ordinary month truncation then yields the cycle the row belongs to. Used for both
+        // the budget's own first cycle and the per-cycle spend buckets below.
+        const shift = cy.anchorShiftDays(req.cycleSettings);
         const [budgetRows] = await db.query(
             `SELECT b.budget_id, b.category_id, c.name AS category,
                     b.monthly_limit, b.carry_over,
-                    DATE_FORMAT(b.created_at, '%Y-%m') AS start_month
+                    DATE_FORMAT(DATE_SUB(b.created_at, INTERVAL ? DAY), '%Y-%m') AS start_month
              FROM budgets b JOIN categories c ON b.category_id = c.category_id
                   AND (c.user_id IS NULL OR c.user_id = ?)
              WHERE b.user_id = ?`,
-            [user_id, user_id]
+            [shift, user_id, user_id]
         );
 
         // Fetch all expense totals per category per month in one query
@@ -88,14 +104,16 @@ exports.getBudgets = async (req, res) => {
             return s < min ? s : min;
         }, month);
         const [expenseRows] = await db.query(
-            `SELECT category_id, DATE_FORMAT(created_at, '%Y-%m') AS mo, COALESCE(SUM(amount), 0) AS total
+            `SELECT category_id,
+                    DATE_FORMAT(DATE_SUB(created_at, INTERVAL ? DAY), '%Y-%m') AS mo,
+                    COALESCE(SUM(amount), 0) AS total
              FROM expenses
              WHERE user_id = ?
-               AND created_at >= CONCAT(?, '-01')
-               AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
+               AND created_at >= ?
+               AND created_at < ?
                AND is_virtual = FALSE
              GROUP BY category_id, mo`,
-            [user_id, earliestStart, month]
+            [shift, user_id, cy.cycleStart(earliestStart, req.cycleSettings), cycle.end]
         );
         const spentMap = {};
         for (const r of expenseRows) {
@@ -335,101 +353,105 @@ exports.togglePauseSubscription = async (req, res) => {
 
 exports.getPnL = async (req, res) => {
     const user_id = req.user.user_id;
-    const month = req.query.month || new Date().toISOString().slice(0, 7);
-    if (month && !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format' });
+    const settings = req.cycleSettings;
+    const month = req.query.month || cy.currentCycleKey(settings);
+    if (month && !MONTH_KEY.test(month)) return res.status(400).json({ error: 'Invalid month format' });
 
-    // Month-to-Date clamp (`?as_of_day=N`): only count data for days 1..N of `month`.
-    // Used by the dashboard to compare same-length windows (e.g. May 1–8 vs April 1–8)
-    // so the previous month doesn't look artificially better/worse just because it's complete.
-    // Day is clamped to the queried month's actual length, which safely handles 31-vs-30/28/29
-    // and leap-year February.
-    const [yQ, mQ] = month.split('-').map(Number);
-    const daysInMonth = new Date(yQ, mQ, 0).getDate();
+    // The cycle is the period. `month` names the calendar month it starts in; everything
+    // below reads its boundaries from here and never reconstructs them.
+    const cycle = cy.resolveCycle(month, settings);
+    const daysInCycle = cycle.days;
+
+    // Cycle-to-Date clamp (`?as_of_day=N`): only count data for days 1..N OF THE CYCLE.
+    // Used by the dashboard to compare same-length windows (e.g. days 1–8 of this cycle vs
+    // days 1–8 of the last) so the previous cycle doesn't look artificially better/worse
+    // just because it's complete. Clamped to this cycle's real length, which handles the
+    // 28-vs-31 day spread cycles inherit from the calendar underneath them.
     const asOfRaw = req.query.as_of_day != null ? Number(req.query.as_of_day) : NaN;
     const asOfDay = Number.isFinite(asOfRaw)
-        ? Math.max(1, Math.min(daysInMonth, Math.floor(asOfRaw)))
+        ? Math.max(1, Math.min(daysInCycle, Math.floor(asOfRaw)))
         : null;
     const isMTD = asOfDay != null;
     // Income and subscriptions have no per-day granularity in their tables, so they are
-    // pro-rated by (asOfDay / daysInMonth) for fair MTD comparison. Savings transfers use
+    // pro-rated by (asOfDay / daysInCycle) for fair MTD comparison. Savings transfers use
     // created_at, so they are SQL-clamped instead.
-    const proRate = isMTD ? asOfDay / daysInMonth : 1;
+    const proRate = isMTD ? asOfDay / daysInCycle : 1;
+    // One window end for every expense query: the clamp is a shorter window, not a
+    // different query, which is what collapsed the old MTD/full SQL pairs into one each.
+    const windowEnd = isMTD ? cy.addDays(cycle.start, asOfDay) : cycle.end;
 
     try {
         const lookback = fx.pastMonths(month, fx.LOOKBACK_MONTHS);
         const oldestLookback = lookback[lookback.length - 1];
+        const lookbackStart = cy.cycleStart(oldestLookback, settings);
+        const shift = cy.anchorShiftDays(settings);
+        // `income.month` has no day, so the cycle a salary belongs to is derived from the
+        // user's salary_day rather than read off the row. See cycle.incomeMonthOf.
+        const incomeMonth = cycle.income_month;
+        const lookbackIncomeMonths = lookback.map(k => cy.incomeMonthOf(k, settings));
 
         // Expenses have a real `created_at` timestamp, so we clamp them via SQL rather than pro-rating.
         // Split into fixed vs variable buckets via categories.is_fixed for smart forecasting.
         // NULL category_id (uncategorized) treated as variable.
-        const expensesSql = isMTD
-            ? `SELECT COALESCE(c.is_fixed, FALSE) AS is_fixed, COALESCE(SUM(e.amount), 0) AS total
-               FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
-               WHERE e.user_id = ? AND e.created_at >= CONCAT(?, '-01') AND e.created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL ? DAY) AND e.is_virtual = FALSE
-               GROUP BY COALESCE(c.is_fixed, FALSE)`
-            : `SELECT COALESCE(c.is_fixed, FALSE) AS is_fixed, COALESCE(SUM(e.amount), 0) AS total
-               FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
-               WHERE e.user_id = ? AND e.created_at >= CONCAT(?, '-01') AND e.created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH) AND e.is_virtual = FALSE
-               GROUP BY COALESCE(c.is_fixed, FALSE)`;
-        const expensesParams = isMTD ? [user_id, month, month, asOfDay] : [user_id, month, month];
+        const expensesSql =
+            `SELECT COALESCE(c.is_fixed, FALSE) AS is_fixed, COALESCE(SUM(e.amount), 0) AS total
+             FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
+             WHERE e.user_id = ? AND e.created_at >= ? AND e.created_at < ? AND e.is_virtual = FALSE
+             GROUP BY COALESCE(c.is_fixed, FALSE)`;
 
         const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows], [expPastRows], [dowRows]] = await Promise.all([
-            db.query(expensesSql, expensesParams),
-            // Only subscriptions that have NOT been charged yet in `month`. Once the
-            // billing day passes, the real charge is already in `expenses` — imported by
-            // bank/card sync — so counting the subscription too would subtract it twice.
-            // Future month  → every subscription is still ahead.
-            // Current month → only those whose billing day has not arrived.
-            // Past month    → all already charged, hence 0.
+            db.query(expensesSql, [user_id, cycle.start, windowEnd]),
+            // Subscriptions that have NOT been charged yet in this cycle. Once the billing
+            // day passes, the real charge is already in `expenses` — imported by bank/card
+            // sync — so counting the subscription too would subtract it twice.
+            // Future cycle  → every subscription is still ahead.
+            // Current cycle → only those whose billing day has not arrived.
+            // Past cycle    → all already charged, hence 0.
+            //
+            // The "has it happened yet" test moved out of SQL. `day_of_month > DAY(CURDATE())`
+            // is meaningless once a cycle straddles two months: with an anchor of 10, the 5th
+            // is the END of the cycle, not the start, so a numeric day comparison ranks the
+            // charges in the wrong order. The rows are resolved to real dates in JS below.
             db.query(
-                `SELECT COALESCE(SUM(amount), 0) AS total FROM subscriptions
+                `SELECT subscription_id, amount, day_of_month FROM subscriptions
                  WHERE user_id = ? AND active = TRUE AND paused = FALSE
-                   AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)
-                   AND (
-                         ? > DATE_FORMAT(CURDATE(), '%Y-%m')
-                      OR (? = DATE_FORMAT(CURDATE(), '%Y-%m') AND day_of_month > DAY(CURDATE()))
-                   )`,
-                [user_id, month, month, month]
+                   AND created_at < ?`,
+                [user_id, cycle.end]
             ),
             db.query(
-                isMTD
-                    ? `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
-                       WHERE user_id = ? AND is_virtual = TRUE
-                         AND created_at >= CONCAT(?, '-01')
-                         AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL ? DAY)`
-                    : `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
-                       WHERE user_id = ? AND is_virtual = TRUE
-                         AND created_at >= CONCAT(?, '-01')
-                         AND created_at < DATE_ADD(CONCAT(?, '-01'), INTERVAL 1 MONTH)`,
-                isMTD ? [user_id, month, month, asOfDay] : [user_id, month, month]
+                `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
+                 WHERE user_id = ? AND is_virtual = TRUE
+                   AND created_at >= ? AND created_at < ?`,
+                [user_id, cycle.start, windowEnd]
             ),
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'fixed' AND month = ?",
-                [user_id, month]
+                [user_id, incomeMonth]
             ),
             db.query(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM income WHERE user_id = ? AND type = 'variable' AND month = ?",
-                [user_id, month]
+                [user_id, incomeMonth]
             ),
             // Per-month rows, not a pre-averaged total: the decay weighting and the
             // standard deviation behind the forecast range both need the individual months.
             db.query(
                 `SELECT month, COALESCE(SUM(amount), 0) AS total FROM income
-                 WHERE user_id = ? AND type = 'variable' AND month IN (${lookback.map(() => '?').join(', ')})
+                 WHERE user_id = ? AND type = 'variable' AND month IN (${lookbackIncomeMonths.map(() => '?').join(', ')})
                  GROUP BY month`,
-                [user_id, ...lookback]
+                [user_id, ...lookbackIncomeMonths]
             ),
             // Historical VARIABLE spend per month — the prior the credibility weighting
             // blends toward. Same fixed/variable split and is_virtual exclusion as the
             // current-month query above, or the prior would not be comparable to S_d.
             db.query(
-                `SELECT DATE_FORMAT(e.created_at, '%Y-%m') AS month, COALESCE(SUM(e.amount), 0) AS total
+                `SELECT DATE_FORMAT(DATE_SUB(e.created_at, INTERVAL ? DAY), '%Y-%m') AS month,
+                        COALESCE(SUM(e.amount), 0) AS total
                  FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
                  WHERE e.user_id = ? AND e.is_virtual = FALSE AND COALESCE(c.is_fixed, FALSE) = FALSE
-                   AND e.created_at >= CONCAT(?, '-01')
-                   AND e.created_at < CONCAT(?, '-01')
+                   AND e.created_at >= ?
+                   AND e.created_at < ?
                  GROUP BY month`,
-                [user_id, oldestLookback, month]
+                [shift, user_id, lookbackStart, cycle.start]
             ),
             // Day-of-week spending shape over the same window. DAYOFWEEK() is 1=Sunday..7,
             // shifted to JS getDay() order (0=Sunday) on the way out.
@@ -437,10 +459,10 @@ exports.getPnL = async (req, res) => {
                 `SELECT DAYOFWEEK(e.created_at) - 1 AS dow, COALESCE(SUM(e.amount), 0) AS total
                  FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
                  WHERE e.user_id = ? AND e.is_virtual = FALSE AND COALESCE(c.is_fixed, FALSE) = FALSE
-                   AND e.created_at >= CONCAT(?, '-01')
-                   AND e.created_at < CONCAT(?, '-01')
+                   AND e.created_at >= ?
+                   AND e.created_at < ?
                  GROUP BY dow`,
-                [user_id, oldestLookback, month]
+                [user_id, lookbackStart, cycle.start]
             )
         ]);
 
@@ -451,16 +473,30 @@ exports.getPnL = async (req, res) => {
             else variable_sum = Number(r.total);
         }
         const total_expenses = fixed_sum + variable_sum;
-        // Not pro-rated: this is already only the charges still ahead of us this month,
-        // not a whole-month figure being clamped to a partial window.
-        const subscription_total = Number(subRows[0].total);
+        // Subscriptions still ahead of us, resolved to real dates inside this cycle. A
+        // billing day is placed on whichever side of the anchor it belongs to, so with an
+        // anchor of 10 a subscription billed on the 3rd is near the cycle's END and stays
+        // "ahead" for almost the whole period — which the old day-number comparison in SQL
+        // got exactly backwards.
+        //
+        // Not pro-rated by the MTD clamp: this is already only the charges still ahead,
+        // not a whole-cycle figure being narrowed to a partial window.
+        const todayISO = cy.todayISO();
+        const subscription_total = (subRows || [])
+            .filter(s => cy.chargeDateInCycle(cycle, s.day_of_month) > todayISO)
+            .reduce((sum, s) => sum + Number(s.amount), 0);
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total) * proRate;
         const variable_actual = Number(varActualRows[0].total) * proRate;
 
         // Decayed means over the lookback. `months_with_data` is the row count, so a user
         // with two months of history is divided by two, never by LOOKBACK_MONTHS.
-        const incomeHistory = (varPastRows || []).map(r => ({ month: r.month, total: Number(r.total) }));
+        // Income rows come back keyed by `income.month`; the decay ages them by distance
+        // from the anchor CYCLE, so they are mapped back before being weighed.
+        const incomeHistory = (varPastRows || []).map(r => ({
+            month: cy.cycleKeyOfIncomeMonth(r.month, settings),
+            total: Number(r.total),
+        }));
         const expenseHistory = (expPastRows || []).map(r => ({ month: r.month, total: Number(r.total) }));
         const incomeMonths = incomeHistory.length;
         const expenseMonths = expenseHistory.length;
@@ -474,7 +510,7 @@ exports.getPnL = async (req, res) => {
             const i = Number(r.dow);
             if (i >= 0 && i <= 6) dowTotals[i] = Number(r.total);
         }
-        const dow_weights = fx.dowWeights(dowTotals, fx.weekdayCounts(oldestLookback, month));
+        const dow_weights = fx.dowWeights(dowTotals, fx.weekdayCounts(lookbackStart, cycle.start));
 
         const actual_income = fixed_income + variable_actual;
         // Subscriptions are deliberately NOT subtracted here. subscription_total is money
@@ -491,41 +527,41 @@ exports.getPnL = async (req, res) => {
         // no minimum-day guard and no special case for zero spend: with S_d = 0 it simply
         // returns the historical expectation, which is the right answer on the 1st.
         // For MTD requests (prev-month comparison anchor), keep projection = actual.
-        const currentMonth = new Date().toISOString().slice(0, 7);
-        // A future month is day 0 — nothing has happened yet, so the whole month is still
+        const currentCycle = cy.currentCycleKey(settings);
+        // A future cycle is day 0 — nothing has happened yet, so the whole cycle is still
         // ahead and both estimators fall through to the historical expectation on their
-        // own. A past month is fully elapsed and its "projection" is simply its actuals.
-        const isFutureMonth = month > currentMonth;
-        const isLiveMonth = !isMTD && month >= currentMonth;
-        const dayOfMonth = isFutureMonth ? 0 : (month === currentMonth ? Math.max(1, new Date().getDate()) : daysInMonth);
-        const remaining_share = isLiveMonth
-            ? 1 - fx.elapsedShare(dayOfMonth, yQ, mQ, daysInMonth, dow_weights)
+        // own. A past cycle is fully elapsed and its "projection" is simply its actuals.
+        const isFutureCycle = month > currentCycle;
+        const isLiveCycle = !isMTD && month >= currentCycle;
+        const dayIndex = isFutureCycle
+            ? 0
+            : (month === currentCycle ? Math.max(1, cy.dayIndexIn(cycle, new Date())) : daysInCycle);
+        const remaining_share = isLiveCycle
+            ? 1 - fx.elapsedShare(dayIndex, cycle.start, daysInCycle, dow_weights)
             : 0;
 
         let projected_expenses = total_expenses;
         let projected_variable = variable_sum;
-        if (isLiveMonth) {
+        if (isLiveCycle) {
             projected_variable = fx.projectVariableExpenses({
                 spentToDate: variable_sum,
-                dayOfMonth,
-                daysInMonth,
+                dayIndex,
+                days: daysInCycle,
                 historicalMean: variable_expense_avg,
                 monthsWithData: expenseMonths,
-                year: yQ,
-                month1to12: mQ,
+                startDate: cycle.start,
                 weights: dow_weights,
             });
             projected_expenses = fixed_sum + projected_variable;
         }
 
-        const projected_variable_income = isLiveMonth
+        const projected_variable_income = isLiveCycle
             ? fx.projectVariableIncome({
                 receivedToDate: variable_actual,
-                dayOfMonth,
-                daysInMonth,
+                dayIndex,
+                days: daysInCycle,
                 historicalMean: variable_avg,
-                year: yQ,
-                month1to12: mQ,
+                startDate: cycle.start,
                 weights: dow_weights,
             })
             : variable_actual;
@@ -538,7 +574,7 @@ exports.getPnL = async (req, res) => {
 
         // ±1σ on the unspent part of the month only. Suppressed entirely outside the live
         // month: a completed month has no uncertainty left to describe.
-        const range = isLiveMonth
+        const range = isLiveCycle
             ? fx.forecastRange(forecasted_net_pnl, {
                 expenseStdDev: fx.monthlyStdDev(expenseHistory),
                 incomeStdDev: fx.monthlyStdDev(incomeHistory),
@@ -549,21 +585,27 @@ exports.getPnL = async (req, res) => {
         // What is left per remaining day once everything already committed is off the top.
         // fixed_remaining is 0: fixed costs are flat monthly charges that have already
         // landed by the time they matter, and they are inside total_expenses via fixed_sum.
-        const safe = isLiveMonth
+        const safe = isLiveCycle
             ? fx.safeToSpendPerDay({
                 projectedIncome: projected_income,
                 spentToDate: total_expenses,
                 subscriptionsAhead: subscription_total,
                 savingsAllocation: savings_allocation,
-                dayOfMonth,
-                daysInMonth,
+                dayIndex,
+                days: daysInCycle,
             })
             : { per_day: null, headroom: null, days_left: 0 };
 
         res.json({
             month,
             as_of_day: asOfDay,
-            days_in_month: daysInMonth,
+            // The period, spelled out. The client draws its date axis and its "days left"
+            // from these rather than re-deriving a boundary it would have to keep in sync.
+            days_in_cycle: daysInCycle,
+            cycle_start: cycle.start,
+            cycle_end: cycle.last_day,
+            cycle_day: dayIndex,
+            income_month: incomeMonth,
             is_mtd: isMTD,
             fixed_income: Math.round(fixed_income * 100) / 100,
             variable_income_actual: Math.round(variable_actual * 100) / 100,

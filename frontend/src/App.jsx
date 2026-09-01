@@ -14,6 +14,7 @@ import Insights from './pages/Insights';
 import Settings from './pages/Settings';
 import Layout from './components/Layout';
 import { I18nProvider } from './context/I18nContext';
+import { SettingsProvider } from './context/SettingsContext';
 
 // Attempts silent Google re-auth when no token in storage (e.g. iOS ITP cleared it)
 function AutoGoogleAuth() {
@@ -75,6 +76,8 @@ export default function App() {
         <AutoGoogleAuth />
         <ThemeProvider>
           <I18nProvider>
+            {/* Inside AuthProvider: the settings fetch is authenticated. */}
+            <SettingsProvider>
             <BrowserRouter>
               <Routes>
               <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
@@ -91,6 +94,7 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             </BrowserRouter>
+            </SettingsProvider>
           </I18nProvider>
         </ThemeProvider>
       </AuthProvider>

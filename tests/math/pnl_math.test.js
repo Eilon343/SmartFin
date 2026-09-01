@@ -12,7 +12,7 @@ const fx = require('../../backend/src/services/forecastMath');
 
 // A month with a known shape, used throughout: August 2026 has 31 days and starts on a
 // Saturday, so it holds five Saturdays — a real seasonality edge, not a tidy 4×7 grid.
-const AUG = { year: 2026, month: 8, days: 31 };
+const AUG = { start: '2026-08-01', days: 31 };
 const FLAT = new Array(7).fill(1 / 7);
 
 /** Convenience: run the expense projection over a whole month and return every value. */
@@ -138,25 +138,25 @@ describe('monthlyStdDev', () => {
 
 describe('weekdayCounts', () => {
     it('counts every day in the window exactly once', () => {
-        const counts = fx.weekdayCounts('2026-02', '2026-08'); // Feb–Jul 2026
+        const counts = fx.weekdayCounts('2026-02-01', '2026-08-01'); // Feb–Jul 2026
         const total = counts.reduce((a, b) => a + b, 0);
         expect(total).toBe(28 + 31 + 30 + 31 + 30 + 31);
     });
 
     it('spreads a 28-day February evenly, four of each weekday', () => {
-        expect(fx.weekdayCounts('2026-02', '2026-03')).toEqual([4, 4, 4, 4, 4, 4, 4]);
+        expect(fx.weekdayCounts('2026-02-01', '2026-03-01')).toEqual([4, 4, 4, 4, 4, 4, 4]);
     });
 
     it('gives the extra days of a 31-day month to the weekdays it starts on', () => {
         // August 2026 starts on a Saturday, so Sat/Sun/Mon get 5 and the rest 4.
-        const counts = fx.weekdayCounts('2026-08', '2026-09');
+        const counts = fx.weekdayCounts('2026-08-01', '2026-09-01');
         expect(counts.reduce((a, b) => a + b, 0)).toBe(31);
         expect(counts[6]).toBe(5); // Saturday
         expect(counts[3]).toBe(4); // Wednesday
     });
 
     it('is empty when the window has no width', () => {
-        expect(fx.weekdayCounts('2026-08', '2026-08')).toEqual([0, 0, 0, 0, 0, 0, 0]);
+        expect(fx.weekdayCounts('2026-08-01', '2026-08-01')).toEqual([0, 0, 0, 0, 0, 0, 0]);
     });
 });
 
@@ -224,7 +224,7 @@ describe('dowWeights', () => {
 // ── elapsedShare ─────────────────────────────────────────────────────────────────
 
 describe('elapsedShare', () => {
-    const share = (d, w) => fx.elapsedShare(d, AUG.year, AUG.month, AUG.days, w);
+    const share = (d, w) => fx.elapsedShare(d, AUG.start, AUG.days, w);
 
     it('reduces exactly to d/D with flat weights', () => {
         for (const d of [1, 7, 15, 30, 31]) {
@@ -260,7 +260,7 @@ describe('elapsedShare', () => {
 // ── idealPace ────────────────────────────────────────────────────────────────────
 
 describe('idealPace', () => {
-    const ideal = (d, w = FLAT) => fx.idealPace(d, 3100, AUG.year, AUG.month, AUG.days, w);
+    const ideal = (d, w = FLAT) => fx.idealPace(d, 3100, AUG.start, AUG.days, w);
 
     it('day 1 is NOT zero — the old (d−1)/(D−1) bug flagged everyone as over on the 1st', () => {
         expect(ideal(1)).toBeGreaterThan(0);
@@ -278,8 +278,8 @@ describe('idealPace', () => {
     });
 
     it('returns 0 for a zero or missing target rather than NaN', () => {
-        expect(fx.idealPace(10, 0, AUG.year, AUG.month, AUG.days, FLAT)).toBe(0);
-        expect(fx.idealPace(10, null, AUG.year, AUG.month, AUG.days, FLAT)).toBe(0);
+        expect(fx.idealPace(10, 0, AUG.start, AUG.days, FLAT)).toBe(0);
+        expect(fx.idealPace(10, null, AUG.start, AUG.days, FLAT)).toBe(0);
     });
 
     it('still lands on the target with seasonality applied', () => {
@@ -423,9 +423,8 @@ describe('momentumIdeal', () => {
         fixedTarget: 4800,
         variableTarget: 2500,
         fixedShape: fx.fixedPaceShape({ 1: 4200, 5: 600 }, AUG.days),
-        year: AUG.year,
-        month1to12: AUG.month,
-        daysInMonth: AUG.days,
+        startDate: AUG.start,
+        days: AUG.days,
         weights: WEEKEND_W,
         ...over,
     });
@@ -444,7 +443,7 @@ describe('momentumIdeal', () => {
 
     it('would have flagged a perfectly-behaved rent payer as over pace without the split', () => {
         // The whole target on the day-of-week shape — what the chart used to draw.
-        const oneComponent = fx.idealPace(1, 7300, AUG.year, AUG.month, AUG.days, WEEKEND_W);
+        const oneComponent = fx.idealPace(1, 7300, AUG.start, AUG.days, WEEKEND_W);
         const twoComponent = curve()[0];
         // A user who paid ₪4,200 rent on the 1st and nothing else. The old curve had
         // accrued only one Saturday's share of the whole target by then, so it reported
@@ -462,7 +461,7 @@ describe('momentumIdeal', () => {
         const c = curve({ fixedTarget: 0, variableTarget: 3100 });
         for (const d of [1, 9, 17, 31]) {
             expect(c[d - 1]).toBeCloseTo(
-                fx.idealPace(d, 3100, AUG.year, AUG.month, AUG.days, WEEKEND_W), 6
+                fx.idealPace(d, 3100, AUG.start, AUG.days, WEEKEND_W), 6
             );
         }
     });
@@ -474,7 +473,7 @@ describe('momentumIdeal', () => {
             fixedTarget: 4200,
             variableTarget: 3100,
             fixedShape: fx.fixedPaceShape({ 1: 4200 }, AUG.days),
-            year: AUG.year, month1to12: AUG.month, daysInMonth: AUG.days, weights: WEEKEND_W,
+            startDate: AUG.start, days: AUG.days, weights: WEEKEND_W,
         });
         expect(c[7] - c[5]).toBeGreaterThan(c[11] - c[9]);
     });
@@ -524,12 +523,11 @@ describe('credibilityWeight', () => {
 describe('projectVariableExpenses', () => {
     const project = (over = {}) => fx.projectVariableExpenses({
         spentToDate: 0,
-        dayOfMonth: 15,
-        daysInMonth: AUG.days,
+        dayIndex: 15,
+        days: AUG.days,
         historicalMean: 3000,
         monthsWithData: 3,
-        year: AUG.year,
-        month1to12: AUG.month,
+        startDate: AUG.start,
         weights: FLAT,
         ...over,
     });
@@ -538,7 +536,7 @@ describe('projectVariableExpenses', () => {
         // The mathematical review claimed a discontinuity at day 5. It did not exist in
         // the old blend either (its weight hit exactly 1.0 at d=5), but the estimator that
         // replaced it has no boundary at all — this sweep is what guarantees that.
-        const vals = sweep(d => project({ dayOfMonth: d, spentToDate: 100 * d }));
+        const vals = sweep(d => project({ dayIndex: d, spentToDate: 100 * d }));
         const steps = vals.slice(1).map((v, i) => Math.abs(v - vals[i]));
         const biggest = Math.max(...steps);
         const median = steps.slice().sort((a, b) => a - b)[Math.floor(steps.length / 2)];
@@ -547,12 +545,12 @@ describe('projectVariableExpenses', () => {
     });
 
     it('CONVERGENCE: lands exactly on actuals on the final day', () => {
-        expect(project({ dayOfMonth: AUG.days, spentToDate: 2750 })).toBe(2750);
+        expect(project({ dayIndex: AUG.days, spentToDate: 2750 })).toBe(2750);
     });
 
     it('converges smoothly toward actuals over the last week', () => {
         const gaps = [25, 27, 29, 30, 31].map(d =>
-            project({ dayOfMonth: d, spentToDate: 2750 }) - 2750);
+            project({ dayIndex: d, spentToDate: 2750 }) - 2750);
         for (let i = 1; i < gaps.length; i++) expect(gaps[i]).toBeLessThanOrEqual(gaps[i - 1]);
         expect(gaps[gaps.length - 1]).toBe(0);
     });
@@ -562,7 +560,7 @@ describe('projectVariableExpenses', () => {
         // the MIN_DAYS_FOR_FULL_PROJECTION hack existed to paper over. The credibility
         // form lands near ₪4,100: a day at 4× the usual rate does move the number, and
         // should, but it moves it by tens of percent rather than by 300%.
-        const p = project({ dayOfMonth: 1, spentToDate: 400, historicalMean: 3000 });
+        const p = project({ dayIndex: 1, spentToDate: 400, historicalMean: 3000 });
         expect(p).toBeLessThan(4200);
         expect(p).toBeGreaterThan(2900); // and it does not ignore the ₪400 either
     });
@@ -570,8 +568,8 @@ describe('projectVariableExpenses', () => {
     it('the leverage of a single day is bounded, so day 1 cannot run away', () => {
         // S_d enters the remainder as S × (D−d)/(d+K). At d=1 that multiplier is 30/11,
         // not 30 — this is the property that removed the need for an early-month hack.
-        const base = project({ dayOfMonth: 1, spentToDate: 0, historicalMean: 3000 });
-        const withBuy = project({ dayOfMonth: 1, spentToDate: 400, historicalMean: 3000 });
+        const base = project({ dayIndex: 1, spentToDate: 0, historicalMean: 3000 });
+        const withBuy = project({ dayIndex: 1, spentToDate: 400, historicalMean: 3000 });
         const leverage = (withBuy - base) / 400;
         expect(leverage).toBeCloseTo(1 + (AUG.days - 1) / (1 + fx.CREDIBILITY_K), 6);
         expect(leverage).toBeLessThan(4);
@@ -582,14 +580,14 @@ describe('projectVariableExpenses', () => {
         // would return 5806 + 3000×(11/31) ≈ 6871, barely above the money already spent.
         const mu = 3000;
         const tripleRate = (mu / AUG.days) * 3 * 20; // ~5806 spent by day 20
-        const p = project({ dayOfMonth: 20, spentToDate: tripleRate, historicalMean: mu });
+        const p = project({ dayIndex: 20, spentToDate: tripleRate, historicalMean: mu });
         expect(p).toBeGreaterThan(mu * 2.4);
         // And strictly above what the history-only estimator would have said.
         expect(p).toBeGreaterThan(tripleRate + mu * (11 / 31));
     });
 
     it('QUIET MONTH: a genuinely slow month is allowed to read as slow', () => {
-        const p = project({ dayOfMonth: 25, spentToDate: 500, historicalMean: 3000 });
+        const p = project({ dayIndex: 25, spentToDate: 500, historicalMean: 3000 });
         expect(p).toBeLessThan(1200);
     });
 
@@ -598,29 +596,29 @@ describe('projectVariableExpenses', () => {
         // spent yet on the 3rd was told to expect a ₪0 month. Three quiet days are real
         // evidence of a slower month, just weak evidence, so the number sits below the
         // ₪3,000 habit without collapsing anywhere near zero.
-        const p = project({ dayOfMonth: 3, spentToDate: 0, historicalMean: 3000 });
+        const p = project({ dayIndex: 3, spentToDate: 0, historicalMean: 3000 });
         expect(p).toBeGreaterThan(1800);
         expect(p).toBeLessThan(3000);
     });
 
     it('quiet days early move the forecast less than quiet days late', () => {
-        const early = project({ dayOfMonth: 3, spentToDate: 0, historicalMean: 3000 });
-        const late = project({ dayOfMonth: 20, spentToDate: 0, historicalMean: 3000 });
+        const early = project({ dayIndex: 3, spentToDate: 0, historicalMean: 3000 });
+        const late = project({ dayIndex: 20, spentToDate: 0, historicalMean: 3000 });
         expect(early).toBeGreaterThan(late);
     });
 
     it('NO HISTORY: falls back to the plain run-rate rather than shrinking toward zero', () => {
-        const p = project({ dayOfMonth: 10, spentToDate: 1000, historicalMean: 0, monthsWithData: 0 });
+        const p = project({ dayIndex: 10, spentToDate: 1000, historicalMean: 0, monthsWithData: 0 });
         expect(p).toBeCloseTo(1000 * (AUG.days / 10), 6);
     });
 
     it('is always finite and never below what has already been spent', () => {
         const cases = [
-            { dayOfMonth: 1, spentToDate: 0, historicalMean: 0, monthsWithData: 0 },
-            { dayOfMonth: 0, spentToDate: 0, historicalMean: 0, monthsWithData: 0 },
-            { dayOfMonth: 31, spentToDate: 0, historicalMean: 0, monthsWithData: 0 },
-            { dayOfMonth: 15, spentToDate: 9999, historicalMean: 0, monthsWithData: 6 },
-            { dayOfMonth: 15, spentToDate: 0, historicalMean: 9999, monthsWithData: 6 },
+            { dayIndex: 1, spentToDate: 0, historicalMean: 0, monthsWithData: 0 },
+            { dayIndex: 0, spentToDate: 0, historicalMean: 0, monthsWithData: 0 },
+            { dayIndex: 31, spentToDate: 0, historicalMean: 0, monthsWithData: 0 },
+            { dayIndex: 15, spentToDate: 9999, historicalMean: 0, monthsWithData: 6 },
+            { dayIndex: 15, spentToDate: 0, historicalMean: 9999, monthsWithData: 6 },
         ];
         for (const c of cases) {
             const p = project(c);
@@ -637,8 +635,8 @@ describe('projectVariableExpenses', () => {
     it('SEASONALITY: a month with more weekend left forecasts higher', () => {
         const weekendHeavy = fx.dowWeights([10, 10, 10, 10, 10, 90, 90], new Array(7).fill(26));
         // Aug 2026: day 9 is a Sunday (a fresh week ahead), day 14 is a Friday.
-        const beforeWeekend = project({ dayOfMonth: 13, spentToDate: 1300, weights: weekendHeavy });
-        const flatSame = project({ dayOfMonth: 13, spentToDate: 1300, weights: FLAT });
+        const beforeWeekend = project({ dayIndex: 13, spentToDate: 1300, weights: weekendHeavy });
+        const flatSame = project({ dayIndex: 13, spentToDate: 1300, weights: FLAT });
         expect(Number.isFinite(beforeWeekend)).toBe(true);
         expect(Number.isFinite(flatSame)).toBe(true);
         // Both are legitimate; what matters is that the weights actually move the answer.
@@ -646,7 +644,7 @@ describe('projectVariableExpenses', () => {
     });
 
     it('a day-0 (future month) query returns the pure historical expectation', () => {
-        const p = project({ dayOfMonth: 0, spentToDate: 0, historicalMean: 3000 });
+        const p = project({ dayIndex: 0, spentToDate: 0, historicalMean: 3000 });
         expect(p).toBeCloseTo(3000, 6);
     });
 });
@@ -656,45 +654,44 @@ describe('projectVariableExpenses', () => {
 describe('projectVariableIncome', () => {
     const project = (over = {}) => fx.projectVariableIncome({
         receivedToDate: 0,
-        dayOfMonth: 15,
-        daysInMonth: AUG.days,
+        dayIndex: 15,
+        days: AUG.days,
         historicalMean: 900,
-        year: AUG.year,
-        month1to12: AUG.month,
+        startDate: AUG.start,
         weights: FLAT,
         ...over,
     });
 
     it('NEVER below what has already arrived', () => {
         for (const d of [1, 10, 20, 31]) {
-            expect(project({ dayOfMonth: d, receivedToDate: 5000 })).toBeGreaterThanOrEqual(5000);
+            expect(project({ dayIndex: d, receivedToDate: 5000 })).toBeGreaterThanOrEqual(5000);
         }
     });
 
     it('BIAS FIX: a weak month late on is allowed to read as weak', () => {
         // The old max(actual, avg) propped this to the full 900 on day 28. It now reports
         // roughly what actually happened, which is the entire point of the change.
-        const p = project({ dayOfMonth: 28, receivedToDate: 100, historicalMean: 900 });
+        const p = project({ dayIndex: 28, receivedToDate: 100, historicalMean: 900 });
         expect(p).toBeLessThan(300);
         expect(p).toBeGreaterThanOrEqual(100);
     });
 
     it('still expects the average early in the month, when nothing has arrived yet', () => {
-        const p = project({ dayOfMonth: 1, receivedToDate: 0, historicalMean: 900 });
+        const p = project({ dayIndex: 1, receivedToDate: 0, historicalMean: 900 });
         expect(p).toBeGreaterThan(850);
     });
 
     it('reports a hot month as hot rather than capping it', () => {
-        const p = project({ dayOfMonth: 10, receivedToDate: 900, historicalMean: 900 });
+        const p = project({ dayIndex: 10, receivedToDate: 900, historicalMean: 900 });
         expect(p).toBeGreaterThan(900);
     });
 
     it('equals actuals exactly on the final day', () => {
-        expect(project({ dayOfMonth: AUG.days, receivedToDate: 742 })).toBe(742);
+        expect(project({ dayIndex: AUG.days, receivedToDate: 742 })).toBe(742);
     });
 
     it('returns the historical mean for a day-0 (future month) query', () => {
-        expect(project({ dayOfMonth: 0, receivedToDate: 0, historicalMean: 900 })).toBeCloseTo(900, 6);
+        expect(project({ dayIndex: 0, receivedToDate: 0, historicalMean: 900 })).toBeCloseTo(900, 6);
     });
 
     it('is finite with no history and no income', () => {
@@ -703,7 +700,7 @@ describe('projectVariableIncome', () => {
     });
 
     it('decreases smoothly as the month runs out without income arriving', () => {
-        const vals = sweep(d => project({ dayOfMonth: d, receivedToDate: 0 }));
+        const vals = sweep(d => project({ dayIndex: d, receivedToDate: 0 }));
         for (let i = 1; i < vals.length; i++) expect(vals[i]).toBeLessThanOrEqual(vals[i - 1]);
         expect(vals[vals.length - 1]).toBe(0);
     });
@@ -766,8 +763,8 @@ describe('safeToSpendPerDay', () => {
         fixedRemaining: 0,
         subscriptionsAhead: 0,
         savingsAllocation: 0,
-        dayOfMonth: 15,
-        daysInMonth: AUG.days,
+        dayIndex: 15,
+        days: AUG.days,
         ...over,
     });
 
@@ -790,13 +787,13 @@ describe('safeToSpendPerDay', () => {
     });
 
     it('returns null on the last day — a per-day allowance over zero days is meaningless', () => {
-        const r = safe({ dayOfMonth: AUG.days });
+        const r = safe({ dayIndex: AUG.days });
         expect(r.per_day).toBeNull();
         expect(r.days_left).toBe(0);
     });
 
     it('spreads over the whole month for a day-0 (future month) query', () => {
-        const r = safe({ dayOfMonth: 0, spentToDate: 0 });
+        const r = safe({ dayIndex: 0, spentToDate: 0 });
         expect(r.days_left).toBe(AUG.days);
         expect(r.per_day).toBeCloseTo(10000 / 31, 10);
     });
@@ -805,7 +802,7 @@ describe('safeToSpendPerDay', () => {
         // Not a bug: ₪7,000 spread over 6 remaining days really is a larger daily
         // allowance than the same ₪7,000 spread over 26. The number falls only when the
         // headroom itself falls, which is what the next case pins.
-        const vals = [5, 15, 25].map(d => safe({ dayOfMonth: d }).per_day);
+        const vals = [5, 15, 25].map(d => safe({ dayIndex: d }).per_day);
         expect(vals[0]).toBeLessThan(vals[1]);
         expect(vals[1]).toBeLessThan(vals[2]);
     });
@@ -841,13 +838,13 @@ describe('full P&L scenarios', () => {
                         fixedSpend = 0, varSpend = 0, varSpendMean = 0, monthsWithData = 3,
                         subs = 0, savings = 0, day = 15 }) {
         const projIncome = fixedIncome + fx.projectVariableIncome({
-            receivedToDate: varIncome, dayOfMonth: day, daysInMonth: AUG.days,
-            historicalMean: varIncomeMean, year: AUG.year, month1to12: AUG.month, weights: FLAT,
+            receivedToDate: varIncome, dayIndex: day, days: AUG.days,
+            historicalMean: varIncomeMean, startDate: AUG.start, weights: FLAT,
         });
         const projExpenses = fixedSpend + fx.projectVariableExpenses({
-            spentToDate: varSpend, dayOfMonth: day, daysInMonth: AUG.days,
+            spentToDate: varSpend, dayIndex: day, days: AUG.days,
             historicalMean: varSpendMean, monthsWithData,
-            year: AUG.year, month1to12: AUG.month, weights: FLAT,
+            startDate: AUG.start, weights: FLAT,
         });
         return projIncome - projExpenses - subs - savings;
     }

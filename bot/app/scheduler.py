@@ -4,6 +4,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from aiogram import Bot
 
+from app.services import cycle as cycle_svc
+
 
 def _week_start(today: date) -> date:
     """Sunday of the week `today` falls in.
@@ -35,14 +37,23 @@ async def _compute_spending_score(db_manager, user_id: int) -> dict:
             )
             (week_total,) = await cur.fetchone()
 
-            # Monthly average over the past 3 full months
+            # Monthly average over the past 3 full CYCLES. The window and the "how many
+            # periods was that" count both run on the user's anchor day: shifting a date
+            # back by (anchor - 1) days puts the anchor on the 1st, so the ordinary month
+            # truncation then buckets each row into the cycle it belongs to.
+            settings = await db_manager.get_cycle_settings(user_id)
+            this_cycle = cycle_svc.resolve_cycle(cycle_svc.current_cycle_key(settings, today), settings)
+            window_start = cycle_svc.resolve_cycle(
+                cycle_svc.add_months(this_cycle.key, -3), settings
+            ).start
+            shift = cycle_svc.anchor_shift_days(settings)
             await cur.execute(
-                "SELECT COALESCE(SUM(amount), 0), COUNT(DISTINCT DATE_FORMAT(created_at,'%%Y-%%m')) "
+                "SELECT COALESCE(SUM(amount), 0), "
+                "       COUNT(DISTINCT DATE_FORMAT(DATE_SUB(created_at, INTERVAL %s DAY),'%%Y-%%m')) "
                 "FROM expenses "
                 "WHERE user_id = %s AND is_virtual = FALSE "
-                "  AND created_at < DATE_FORMAT(NOW(),'%%Y-%%m-01') "
-                "  AND created_at >= DATE_FORMAT(NOW() - INTERVAL 3 MONTH,'%%Y-%%m-01')",
-                (user_id,),
+                "  AND created_at >= %s AND created_at < %s",
+                (shift, user_id, window_start, this_cycle.start),
             )
             row = await cur.fetchone()
             total_past, months = row
@@ -109,6 +120,10 @@ async def _charge_due_subscriptions(bot: Bot, db_manager):
     """
     today = date.today()
     today_day = today.day
+    # Deliberately a CALENDAR month, not a cycle key. `last_charged_month` exists to keep
+    # this job idempotent — a subscription billed on the 12th charges once per calendar
+    # month, whatever the user's cycle looks like — and the P&L's "still ahead" test no
+    # longer reads this column at all; it resolves billing days to real dates instead.
     current_month = today.strftime("%Y-%m")
 
     due = await db_manager.get_due_subscriptions(today_day, current_month)

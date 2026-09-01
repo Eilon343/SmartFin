@@ -22,7 +22,7 @@ const { authHeader, TEST_USER } = require('./setup/authHelper');
  * All three are pinned below.
  */
 
-const MONTH = '2025-03'; // a past month, so today_day is deterministic (= days_in_month)
+const MONTH = '2025-03'; // a past month, so cycle_day is deterministic (= days_in_cycle)
 
 function mockInsights({
     categories = [{ category_id: 1, name: 'Groceries', is_fixed: 0 }],
@@ -324,7 +324,7 @@ describe('GET /api/insights - momentum pacing target', () => {
         expect(res.body.budget_total).toBe(0);
         expect(res.body.pacing_target.total).toBe(res.body.three_mo_avg_total);
         expect(res.body.pacing_target.budgeted_categories).toBe(0);
-        expect(res.body.ideal[res.body.days_in_month - 1])
+        expect(res.body.ideal[res.body.days_in_cycle - 1])
             .toBeCloseTo(res.body.three_mo_avg_total, 2);
     });
 
@@ -349,8 +349,8 @@ describe('GET /api/insights - the ideal curve', () => {
 
         const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
 
-        expect(res.body.ideal).toHaveLength(res.body.days_in_month);
-        expect(res.body.ideal[res.body.days_in_month - 1])
+        expect(res.body.ideal).toHaveLength(res.body.days_in_cycle);
+        expect(res.body.ideal[res.body.days_in_cycle - 1])
             .toBeCloseTo(res.body.pacing_target.total, 2);
     });
 
@@ -389,7 +389,9 @@ describe('GET /api/insights - the ideal curve', () => {
     it('reads the fixed shape from fixed categories only, over the full lookback', async () => {
         mockInsights();
         const queries = await expenseQueries();
-        const domQuery = queries.find((sql) => /DAY\(e\.created_at\)\s+AS\s+dom/i.test(sql));
+        // The axis is the day's index within its own cycle, which is DAY() of the
+        // anchor-shifted date rather than the plain day-of-month.
+        const domQuery = queries.find((sql) => /DAY\(DATE_SUB\(e\.created_at[^)]*\)\)\s+AS\s+dom/i.test(sql));
 
         expect(domQuery).toBeDefined();
         expect(domQuery).toMatch(/is_fixed.*=\s*TRUE/is);
@@ -400,7 +402,7 @@ describe('GET /api/insights - the ideal curve', () => {
 // ── Shape and validation ──────────────────────────────────────────────────────
 
 describe('GET /api/insights - shape and validation', () => {
-    it('daily[] is indexed 1..days_in_month', async () => {
+    it('daily[] is indexed 1..days_in_cycle', async () => {
         mockInsights({ daily: [{ d: 5, total: '120' }] });
 
         const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());

@@ -1,15 +1,23 @@
 const db = require('../config/db');
+const cy = require('../services/cycle');
 
+/**
+ * `income.month` is the month a salary is TAGGED with, which is not the same thing as the
+ * financial cycle it funds — a salary paid on the 5th arrives near the end of a cycle
+ * anchored on the 10th. `?month=` names a cycle, exactly as it does everywhere else, and
+ * cycle.incomeMonthOf translates it into the row key. Writes (addIncome/updateIncome) still
+ * take a literal `income.month`: they record which salary this is, not which cycle spends it.
+ */
 exports.getIncome = async (req, res) => {
     const user_id = req.user.user_id;
-    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const month = req.query.month || cy.currentCycleKey(req.cycleSettings);
     if (month && !/^\d{4}-\d{2}$/.test(month)) {
         return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM.' });
     }
     try {
         const [rows] = await db.query(
             'SELECT * FROM income WHERE user_id = ? AND month = ? ORDER BY created_at DESC',
-            [user_id, month]
+            [user_id, cy.incomeMonthOf(month, req.cycleSettings)]
         );
         res.json(rows.map(r => ({ ...r, amount: Number(r.amount) })));
     } catch (err) {
@@ -80,21 +88,22 @@ exports.deleteIncome = async (req, res) => {
 // Returns fixed income for the month plus averaged variable income (past 3 months).
 exports.getIncomeSummary = async (req, res) => {
     const user_id = req.user.user_id;
-    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const month = req.query.month || cy.currentCycleKey(req.cycleSettings);
     if (month && !/^\d{4}-\d{2}$/.test(month)) {
         return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM.' });
     }
 
     try {
+        const incomeMonth = cy.incomeMonthOf(month, req.cycleSettings);
         const [fixedRows] = await db.query(
             "SELECT source, SUM(amount) AS amount FROM income WHERE user_id = ? AND type = 'fixed' AND month = ? GROUP BY source",
-            [user_id, month]
+            [user_id, incomeMonth]
         );
 
         const [varRows] = await db.query(
             "SELECT source, SUM(amount) AS amount " +
             "FROM income WHERE user_id = ? AND type = 'variable' AND month = ? GROUP BY source",
-            [user_id, month]
+            [user_id, incomeMonth]
         );
 
         const variableActual = varRows.map(r => ({
@@ -109,6 +118,7 @@ exports.getIncomeSummary = async (req, res) => {
 
         res.json({
             month,
+            income_month: incomeMonth,
             fixed: fixedRows.map(r => ({ source: r.source, amount: Number(r.amount), type: 'fixed' })),
             variable: variableActual,
             fixed_total: Math.round(fixedTotal * 100) / 100,

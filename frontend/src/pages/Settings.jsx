@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useI18n } from '../context/I18nContext';
+import { useSettings } from '../context/SettingsContext';
+import { currentCycle, resolveCycle } from '../lib/cycle';
 import Icon from '../components/ui/Icon';
 import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
@@ -11,6 +13,108 @@ import TelegramLinkCard from '../components/TelegramLinkCard';
 import WhatsNewModal from '../components/WhatsNewModal';
 import WelcomeModal from '../components/WelcomeModal';
 import api from '../api/client';
+
+/**
+ * The two days that define what a "period" means for this user.
+ *
+ * `cycle_anchor_day` is the day their credit-card settlement leaves the bank, and so the
+ * day a financial period starts: spending before it was already paid off by that charge
+ * and belongs to the previous period, which is the whole reason this control exists.
+ * `salary_day` reconstructs the missing day on `income.month`, mapping a salary to the
+ * cycle it funds.
+ *
+ * Restricted to 1–28, and the copy says so. A cycle key has to be recoverable from a date
+ * by a fixed day shift, which only works for a day that exists in every month.
+ */
+function CycleSettingsCard() {
+  const { t, lang } = useI18n();
+  const { settings, saveSettings } = useSettings();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  // The inputs fall back to the loaded settings until the user types, so the saved values
+  // are DERIVED rather than copied into state by an effect — there is no moment where the
+  // fields show a stale 1 while the real anchor is on its way.
+  const [draftAnchor, setDraftAnchor] = useState(null);
+  const [draftSalary, setDraftSalary] = useState(null);
+  const anchor = draftAnchor ?? String(settings.cycle_anchor_day ?? 1);
+  const salary = draftSalary ?? String(settings.salary_day ?? 1);
+  const setAnchor = setDraftAnchor;
+  const setSalary = setDraftSalary;
+
+  // Preview the cycle the ENTERED values would produce, not the saved ones — the point of
+  // the preview is to answer "what will this do" before committing to it.
+  const draft = { cycle_anchor_day: Number(anchor), salary_day: Number(salary) };
+  const valid = [anchor, salary].every(v => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 28);
+  const preview = valid ? resolveCycle(currentCycle(draft), draft) : null;
+  const locale = lang === 'he' ? 'he-IL' : 'en-US';
+  const fmtDay = (d) => d.toLocaleDateString(locale, { day: 'numeric', month: 'long' });
+
+  const dirty = valid && (
+    Number(anchor) !== Number(settings.cycle_anchor_day) ||
+    Number(salary) !== Number(settings.salary_day)
+  );
+
+  const onSave = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await saveSettings({ cycle_anchor_day: Number(anchor), salary_day: Number(salary) });
+      // Drop the drafts so the fields track the saved values again.
+      setDraftAnchor(null);
+      setDraftSalary(null);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setError(err?.response?.data?.error || t('settings_cycle_err'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const field = (label, value, onChange) => (
+    <label className="stack" style={{ gap: 6, flex: 1, minWidth: 130 }}>
+      <span className="meta-label">{label}</span>
+      <input
+        className="input"
+        type="number"
+        min={1}
+        max={28}
+        inputMode="numeric"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+    </label>
+  );
+
+  return (
+    <div className="card card-pad-lg" style={{ marginBottom: 20 }}>
+      <div className="stack" style={{ gap: 4, marginBottom: 14 }}>
+        <h3 className="h2">{t('settings_cycle')}</h3>
+        <span className="muted" style={{ fontSize: 12 }}>{t('settings_cycle_sub')}</span>
+      </div>
+
+      <div className="row" style={{ gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        {field(t('settings_cycle_anchor'), anchor, setAnchor)}
+        {field(t('settings_cycle_salary'), salary, setSalary)}
+        <button className="btn primary" disabled={!dirty || saving} onClick={onSave}>
+          {saving ? t('settings_cycle_saving') : t('settings_cycle_save')}
+        </button>
+      </div>
+
+      <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+        {valid
+          ? t('settings_cycle_preview')
+              .replace('{start}', fmtDay(preview.start))
+              .replace('{end}', fmtDay(preview.lastDay))
+          : t('settings_cycle_range_hint')}
+      </div>
+      {saved && <div style={{ color: 'var(--emerald)', fontSize: 12, marginTop: 8 }}>{t('settings_cycle_saved')}</div>}
+      {error && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 8 }}>{error}</div>}
+    </div>
+  );
+}
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -293,12 +397,8 @@ export default function Settings() {
       sub: t('settings_currency_sub'),
       val: <span className="muted">ILS</span>,
     },
-    {
-      icon: 'calendar',
-      name: t('settings_cycle'),
-      sub: t('settings_cycle_sub'),
-      val: <span className="muted">{t('settings_cycle_val')}</span>,
-    },
+    // The old static "Budget cycle · Monthly" row was replaced by CycleSettingsCard, which
+    // makes it a real setting rather than a claim about the 1st of the month.
     {
       icon: 'sparkles',
       name: t('settings_avg'),
@@ -338,6 +438,9 @@ export default function Settings() {
   return (
     <div className="view-enter">
       <PageHeader title={t('settings_title')} sub={t('settings_sub')} />
+
+      {/* First: it changes what every number in the app means. */}
+      <CycleSettingsCard />
 
       <div className="card" style={{ overflow: 'hidden', marginBottom: 20 }}>
         {rows.map((r, i) => (

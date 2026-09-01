@@ -56,7 +56,11 @@ Express 5. `index.js` → `routes/expenseRoutes.js` (all `/api/*` routes, each b
 `main.py` boots: `DatabaseManager` (own `aiomysql` pool, direct DB access — does NOT go through the backend), aiogram dispatcher, APScheduler. `bot/handlers.py` — any non-command text → `ai_engine.parse_input()` → confirmation buttons via FSM (`bot/states.py`) → `DatabaseManager` insert. `scheduler.py` — daily subscription billing (idempotent per month via `last_charged_month`), Saturday 09:00 spending-score DM.
 
 ### Frontend (`frontend/src/`)
-`api/client.js` — axios instance; injects JWT from `localStorage.sf_token`, wipes token + reloads on a 401 *with* a token. `App.jsx` — routes under `PrivateRoute`/`PublicRoute`; Google One-Tap auto-auth. Pages call the API directly; no state library. Contexts: `AuthContext`, `ThemeContext`, `I18nContext` (Hebrew/English, app is RTL-aware).
+`api/client.js` — axios instance; injects JWT from `localStorage.sf_token`, wipes token + reloads on a 401 *with* a token. `App.jsx` — routes under `PrivateRoute`/`PublicRoute`; Google One-Tap auto-auth. Pages call the API directly; no state library. Contexts: `AuthContext`, `ThemeContext`, `I18nContext` (Hebrew/English, app is RTL-aware),
+`SettingsContext` (the financial-cycle days — loaded once, because every month picker is built
+from the anchor day and four pages fetching it independently would let them disagree).
+Period options come from `lib/cycle.js`; the four near-identical `getRecentMonths` /
+`getMonthOptions` copies the pages each carried are gone.
 
 ### Bank & card sync (`backend/src/services/`)
 `bankSyncScheduler.start()` runs two independent loops from `index.js`: `runSyncCycle` every 2 min (scrapes connections that are due) and `runCategorizationDrain` every 1 min (imports staged rows). `bankScraperService.js` wraps `israeli-bank-scrapers` and force-kills the browser in a `finally` — Chromium leaked a process per scrape without it, and compose needs `init: true` so tini reaps the orphans.
@@ -69,6 +73,44 @@ Express 5. `index.js` → `routes/expenseRoutes.js` (all `/api/*` routes, each b
 - **Counting new rows**: compare against known hashes, never `affectedRows` — mysql2 uses `CLIENT_FOUND_ROWS`, so a matched duplicate also reports 1.
 - **Card settlements**: a bank row like `2624 - ישראכרט בע"מ` duplicates that card's own purchases, so it is skipped — but ONLY when the card is actually connected, otherwise the money vanishes. `reconcileSettlements()` retires settlements already imported before the card was added.
 - **'error' connections retry hourly** (paced by `last_attempt_at`); `invalid_credentials` never auto-retries — Israeli banks lock after ~3 bad logins.
+
+### The financial cycle — what "this month" means (migration 012)
+
+**A period is the user's financial cycle, not a calendar month.** It runs from
+`users.cycle_anchor_day` — the day their card settlement leaves the bank — to the day before
+the next one. For a user charged on the 10th, "September" is 10 Sep – 9 Oct. A calendar month
+spliced the tail of one financial period onto the head of the next: spending on 3 September
+was already paid off by the 10 September charge out of August's salary, yet counted against
+September's income.
+
+- **`backend/src/services/cycle.js` is the single definition**, mirrored in
+  `bot/app/services/cycle.py` because the bot talks to MySQL directly (same arrangement as the
+  two Gemini parsers and the two link-code implementations). **Change one, change the other** —
+  `tests/backend/cycle.test.js` and `tests/bot/test_cycle.py` assert the same vector table.
+  Nothing else may derive a boundary; there is no `CONCAT(month, '-01')` left in the codebase.
+- **The key is still `YYYY-MM`** — the month the cycle *starts* in — so `?month=` is unchanged
+  and all the month-keyed arithmetic in `forecastMath.js` (`pastMonths`, the decay) is untouched.
+  `forecastMath` takes `(startDate, days)` instead of `(year, month, daysInMonth)`; that triple
+  only ever existed to walk the calendar for weekdays.
+- **`D` is not "days in the month".** Feb 10 → Mar 9 is 28 days, Mar 10 → Apr 9 is 31. Nothing
+  may assume a fixed length. Responses carry `days_in_cycle`, `cycle_start`, `cycle_end`,
+  `cycle_day` — the frontend draws what it is given rather than re-deriving a boundary it
+  cannot know the anchor for.
+- **Bucketing a row into its cycle is one SQL shift**:
+  `DATE_FORMAT(DATE_SUB(created_at, INTERVAL {anchor−1} DAY), '%Y-%m')` for the key, `DAY()` of
+  the same shifted date for the index within the cycle. Exact only for a day that exists in
+  every month — hence the **1–28** restriction, enforced at the API and by a CHECK constraint.
+- **`income` has no day column**, so `salary_day` decides which `income.month` funds a cycle
+  (`incomeMonthOf`): the row's own month when payday ≥ anchor, the next month when below it.
+  Writes still record a literal `income.month` — which salary a row *is*, not which cycle
+  spends it.
+- **Subscriptions are gated in JS, not SQL.** `day_of_month > DAY(CURDATE())` is meaningless
+  once a cycle straddles two months — with an anchor of 10, the 3rd is the *end* of the cycle,
+  so a numeric comparison ranks the charges backwards. `chargeDateInCycle()` resolves each
+  billing day to a real date instead.
+- **Defaults are `anchor = 1`, `salary_day = 1`**, under which every derivation reduces exactly
+  to the old calendar-month behaviour. That identity is the load-bearing regression test.
+- `docs/CALCULATIONS.md` §0 is the full write-up.
 
 ### Two separate Gemini parsers — keep aware of both
 - `bot/app/ai/ai_engine.py` — multi-intent (`log_expense` / `log_income` / `log_subscription` / `ERROR_UNSUPPORTED`), returns a JSON array.
@@ -110,7 +152,9 @@ registration path, and it took the address on the sender's word.
   deliberately **not** under `/api/auth` — Settings polls it while a link code is live, which
   would exhaust the strict bucket in under two minutes.
 - **Never add a query to `middleware/auth.js`.** Its single `SELECT` is the first entry in the
-  positional `mockResolvedValueOnce` queue of all 14 backend test files.
+  positional `mockResolvedValueOnce` queue of all 14 backend test files. (It now also selects
+  `cycle_anchor_day`/`salary_day` into `req.cycleSettings` — extra *columns* on the existing
+  query are fine and cost nothing; a second query is not.)
 
 ### In-app tours
 Both tours render from one component, `components/ui/TourDeck.jsx` — paged card, dots,

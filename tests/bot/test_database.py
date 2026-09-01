@@ -7,6 +7,8 @@ import hashlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
+from app.services import cycle as cycle_svc
+
 
 def _make_cursor(fetchall=None, fetchone=None, lastrowid=None, rowcount=1):
     cur = AsyncMock()
@@ -252,6 +254,12 @@ class TestAddIncome:
 
 # ── get_category_spending ─────────────────────────────────────────────────────
 
+# get_category_spending now takes a resolved Cycle, not a 'YYYY-MM' string: the bot has to
+# measure the same window the dashboard's budget bars do, and that starts on the user's
+# anchor day. The default settings make a cycle exactly the calendar month.
+_APRIL = cycle_svc.resolve_cycle("2026-04", {"cycle_anchor_day": 1, "salary_day": 1})
+
+
 class TestGetCategorySpending:
     @pytest.mark.asyncio
     async def test_returns_total_spent(self):
@@ -260,7 +268,7 @@ class TestGetCategorySpending:
         pool = _make_pool(conn)
         db = await _get_db_with_pool(pool)
 
-        result = await db.get_category_spending(12345, "Food", "2026-04")
+        result = await db.get_category_spending(12345, "Food", _APRIL)
 
         assert result == 450.0
 
@@ -271,7 +279,7 @@ class TestGetCategorySpending:
         pool = _make_pool(conn)
         db = await _get_db_with_pool(pool)
 
-        result = await db.get_category_spending(12345, "Food", "2026-04")
+        result = await db.get_category_spending(12345, "Food", _APRIL)
 
         assert result == 0.0
 

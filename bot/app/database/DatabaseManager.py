@@ -4,6 +4,8 @@ import logging
 from datetime import date, timedelta
 from dotenv import load_dotenv
 
+from app.services import cycle as cycle_svc
+
 load_dotenv()
 
 
@@ -359,8 +361,31 @@ class DatabaseManager:
             logging.error(f"add_income error: {e}")
             return False
 
-    async def get_category_spending(self, user_id: int, category_name: str, month: str) -> float:
-        """Returns total spent in a category for the given month."""
+    async def get_cycle_settings(self, user_id: int) -> dict:
+        """The user's financial-cycle settings, for app.services.cycle.
+
+        Returns the calendar-month defaults for a user who has not configured anything —
+        or if the row has gone — so a budget warning is never blocked on a settings read.
+        """
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT cycle_anchor_day, salary_day FROM users WHERE user_id = %s",
+                    (user_id,),
+                )
+                row = await cur.fetchone()
+        if not row:
+            return {"cycle_anchor_day": 1, "salary_day": 1}
+        return {"cycle_anchor_day": row[0], "salary_day": row[1]}
+
+    async def get_category_spending(self, user_id: int, category_name: str, cycle) -> float:
+        """Total spent in a category over one financial cycle.
+
+        Takes a resolved Cycle rather than a 'YYYY-MM' string: the bot's budget warnings
+        have to measure the same window the dashboard's budget bars do, and that window
+        starts on the user's anchor day, not the 1st.
+        """
         pool = await self.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
@@ -368,8 +393,8 @@ class DatabaseManager:
                     "SELECT COALESCE(SUM(e.amount), 0) FROM expenses e "
                     "JOIN categories c ON e.category_id = c.category_id "
                     "WHERE e.user_id = %s AND c.name = %s "
-                    "  AND DATE_FORMAT(e.created_at, '%%Y-%%m') = %s",
-                    (user_id, category_name, month),
+                    "  AND e.created_at >= %s AND e.created_at < %s",
+                    (user_id, category_name, cycle.start, cycle.end),
                 )
                 (total,) = await cur.fetchone()
         return float(total)
@@ -447,22 +472,23 @@ class DatabaseManager:
         specific_category: str | None = None,
     ) -> dict:
         today = date.today()
+        # "Month" here means the user's financial CYCLE — their card-settlement day to the
+        # day before the next one. The AI answers questions like "how much did I spend this
+        # month" and must not contradict the dashboard by measuring a calendar month.
+        settings = await self.get_cycle_settings(user_id)
+        this_cycle = cycle_svc.resolve_cycle(cycle_svc.current_cycle_key(settings, today), settings)
 
         if timeframe == "current_month":
-            start_date = today.replace(day=1)
+            start_date = this_cycle.start
             end_date = today
         elif timeframe == "last_month":
-            first_of_this = today.replace(day=1)
-            end_date = first_of_this - timedelta(days=1)
-            start_date = end_date.replace(day=1)
+            prev = cycle_svc.resolve_cycle(cycle_svc.add_months(this_cycle.key, -1), settings)
+            start_date = prev.start
+            end_date = prev.last_day
         elif timeframe == "last_3_months":
-            # go back ~3 months from 1st of current month
-            first_of_this = today.replace(day=1)
-            y, m = first_of_this.year, first_of_this.month - 3
-            if m <= 0:
-                m += 12
-                y -= 1
-            start_date = date(y, m, 1)
+            start_date = cycle_svc.resolve_cycle(
+                cycle_svc.add_months(this_cycle.key, -3), settings
+            ).start
             end_date = today
         elif timeframe == "this_year":
             start_date = date(today.year, 1, 1)

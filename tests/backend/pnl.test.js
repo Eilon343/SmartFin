@@ -12,6 +12,45 @@ const { authHeader, TEST_USER } = require('./setup/authHelper');
  */
 const MONTH_NOW = new Date().toISOString().slice(0, 7);
 
+/**
+ * Freeze the clock at midday on the 15th of `MONTH_NOW`.
+ *
+ * Anything asserting on a forecast needs this. `d` — how far into the cycle we are — is an
+ * input to every estimator, so a test that does not pin it is really asserting "this holds
+ * on whichever day CI happened to run", and both ends of the cycle are degenerate:
+ *
+ *   • On day 1 with no history the credibility weight is 1, so the variable projection is a
+ *     pure run-rate and ₪30 of spending extrapolates to ₪900.
+ *   • On the last day `remaining` is 0, so every projection collapses onto actuals exactly.
+ *
+ * The 15th is mid-cycle in every month length, 28 through 31, which is what lets the
+ * assertions below hold as stated rather than only for a 30-day April.
+ *
+ * Only `Date` is faked. supertest runs a real HTTP server and the mocked pool resolves
+ * through real microtasks, so faking timers wholesale would hang the request instead of
+ * answering it.
+ *
+ * The instant is derived from MONTH_NOW rather than hard-coded so it stays in the same
+ * month as `history()`'s default anchor — a frozen clock in a different month would make
+ * the lookback rows future-dated, and the decay silently drops those.
+ */
+const [_MY, _MM] = MONTH_NOW.split('-').map(Number);
+const MID_CYCLE = new Date(Date.UTC(_MY, _MM - 1, 15, 12));
+
+function freezeMidCycle() {
+    jest.useFakeTimers({
+        now: MID_CYCLE,
+        doNotFake: [
+            'hrtime', 'nextTick', 'performance', 'queueMicrotask',
+            'requestAnimationFrame', 'cancelAnimationFrame',
+            'requestIdleCallback', 'cancelIdleCallback',
+            'setImmediate', 'clearImmediate',
+            'setInterval', 'clearInterval',
+            'setTimeout', 'clearTimeout',
+        ],
+    });
+}
+
 function history(months, perMonth, anchor = MONTH_NOW) {
     const [y, m] = anchor.split('-').map(Number);
     const rows = [];
@@ -23,15 +62,26 @@ function history(months, perMonth, anchor = MONTH_NOW) {
     return rows;
 }
 
+// The subscription query now returns the rows themselves — the "has this billing day
+// passed" test moved from SQL into JS, because a day-of-month comparison cannot answer it
+// once a cycle straddles two calendar months. `subscriptionDay` is the billing day of the
+// single row emitted; tests that care whether it is still ahead say so explicitly.
 function mockPnL({
-    expenses = '0', subscriptions = '0', savings = '0',
+    expenses = '0', subscriptions = '0', subscriptionDay = 15, savings = '0',
     fixedIncome = '0', variableActual = '0',
     incomeHistory = [], expenseHistory = [], dow = [],
+    // The auth middleware reads the financial-cycle settings off the same row as the
+    // existence check, so this is where a non-default cycle is injected. Omitted means
+    // anchor 1 / salary day 1 — a cycle that is exactly the calendar month.
+    settings = {},
 } = {}) {
+    const subRows = Number(subscriptions) > 0
+        ? [{ subscription_id: 1, amount: subscriptions, day_of_month: subscriptionDay }]
+        : [];
     db.query
-        .mockResolvedValueOnce([[{ user_id: TEST_USER.user_id }]])   // auth
-        .mockResolvedValueOnce([[{ total: expenses }]])              // expenses this month
-        .mockResolvedValueOnce([[{ total: subscriptions }]])         // subscriptions
+        .mockResolvedValueOnce([[{ user_id: TEST_USER.user_id, ...settings }]])   // auth
+        .mockResolvedValueOnce([[{ total: expenses }]])              // expenses this cycle
+        .mockResolvedValueOnce([subRows])                            // subscriptions
         .mockResolvedValueOnce([[{ total: savings }]])               // savings allocations
         .mockResolvedValueOnce([[{ total: fixedIncome }]])           // fixed income
         .mockResolvedValueOnce([[{ total: variableActual }]])        // variable income actual
@@ -193,7 +243,14 @@ describe('GET /api/pnl - forecasted income', () => {
      * month it quietly propped a genuinely bad income month back up to the average, so
      * the forecast could never warn anyone their income had fallen short. It now adds the
      * still-expected remainder to what has actually arrived.
+     *
+     * Every test here asserts on a projection, and a projection is a function of how far
+     * into the cycle we are — so the day is pinned rather than inherited from the calendar.
+     * See freezeMidCycle.
      */
+    beforeEach(freezeMidCycle);
+    afterEach(() => jest.useRealTimers());
+
     it('never forecasts less income than has already arrived', async () => {
         mockPnL({ fixedIncome: '5000', variableActual: '1100', incomeHistory: history(6, 300) });
 
@@ -212,12 +269,18 @@ describe('GET /api/pnl - forecasted income', () => {
     });
 
     it('still expects the average when nothing has arrived yet', async () => {
+        // Both bounds are load-bearing and both need a mid-cycle clock. The lower one says
+        // some of the ₪900 is still expected; on the LAST day of a cycle `remaining` is 0,
+        // the projection lands on ₪5,000 exactly, and this read as a failure rather than as
+        // the correct answer for a cycle with no days left in it. The upper one says only
+        // the *unelapsed* share is still expected — the whole ₪900 would be the old floor
+        // coming back.
         mockPnL({ fixedIncome: '5000', variableActual: '0', incomeHistory: history(6, 900) });
 
         const res = await request(app).get('/api/pnl').set(authHeader());
 
         expect(res.body.total_income_projected).toBeGreaterThan(5000);
-        expect(res.body.total_income_projected).toBeLessThanOrEqual(5900);
+        expect(res.body.total_income_projected).toBeLessThan(5900);
     });
 
     it('a future month expects the full historical average — nothing has happened yet', async () => {
@@ -235,6 +298,14 @@ describe('GET /api/pnl - forecasted income', () => {
     it('original bug: new user with variable income stays positive in forecast', async () => {
         // Before: projected_income = 0 + 0 = 0 → forecast goes negative for someone who
         // had actually been paid. The floor at actuals is what keeps this fixed.
+        //
+        // The sign is the assertion, so the expense side has to stay out of the way — and
+        // on day 1 it does not. With no history the credibility weight is 1, so ₪30 spent
+        // extrapolates to ₪900 by a pure run-rate and the forecast lands on exactly ₪0:
+        // the test then failed on the 1st of any 30-day month while the bug it guards was
+        // nowhere near it. Mid-cycle the run-rate is ~₪60 and the ₪1,100 floor is what
+        // decides the sign, which is the thing being tested. Without the floor the answer
+        // here is roughly −₪260.
         mockPnL({ variableActual: '1100', expenses: '30', savings: '200', incomeHistory: [] });
 
         const res = await request(app).get('/api/pnl').set(authHeader());
@@ -403,29 +474,45 @@ describe('GET /api/pnl - subscription double-counting', () => {
      * `subscriptions` row on top subtracted the same money twice, understating P&L by
      * the full subscription bill every month.
      */
-    // The billing-day gate lives in SQL because it compares against the DB's CURDATE(),
-    // which a mocked pool cannot evaluate. Asserting the clause is the only way to pin
-    // the rule from here; the arithmetic it feeds is covered behaviourally below.
-    it('gates subscriptions on the billing day, per month direction', async () => {
-        db.query.mockResolvedValueOnce([[{ user_id: TEST_USER.user_id }]]);
-        db.query.mockResolvedValue([[{ total: '0', months_with_data: '0' }]]);
+    // The gate is now JS rather than a SQL predicate against CURDATE(), so it can finally
+    // be pinned by behaviour instead of by asserting on a query string. FUTURE and PAST
+    // are used throughout this block because they are the two directions that do not
+    // depend on what today's date happens to be when the suite runs.
+    const [ny, nm] = MONTH_NOW.split('-').map(Number);
+    const FUTURE = nm === 12 ? `${ny + 1}-01` : `${ny}-${String(nm + 1).padStart(2, '0')}`;
+    const PAST = nm === 1 ? `${ny - 1}-12` : `${ny}-${String(nm - 1).padStart(2, '0')}`;
 
-        await request(app).get('/api/pnl').set(authHeader());
+    it('counts every subscription in a future cycle — none of them have been charged yet', async () => {
+        mockPnL({ subscriptions: '91', subscriptionDay: 15 });
 
-        const subQuery = db.query.mock.calls
-            .map(([sql]) => sql)
-            .find((sql) => /FROM subscriptions/i.test(sql));
+        const res = await request(app).get(`/api/pnl?month=${FUTURE}`).set(authHeader());
 
-        // future month → all subs; current month → only days still ahead; past → none.
-        expect(subQuery).toContain("? > DATE_FORMAT(CURDATE(), '%Y-%m')");
-        expect(subQuery).toContain('day_of_month > DAY(CURDATE())');
+        expect(res.body.subscription_total).toBe(91);
+    });
+
+    it('counts none in a past cycle — every billing day has already come and gone', async () => {
+        mockPnL({ subscriptions: '91', subscriptionDay: 15 });
+
+        const res = await request(app).get(`/api/pnl?month=${PAST}`).set(authHeader());
+
+        expect(res.body.subscription_total).toBe(0);
+    });
+
+    it('drops a subscription in the live cycle once its billing day has passed', async () => {
+        // Day 1 of a calendar-month cycle is today or earlier on every day of the month,
+        // so this is the one live-cycle case with a date-independent answer.
+        mockPnL({ subscriptions: '91', subscriptionDay: 1 });
+
+        const res = await request(app).get('/api/pnl').set(authHeader());
+
+        expect(res.body.subscription_total).toBe(0);
     });
 
     it('keeps an upcoming subscription out of current_net_pnl', async () => {
         // It has not been paid yet, so it cannot reduce where the user stands today.
         mockPnL({ fixedIncome: '10000', expenses: '2000', subscriptions: '91' });
 
-        const res = await request(app).get('/api/pnl').set(authHeader());
+        const res = await request(app).get(`/api/pnl?month=${FUTURE}`).set(authHeader());
 
         expect(res.body.subscription_total).toBe(91);
         expect(res.body.current_net_pnl).toBe(10000 - 2000);
@@ -436,7 +523,7 @@ describe('GET /api/pnl - subscription double-counting', () => {
         // figures is the subscription itself — subtracted once, and only here.
         mockPnL({ fixedIncome: '10000', expenses: '2000', subscriptions: '91' });
 
-        const res = await request(app).get('/api/pnl?as_of_day=15').set(authHeader());
+        const res = await request(app).get(`/api/pnl?month=${FUTURE}&as_of_day=15`).set(authHeader());
 
         // Absolute figures move with the MTD income pro-rate; the gap between them
         // is what this test pins.
@@ -444,12 +531,79 @@ describe('GET /api/pnl - subscription double-counting', () => {
     });
 
     it('is not pro-rated by the MTD clamp', async () => {
-        // Already forward-only, so halving it for a half-elapsed month would understate
+        // Already forward-only, so halving it for a half-elapsed cycle would understate
         // what is still to be paid.
         mockPnL({ fixedIncome: '10000', expenses: '2000', subscriptions: '91' });
 
-        const res = await request(app).get('/api/pnl?as_of_day=15').set(authHeader());
+        const res = await request(app).get(`/api/pnl?month=${FUTURE}&as_of_day=15`).set(authHeader());
 
         expect(res.body.subscription_total).toBe(91);
+    });
+});
+
+// ── the cycle is the period ───────────────────────────────────────────────────
+
+describe('GET /api/pnl - the queried window is the user\'s financial cycle', () => {
+    /**
+     * The controller must take its boundaries from services/cycle.js and put them in the
+     * query, rather than reconstructing a month from the key. These tests read the actual
+     * parameters handed to the driver, which is the only place that claim can be checked
+     * against a mocked pool.
+     */
+    const mockUser = (settings) => mockPnL({ settings });
+
+    const paramsOf = (re) => {
+        const call = db.query.mock.calls.find(([sql]) => re.test(sql));
+        return call ? call[1] : null;
+    };
+
+    it('queries 10 Sep - 9 Oct for a user whose card settles on the 10th', async () => {
+        mockUser({ cycle_anchor_day: 10, salary_day: 15 });
+
+        await request(app).get('/api/pnl?month=2026-09').set(authHeader());
+
+        const params = paramsOf(/GROUP BY COALESCE\(c\.is_fixed/);
+        // Half-open: the 9 Oct spend is inside, the 10 Oct spend opens the next cycle.
+        expect(params).toEqual([TEST_USER.user_id, '2026-09-10', '2026-10-10']);
+    });
+
+    it('reduces to the calendar month on the default anchor', async () => {
+        mockUser({ cycle_anchor_day: 1, salary_day: 1 });
+
+        await request(app).get('/api/pnl?month=2026-09').set(authHeader());
+
+        expect(paramsOf(/GROUP BY COALESCE\(c\.is_fixed/))
+            .toEqual([TEST_USER.user_id, '2026-09-01', '2026-10-01']);
+    });
+
+    it('clamps the MTD window to N days from the ANCHOR, not from the 1st', async () => {
+        mockUser({ cycle_anchor_day: 10, salary_day: 15 });
+
+        await request(app).get('/api/pnl?month=2026-09&as_of_day=8').set(authHeader());
+
+        // Days 1-8 of the cycle are 10-17 Sep, so the window ends at 18 Sep exclusive.
+        expect(paramsOf(/GROUP BY COALESCE\(c\.is_fixed/))
+            .toEqual([TEST_USER.user_id, '2026-09-10', '2026-09-18']);
+    });
+
+    it('reads the income row the salary_day says funds this cycle', async () => {
+        // Payday on the 5th, cycle opens on the 10th: the salary landing inside
+        // 10 Sep - 9 Oct is the one tagged October, paid 5 Oct.
+        mockUser({ cycle_anchor_day: 10, salary_day: 5 });
+
+        const res = await request(app).get('/api/pnl?month=2026-09').set(authHeader());
+
+        expect(paramsOf(/type = 'fixed' AND month/)).toEqual([TEST_USER.user_id, '2026-10']);
+        expect(res.body.income_month).toBe('2026-10');
+    });
+
+    it('reports the cycle it used, so the client never re-derives a boundary', async () => {
+        mockUser({ cycle_anchor_day: 10, salary_day: 15 });
+
+        const res = await request(app).get('/api/pnl?month=2026-02').set(authHeader());
+
+        expect(res.body.cycle_start).toBe('2026-02-10');
+        expect(res.body.cycle_end).toBe('2026-03-09');  // inclusive, for labels
+        expect(res.body.days_in_cycle).toBe(28);        // never assume 30
     });
 });
