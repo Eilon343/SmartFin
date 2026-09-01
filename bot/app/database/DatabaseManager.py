@@ -1,7 +1,7 @@
 import aiomysql
 import hashlib
 import logging
-from datetime import date, timedelta
+from datetime import date
 from dotenv import load_dotenv
 
 from app.services import cycle as cycle_svc
