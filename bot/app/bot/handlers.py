@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.ai.ai_engine import parse_input, generate_financial_advice, AIEngineError
 from app.bot.states import ExpenseFlow, IncomeFlow, SubscriptionFlow
+from app.services import cycle as cycle_svc
 
 WITTY_UNSUPPORTED = (
     "🧙 I only do financial magic — expenses, income, subscriptions, and savings.\n"
@@ -120,8 +121,12 @@ async def _check_budget_warning(db_manager, user_id: int, category_name: str | N
         limit = budget["monthly_limit"]
         if limit <= 0:
             return ""
-        month = datetime.now().strftime("%Y-%m")
-        spent = await db_manager.get_category_spending(user_id, category_name, month)
+        # The budget bar on the dashboard is scoped to the user's financial cycle, so this
+        # warning has to be too — otherwise the bot and the app quote different percentages
+        # for the same budget.
+        settings = await db_manager.get_cycle_settings(user_id)
+        cycle = cycle_svc.resolve_cycle(cycle_svc.current_cycle_key(settings), settings)
+        spent = await db_manager.get_category_spending(user_id, category_name, cycle)
         new_total = spent + amount
         pct = (new_total / limit) * 100
         if pct >= 100:
@@ -489,6 +494,9 @@ def register_handlers(dp: Dispatcher, db_manager):
 
         data = await state.get_data()
         parsed = data.get("parsed", {})
+        # `income.month` is the calendar month a salary is FOR, not the cycle it funds —
+        # the same convention the web form uses. The mapping from one to the other is the
+        # user's salary_day, and app.services.cycle.income_month_of owns it.
         month = datetime.now().strftime("%Y-%m")
 
         success = await db_manager.add_income(

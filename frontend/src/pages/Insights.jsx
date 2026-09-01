@@ -5,6 +5,8 @@ import PageHeader from '../components/ui/PageHeader';
 import Sk from '../components/ui/Skeleton';
 import Toast from '../components/ui/Toast';
 import { useI18n } from '../context/I18nContext';
+import { useSettings } from '../context/SettingsContext';
+import { currentCycle, getRecentCycles } from '../lib/cycle';
 
 const CAT_COLORS = [
   '#f59e0b', '#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fb7185',
@@ -40,21 +42,7 @@ function ordinal(n) {
   const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
-function getRecentMonths(num, lang) {
-  const out = [];
-  const now = new Date();
-  let y = now.getFullYear(), m = now.getMonth();
-  const locale = lang === 'he' ? 'he-IL' : 'en-US';
-  for (let i = 0; i < num; i++) {
-    const d = new Date(y, m, 1);
-    const iso = `${y}-${String(m + 1).padStart(2, '0')}`;
-    const label = d.toLocaleDateString(locale, { month: 'short' });
-    const longLabel = d.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
-    out.push({ iso, label, longLabel });
-    m--; if (m < 0) { m = 11; y--; }
-  }
-  return out;
-}
+// Period options come from lib/cycle.getRecentCycles — see Dashboard.
 
 /* ---------- Donut ---------- */
 function DonutChart({ slices, activeId, pinnedId, onHover, onPin, size = 220, stroke = 28 }) {
@@ -204,7 +192,7 @@ function MomentumChart({ data, t }) {
   // what stops this drifting from the backend the way the dashboard sparkline did.
   const pacing = data.pacing_target || null;
   const target = pacing ? pacing.total : 0;
-  const idealCurve = Array.isArray(data.ideal) && data.ideal.length === data.days_in_month
+  const idealCurve = Array.isArray(data.ideal) && data.ideal.length === data.days_in_cycle
     ? data.ideal
     : [];
   const cum = [];
@@ -217,7 +205,7 @@ function MomentumChart({ data, t }) {
   const W = 720, H = 220, padL = 44, padR = 14, padT = 12, padB = 28;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const yMax = Math.max(target || 1, ...cum.filter(v => v != null), 1) * 1.05;
-  const x = (i) => padL + (innerW * i) / Math.max(1, data.days_in_month - 1);
+  const x = (i) => padL + (innerW * i) / Math.max(1, data.days_in_cycle - 1);
   const y = (v) => padT + innerH - (v / yMax) * innerH;
 
   const pts = cum.map((v, i) => v == null ? null : [x(i), y(v)]).filter(Boolean);
@@ -227,7 +215,7 @@ function MomentumChart({ data, t }) {
   const idealPath = target > 0 && idealCurve.length
     ? idealCurve.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(v)}`).join(' ')
     : '';
-  const idealEnd = [x(data.days_in_month - 1), y(target)];
+  const idealEnd = [x(data.days_in_cycle - 1), y(target)];
 
   const [hover, setHover] = useState(null);
   const svgRef = useRef(null);
@@ -235,14 +223,14 @@ function MomentumChart({ data, t }) {
     if (!svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
     const px = ((e.clientX - rect.left) / rect.width) * W;
-    const day = Math.round(((px - padL) / innerW) * (data.days_in_month - 1));
-    const clamped = Math.max(0, Math.min(data.days_in_month - 1, day));
+    const day = Math.round(((px - padL) / innerW) * (data.days_in_cycle - 1));
+    const clamped = Math.max(0, Math.min(data.days_in_cycle - 1, day));
     if (cum[clamped] != null) setHover({ day: clamped, value: cum[clamped] });
     else setHover(null);
   };
 
-  const todayValue = cum[data.today_day - 1] || 0;
-  const idealAtToday = idealCurve[data.today_day - 1] ?? target;
+  const todayValue = cum[data.cycle_day - 1] || 0;
+  const idealAtToday = idealCurve[data.cycle_day - 1] ?? target;
   const overUnder = todayValue - idealAtToday;
   const isOver = overUnder > 0;
 
@@ -297,8 +285,8 @@ function MomentumChart({ data, t }) {
             </g>
           ))}
 
-          {Array.from({ length: data.days_in_month }).map((_, i) => (
-            (i % 5 === 0 || i === data.days_in_month - 1) && (
+          {Array.from({ length: data.days_in_cycle }).map((_, i) => (
+            (i % 5 === 0 || i === data.days_in_cycle - 1) && (
               <text key={i} x={x(i)} y={H - 8} textAnchor="middle"
                     fontSize="10" fill="var(--text-3)">{i + 1}</text>
             )
@@ -360,8 +348,8 @@ function MomentumChart({ data, t }) {
           {t('ins_mom_summary')
             .replace('{v}', fmt(todayValue))
             .replace('{t}', fmt(target))
-            .replace('{d}', data.today_day)
-            .replace('{n}', data.days_in_month)}
+            .replace('{d}', data.cycle_day)
+            .replace('{n}', data.days_in_cycle)}
         </div>
       </div>
     </div>
@@ -482,9 +470,9 @@ function TrendBars({ data, t }) {
 function SmartInsights({ data, t, lang }) {
   const totalSpent = data.total_spent;
   const avgTotal = data.three_mo_avg_total || 0;
-  const dailyAvg = data.today_day > 0 ? totalSpent / data.today_day : 0;
+  const dailyAvg = data.cycle_day > 0 ? totalSpent / data.cycle_day : 0;
   const projectedHitDay = avgTotal > 0 && dailyAvg > 0
-    ? Math.min(data.days_in_month, data.today_day + Math.max(0, Math.ceil((avgTotal - totalSpent) / dailyAvg)))
+    ? Math.min(data.days_in_cycle, data.cycle_day + Math.max(0, Math.ceil((avgTotal - totalSpent) / dailyAvg)))
     : null;
 
   const cats = (data.by_category || [])
@@ -642,8 +630,12 @@ function ExportMenu({ onExport, t }) {
 /* ---------- Page ---------- */
 export default function Insights() {
   const { lang, t } = useI18n();
-  const months = useMemo(() => getRecentMonths(4, lang), [lang]);
-  const [month, setMonth] = useState(months[0].iso);
+  const { settings } = useSettings();
+  const months = useMemo(() => getRecentCycles(4, settings, lang), [settings, lang]);
+  // Derived, not synced — see Dashboard. null means "whatever cycle we are in now".
+  const [picked, setPicked] = useState(null);
+  const month = picked ?? currentCycle(settings);
+  const setMonth = setPicked;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -677,7 +669,7 @@ export default function Insights() {
     setToast(
       t('ins_export_toast')
         .replace('{kind}', kind.toUpperCase())
-        .replace('{label}', sel?.longLabel || month)
+        .replace('{label}', sel?.full || month)
     );
   };
 
@@ -687,7 +679,7 @@ export default function Insights() {
     <div className="view-enter ins-page">
       <PageHeader
         title={t('ins_title')}
-        sub={`${t('ins_sub')} ${sel?.longLabel || month}`}
+        sub={`${t('ins_sub')} ${sel?.full || month}`}
         actions={
           <>
             <div className="seg" role="tablist" aria-label={t('ins_select_month')}>

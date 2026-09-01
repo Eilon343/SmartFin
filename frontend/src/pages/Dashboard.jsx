@@ -10,6 +10,8 @@ import Drawer from '../components/ui/Drawer';
 import Toast from '../components/ui/Toast';
 import Sk from '../components/ui/Skeleton';
 import { useI18n } from '../context/I18nContext';
+import { useSettings } from '../context/SettingsContext';
+import { currentCycle, getRecentCycles, dayIndexIn, resolveCycle, cycleRangeLabel } from '../lib/cycle';
 
 const CAT_COLORS = [
   '#f59e0b', '#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fb7185',
@@ -68,29 +70,8 @@ function formatDate(isoOrDateStr, lang = 'en') {
   return d.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'short', day: '2-digit' });
 }
 
-function currentMonth() {
-  return new Date().toISOString().slice(0, 7);
-}
-
-function getRecentMonths(num = 3, lang = 'en') {
-  const result = [];
-  const now = new Date();
-  let y = now.getFullYear();
-  let m = now.getMonth();
-  const locale = lang === 'he' ? 'he-IL' : 'en-US';
-
-  for (let i = 0; i < num; i++) {
-    const d = new Date(y, m, 1);
-    const iso = `${y}-${String(m + 1).padStart(2, '0')}`;
-    const label = i === 0
-      ? d.toLocaleDateString(locale, { month: 'long' })
-      : d.toLocaleDateString(locale, { month: 'short' });
-    result.push({ iso, label });
-    m--;
-    if (m < 0) { m = 11; y--; }
-  }
-  return result;
-}
+// Month options come from lib/cycle.getRecentCycles — a period is the user's financial
+// cycle, not the calendar month, and every picker in the app is built from the same list.
 
 /* -------- Category card -------- */
 function CategoryCard({ budget, color, icon, onOpen }) {
@@ -573,19 +554,21 @@ function TransactionsTable({ expenses }) {
 }
 
 /* -------- Compute real daily cumulative spending for sparkline -------- */
-function buildSpendingSparkline(expenses, month) {
-  const [y, m] = month.split('-').map(Number);
-  const today = new Date();
-  const isCurrentMonth = today.getFullYear() === y && today.getMonth() === m - 1;
-  const lastDay = isCurrentMonth ? today.getDate() : new Date(y, m, 0).getDate();
+// Indexed by day OF THE CYCLE, and the cycle's boundaries are read off the /pnl response
+// rather than re-derived here. The client used to rebuild the window itself — two
+// definitions of "this month" in one codebase is one too many, and the client's copy was
+// the one that could not know the user's anchor day.
+function buildSpendingSparkline(expenses, pnl) {
+  if (!pnl?.cycle_start) return [];
+  const start = new Date(`${pnl.cycle_start}T00:00:00`);
+  const lastDay = pnl.cycle_day > 0 ? pnl.cycle_day : pnl.days_in_cycle;
 
   const dailyTotals = new Array(lastDay).fill(0);
   for (const e of expenses) {
     if (e.is_virtual) continue;
     const d = new Date(e.created_at);
-    // Guard: only include expenses that belong to the target month
-    if (d.getFullYear() !== y || d.getMonth() + 1 !== m) continue;
-    const day = d.getDate();
+    const at = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const day = Math.round((at - start) / 86400000) + 1;
     if (day >= 1 && day <= lastDay) dailyTotals[day - 1] += Number(e.amount);
   }
 
@@ -617,13 +600,15 @@ function NetPosition({ pnl, expenses }) {
   const isDeficit = currentNet < 0;
   const isForecastDeficit = forecastNet < 0;
 
-  const spendingSparkData = buildSpendingSparkline(expenses, pnl.month);
+  const spendingSparkData = buildSpendingSparkline(expenses, pnl);
 
-  const [selY, selM] = pnl.month.split('-').map(Number);
+  // The cycle the sparkline covers, taken from the response. `cycle_day` is 0 for a cycle
+  // that has not started yet and the full length for one already finished, so the end of
+  // the line is "today" only while the cycle is live.
   const today = new Date();
-  const isCurrentMonth = today.getFullYear() === selY && today.getMonth() === selM - 1;
-  const endDate = isCurrentMonth ? today : new Date(selY, selM, 0);
-  const startDate = new Date(selY, selM - 1, 1);
+  const startDate = new Date(`${pnl.cycle_start}T00:00:00`);
+  const cycleEnd = new Date(`${pnl.cycle_end}T00:00:00`);
+  const endDate = today > startDate && today < cycleEnd ? today : cycleEnd;
   const startStr = startDate.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'short', day: '2-digit' });
   const endStr = endDate.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'short', day: '2-digit' });
 
@@ -707,7 +692,7 @@ function NetPosition({ pnl, expenses }) {
                 className={`chip ${pctChange.valid ? (up ? 'up' : 'down') : ''}`}
                 style={{ fontWeight: 600 }}
                 title={pnl.prev_is_mtd
-                  ? (lang === 'he' ? `עד יום ${pnl.prev_as_of_day} בכל חודש` : `Through day ${pnl.prev_as_of_day} of each month`)
+                  ? (lang === 'he' ? `עד יום ${pnl.prev_as_of_day} בכל מחזור` : `Through day ${pnl.prev_as_of_day} of each cycle`)
                   : undefined}
               >
                 <Icon name={pctChange.valid ? (up ? 'trending-up' : 'trending-down') : 'minus'} size={12} />
@@ -861,8 +846,16 @@ function GoalModal({ open, goal, onClose, onSave }) {
 /* -------- Main Dashboard -------- */
 export default function Dashboard() {
   const { lang, t } = useI18n();
-  const [month, setMonth] = useState(currentMonth());
-  const recentMonths = useMemo(() => getRecentMonths(3, lang), [lang]);
+  const { settings } = useSettings();
+  const recentMonths = useMemo(() => getRecentCycles(3, settings, lang), [settings, lang]);
+
+  // The anchor day decides which cycle "now" falls in, so the live period is not known
+  // until settings arrive. `picked` stays null until the user chooses one themselves,
+  // which makes the default a derived value rather than state that has to be re-synced —
+  // no effect, and no window in which the page shows a period the settings contradict.
+  const [picked, setPicked] = useState(null);
+  const month = picked ?? currentCycle(settings);
+  const setMonth = setPicked;
   const [pnl, setPnl] = useState(null);
   const [budgets, setBudgets] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -890,14 +883,16 @@ export default function Dashboard() {
     if (pm === 0) { pm = 12; py--; }
     const prevM = `${py}-${String(pm).padStart(2, '0')}`;
 
-    // MTD comparison: when viewing the live current month, ask the backend for the
-    // previous month clamped to today's day-of-month so we compare same-length windows.
-    // Backend clamps automatically if the previous month is shorter (e.g. asking for
-    // day 31 in February returns day 28/29).
+    // MTD comparison: when viewing the live cycle, ask the backend for the previous cycle
+    // clamped to the same day OF THE CYCLE, so we compare same-length windows. Not the
+    // day of the month: on the 12th with an anchor of 10 we are two days into the cycle,
+    // and asking for day 12 of the previous one would compare 2 days against 12.
+    // Backend clamps automatically if the previous cycle is shorter.
     const today = new Date();
-    const isLiveCurrentMonth = today.toISOString().slice(0, 7) === month;
+    const isLiveCurrentMonth = currentCycle(settings) === month;
+    const cycleDay = dayIndexIn(month, today, settings);
     const prevPnlUrl = isLiveCurrentMonth
-      ? `/pnl?month=${prevM}&as_of_day=${today.getDate()}`
+      ? `/pnl?month=${prevM}&as_of_day=${cycleDay}`
       : `/pnl?month=${prevM}`;
 
     Promise.allSettled([
@@ -916,7 +911,7 @@ export default function Dashboard() {
           last_net_pnl: prevP.status === 'fulfilled' ? (prevP.value.data.current_net_pnl ?? null) : null,
           prev_month: prevM,
           prev_is_mtd: isLiveCurrentMonth,
-          prev_as_of_day: isLiveCurrentMonth ? today.getDate() : null,
+          prev_as_of_day: isLiveCurrentMonth ? cycleDay : null,
         });
       }
       if (b.status === 'fulfilled') setBudgets(b.value.data.budgets || []);
@@ -925,7 +920,7 @@ export default function Dashboard() {
       if (s.status === 'fulfilled') setSubs(Array.isArray(s.value.data) ? s.value.data : []);
       if (g.status === 'fulfilled') setGoals(Array.isArray(g.value.data) ? g.value.data : []);
     }).finally(() => { if (!signal.aborted) setLoading(false); });
-  }, [month]);
+  }, [month, settings]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -973,10 +968,12 @@ export default function Dashboard() {
 
   const today = new Date();
   const [selY, selM] = month.split('-').map(Number);
-  const isCurrentMonth = today.getFullYear() === selY && today.getMonth() === selM - 1;
-  const daysLeft = isCurrentMonth
-    ? new Date(selY, selM, 0).getDate() - today.getDate()
-    : null;
+  // Days left in the CYCLE, which is what the user is actually budgeting against — with
+  // an anchor of 10 there are still 19 days of money left on the 30th, not 1.
+  const isCurrentMonth = currentCycle(settings) === month;
+  const selCycle = resolveCycle(month, settings);
+  const daysLeft = isCurrentMonth ? selCycle.days - dayIndexIn(selCycle, today) : null;
+  const cycleRange = cycleRangeLabel(month, settings, lang);
 
   if (loading && !pnl) {
     return (
@@ -1039,7 +1036,12 @@ export default function Dashboard() {
           : new Date(selY, selM - 1, 1).toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US', { month: 'long', year: 'numeric' })}
       />
 
-      <div className="seg" style={{ marginBottom: 20 }}>
+      {/* A cycle is named for the month it starts in, so "September" on a 10th anchor means
+          10 Sep – 9 Oct. The range is spelled out beneath the picker rather than left to
+          be inferred from a month name that no longer means the calendar month.
+          cycleRangeLabel returns null on the default anchor, where there is nothing to
+          disambiguate. */}
+      <div className="seg" style={{ marginBottom: cycleRange ? 6 : 20 }}>
         {recentMonths.map(rm => (
           <button
             key={rm.iso}
@@ -1050,6 +1052,9 @@ export default function Dashboard() {
           </button>
         ))}
       </div>
+      {cycleRange && (
+        <div className="muted" style={{ fontSize: 12, marginBottom: 20 }}>{cycleRange}</div>
+      )}
 
       <NetPosition pnl={pnl} expenses={expenses} />
 

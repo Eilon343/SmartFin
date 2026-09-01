@@ -18,7 +18,17 @@ CREATE TABLE IF NOT EXISTS users (
     -- NULL = has never finished the welcome tour. Kept per-account rather than in
     -- localStorage so an introduction to the app happens once, not once per browser.
     onboarded_at      DATETIME NULL,
-    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    -- The user's financial cycle (migration 012). A period runs from cycle_anchor_day to
+    -- the day before the next one — the day their card settlement leaves the bank — rather
+    -- than from the 1st. salary_day reconstructs the missing day on `income.month`, mapping
+    -- an income row to the cycle it funds. Both restricted to 1..28 so a cycle key stays
+    -- recoverable from a date by a fixed day shift; see backend/src/services/cycle.js.
+    -- Defaulting both to 1 makes a cycle exactly a calendar month.
+    cycle_anchor_day  TINYINT UNSIGNED NOT NULL DEFAULT 1,
+    salary_day        TINYINT UNSIGNED NOT NULL DEFAULT 1,
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_users_cycle_anchor_day CHECK (cycle_anchor_day BETWEEN 1 AND 28),
+    CONSTRAINT chk_users_salary_day       CHECK (salary_day       BETWEEN 1 AND 28)
 ) AUTO_INCREMENT = 10000000000000;
 
 -- Telegram is linked FROM an authenticated web session, never the other way round: the app

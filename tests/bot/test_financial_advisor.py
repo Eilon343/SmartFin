@@ -257,9 +257,15 @@ class TestGetDynamicFinancialContext:
         mock_cur = AsyncMock()
         mock_cur.__aenter__ = AsyncMock(return_value=mock_cur)
         mock_cur.__aexit__ = AsyncMock(return_value=False)
-        # Query order: cat_query fetchall, total_query fetchone, budgets_query fetchall
+        # Query order: cycle settings fetchone, cat_query fetchall, total_query fetchone,
+        # budgets_query fetchall.
+        #
+        # The settings read comes first because the timeframes are financial CYCLES now,
+        # not calendar months — "how much did I spend this month" has to mean the same
+        # window the dashboard shows. (1, 1) is the default anchor/salary day, under which
+        # a cycle is exactly the calendar month these tests were written against.
         mock_cur.fetchall = AsyncMock(side_effect=[cat_rows, budget_rows or []])
-        mock_cur.fetchone = AsyncMock(return_value=(total_value,))
+        mock_cur.fetchone = AsyncMock(side_effect=[(1, 1), (total_value,)])
 
         mock_conn = AsyncMock()
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)

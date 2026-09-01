@@ -27,6 +27,13 @@
  * both, with the weight on this month's pace rising as the month supplies evidence. See
  * `projectVariableExpenses`.
  *
+ * A NOTE ON "MONTH": the period this module forecasts is the user's financial CYCLE, which
+ * runs from their card-settlement day to the day before the next one and is only a calendar
+ * month for users who left the anchor at 1 (see services/cycle.js). The prose below says
+ * "month" throughout because that is what the period means to the person reading the
+ * dashboard; the parameters are `startDate` and `days`, and nothing here assumes the period
+ * starts on the 1st or is a fixed length.
+ *
  * SECOND RULE: fixed costs are never run-rated. `categories.is_fixed` (Housing, Utilities,
  * Savings) are flat monthly charges that already landed; scaling them to month-end would
  * bill the user for their rent twice.
@@ -97,19 +104,34 @@ function pastMonths(month, count = LOOKBACK_MONTHS) {
 }
 
 /**
- * How many of each weekday fall in `[fromMonth-01, toMonth-01)`. Index 0 = Sunday.
+ * 'YYYY-MM-DD' → a UTC-midnight Date. Every calendar walk below is UTC so that a DST
+ * transition can never add or drop a day from a window.
+ */
+function utcDay(isoDate) {
+    const [y, m, d] = String(isoDate).split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+}
+
+/** Weekday (0 = Sunday) of the `dayIndex`-th day of a period starting at `startDate`. */
+function weekdayAt(startDate, dayIndex) {
+    return (utcDay(startDate).getUTCDay() + dayIndex - 1) % 7;
+}
+
+/**
+ * How many of each weekday fall in `[fromDate, toDate)`. Index 0 = Sunday.
  *
  * `dowWeights` needs this: a ~181-day window does not contain an equal number of each
  * weekday, so without it a weekday that happened to occur 27 times would look like a
  * bigger spending day than one that occurred 25 times.
+ *
+ * Takes cycle boundary dates rather than 'YYYY-MM' keys — the lookback window starts on
+ * the user's anchor day, not on the 1st.
  */
-function weekdayCounts(fromMonth, toMonth) {
+function weekdayCounts(fromDate, toDate) {
     const counts = new Array(7).fill(0);
-    const [fy, fm] = fromMonth.split('-').map(Number);
-    const [ty, tm] = toMonth.split('-').map(Number);
-    const end = new Date(ty, tm - 1, 1);
-    for (const cur = new Date(fy, fm - 1, 1); cur < end; cur.setDate(cur.getDate() + 1)) {
-        counts[cur.getDay()]++;
+    const end = utcDay(toDate);
+    for (const cur = utcDay(fromDate); cur < end; cur.setUTCDate(cur.getUTCDate() + 1)) {
+        counts[cur.getUTCDay()]++;
     }
     return counts;
 }
@@ -187,18 +209,22 @@ function dowWeights(totals = [], dayCounts = []) {
 }
 
 /**
- * The share of a whole month's expected spending that falls on days 1..`throughDay`.
+ * The share of a whole cycle's expected spending that falls on days 1..`throughDay`.
  *
- * This is the seasonality-aware replacement for `d / D`. A month whose remaining days hold
+ * This is the seasonality-aware replacement for `d / D`. A cycle whose remaining days hold
  * two weekends should forecast higher than one ending mid-week, and this is the term that
  * knows it. With flat weights it reduces exactly to `d / D`, so there is no separate
  * code path for a user without history.
+ *
+ * `startDate` and `days` describe the user's cycle, not a calendar month — the weekday walk
+ * is the only reason this function ever needed to know where on the calendar it sat.
  */
-function elapsedShare(throughDay, year, month1to12, daysInMonth, weights) {
+function elapsedShare(throughDay, startDate, days, weights) {
     const w = weights && weights.length === 7 ? weights : new Array(7).fill(1 / 7);
+    const dow0 = utcDay(startDate).getUTCDay();
     let elapsed = 0, whole = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-        const wd = w[new Date(year, month1to12 - 1, d).getDay()];
+    for (let d = 1; d <= days; d++) {
+        const wd = w[(dow0 + d - 1) % 7];
         whole += wd;
         if (d <= throughDay) elapsed += wd;
     }
@@ -212,9 +238,9 @@ function elapsedShare(throughDay, year, month1to12, daysInMonth, weights) {
  * user was "over pace" the moment they bought anything on the 1st. Day 1 should be
  * allowed its own day's worth of spending.
  */
-function idealPace(day, target, year, month1to12, daysInMonth, weights) {
+function idealPace(day, target, startDate, days, weights) {
     if (!(target > 0)) return 0;
-    return target * elapsedShare(day, year, month1to12, daysInMonth, weights);
+    return target * elapsedShare(day, startDate, days, weights);
 }
 
 // ── Momentum pacing (Insights) ──────────────────────────────────────────────────
@@ -266,7 +292,7 @@ function pacingTarget(categories = []) {
 }
 
 /**
- * Cumulative share of a month's FIXED spending that has landed by each day, indexed
+ * Cumulative share of a cycle's FIXED spending that has landed by each day, indexed
  * `[0] = day 1`.
  *
  * `dowWeights` deliberately excludes `is_fixed` categories, because rent is charged on the
@@ -278,7 +304,10 @@ function pacingTarget(categories = []) {
  * roughly the 20th no matter how they behaved.
  *
  * Fixed spending gets its own axis instead. `totalsByDay[d]` is historical fixed spend on
- * day-of-month `d` over the lookback; the cumulative normalisation of that is the curve.
+ * the `d`-th day OF THE CYCLE over the lookback; the cumulative normalisation of that is
+ * the curve. Cycle-relative, not day-of-month: with an anchor of 10 a rent charged on the
+ * 1st is day 22 of the cycle, and placing its step on day 1 would be exactly the smearing
+ * bug this function was written to remove, just moved three weeks.
  *
  * Deliberately NOT shrunk toward uniform, unlike `dowWeights`. The review's objection to
  * per-day-of-month weights — 31 parameters from a thin history is noise — applies to
@@ -288,31 +317,31 @@ function pacingTarget(categories = []) {
  * Cumulative-and-normalised is already the robust form — a rent that moved from the 1st to
  * the 3rd across the window softens the step rather than splitting it.
  *
- * Days beyond `daysInMonth` fold into the last day (a charge dated the 31st still has to
- * land in a 30-day month). With no fixed history at all it returns `d / daysInMonth`,
- * which is what the chart drew before and is the right agnostic answer.
+ * Days beyond `days` fold into the last day (a charge on day 31 of a past 31-day cycle
+ * still has to land inside a 30-day one). With no fixed history at all it returns
+ * `d / days`, which is what the chart drew before and is the right agnostic answer.
  */
-function fixedPaceShape(totalsByDay, daysInMonth) {
-    const buckets = new Array(daysInMonth + 1).fill(0);
+function fixedPaceShape(totalsByDay, days) {
+    const buckets = new Array(days + 1).fill(0);
     let sum = 0;
     for (let d = 1; d <= 31; d++) {
         const v = Number(totalsByDay && totalsByDay[d]) || 0;
         if (v <= 0) continue;
-        buckets[Math.min(d, daysInMonth)] += v;
+        buckets[Math.min(d, days)] += v;
         sum += v;
     }
     const out = [];
     if (!(sum > 0)) {
-        for (let d = 1; d <= daysInMonth; d++) out.push(d / daysInMonth);
+        for (let d = 1; d <= days; d++) out.push(d / days);
         return out;
     }
     let acc = 0;
-    for (let d = 1; d <= daysInMonth; d++) { acc += buckets[d]; out.push(acc / sum); }
+    for (let d = 1; d <= days; d++) { acc += buckets[d]; out.push(acc / sum); }
     return out;
 }
 
 /**
- * The momentum chart's ideal curve: expected cumulative spend by each day of the month,
+ * The momentum chart's ideal curve: expected cumulative spend by each day of the cycle,
  * indexed `[0] = day 1`.
  *
  * Two components, because the two kinds of spending arrive on different clocks:
@@ -332,18 +361,17 @@ function momentumIdeal({
     fixedTarget = 0,
     variableTarget = 0,
     fixedShape,
-    year,
-    month1to12,
-    daysInMonth,
+    startDate,
+    days,
     weights,
 }) {
     const F = Math.max(0, Number(fixedTarget) || 0);
     const V = Math.max(0, Number(variableTarget) || 0);
-    const shape = Array.isArray(fixedShape) && fixedShape.length >= daysInMonth ? fixedShape : null;
+    const shape = Array.isArray(fixedShape) && fixedShape.length >= days ? fixedShape : null;
     const out = [];
-    for (let d = 1; d <= daysInMonth; d++) {
-        const fShare = shape ? shape[d - 1] : d / daysInMonth;
-        const vShare = elapsedShare(d, year, month1to12, daysInMonth, weights);
+    for (let d = 1; d <= days; d++) {
+        const fShare = shape ? shape[d - 1] : d / days;
+        const vShare = elapsedShare(d, startDate, days, weights);
         out.push(F * fShare + V * vShare);
     }
     return out;
@@ -358,9 +386,9 @@ function momentumIdeal({
  * month is all the evidence there is and the weight is 1 — shrinking a new user's forecast
  * toward a μ of zero would tell them they are about to spend nothing.
  */
-function credibilityWeight(dayOfMonth, monthsWithData) {
+function credibilityWeight(dayIndex, monthsWithData) {
     if (!(monthsWithData > 0)) return 1;
-    const d = Math.max(0, dayOfMonth);
+    const d = Math.max(0, dayIndex);
     return d / (d + CREDIBILITY_K);
 }
 
@@ -379,26 +407,25 @@ function credibilityWeight(dayOfMonth, monthsWithData) {
  */
 function projectVariableExpenses({
     spentToDate,
-    dayOfMonth,
-    daysInMonth,
+    dayIndex,
+    days,
     historicalMean = 0,
     monthsWithData = 0,
-    year,
-    month1to12,
+    startDate,
     weights,
 }) {
     const S = Number(spentToDate) || 0;
-    if (dayOfMonth >= daysInMonth) return S;
+    if (dayIndex >= days) return S;
 
-    const elapsed = elapsedShare(dayOfMonth, year, month1to12, daysInMonth, weights);
+    const elapsed = elapsedShare(dayIndex, startDate, days, weights);
     const remaining = 1 - elapsed;
     if (remaining <= 0) return S;
 
-    // elapsed is never 0 for dayOfMonth >= 1: every shrunk weight is strictly positive.
+    // elapsed is never 0 for dayIndex >= 1: every shrunk weight is strictly positive.
     const runRateRemaining = elapsed > 0 ? S * (remaining / elapsed) : 0;
     const histRemaining = (Number(historicalMean) || 0) * remaining;
 
-    const w = credibilityWeight(dayOfMonth, monthsWithData);
+    const w = credibilityWeight(dayIndex, monthsWithData);
     return S + w * runRateRemaining + (1 - w) * histRemaining;
 }
 
@@ -420,19 +447,18 @@ function projectVariableExpenses({
  */
 function projectVariableIncome({
     receivedToDate,
-    dayOfMonth,
-    daysInMonth,
+    dayIndex,
+    days,
     historicalMean = 0,
-    year,
-    month1to12,
+    startDate,
     weights,
 }) {
     const I = Number(receivedToDate) || 0;
-    if (dayOfMonth >= daysInMonth) return I;
+    if (dayIndex >= days) return I;
     // Income does not follow the spending week — a salary is not likelier on a Friday —
     // so this stays on plain calendar days rather than the day-of-week weights.
-    void year; void month1to12; void weights;
-    const remaining = (daysInMonth - dayOfMonth) / daysInMonth;
+    void startDate; void weights;
+    const remaining = (days - dayIndex) / days;
     return Math.max(I, I + (Number(historicalMean) || 0) * remaining);
 }
 
@@ -480,10 +506,10 @@ function safeToSpendPerDay({
     fixedRemaining = 0,
     subscriptionsAhead = 0,
     savingsAllocation = 0,
-    dayOfMonth,
-    daysInMonth,
+    dayIndex,
+    days,
 }) {
-    const daysLeft = daysInMonth - dayOfMonth;
+    const daysLeft = days - dayIndex;
     const headroom = Number(projectedIncome)
         - Number(spentToDate)
         - Number(fixedRemaining)

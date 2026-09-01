@@ -6,8 +6,14 @@ const incomeController = require('../controllers/incomeController');
 const savingsController = require('../controllers/savingsController');
 const insightsController = require('../controllers/insightsController');
 const cleanupController = require('../controllers/cleanupController');
+const settingsController = require('../controllers/settingsController');
 
 // Auth routes moved to routes/authRoutes.js.
+
+// Financial-cycle preferences. Every period in the app is derived from these two days, so
+// the frontend loads them before it renders anything month-shaped.
+router.get('/settings', auth, settingsController.getSettings);
+router.patch('/settings', auth, settingsController.updateSettings);
 
 router.get('/expenses', auth, expenseController.getAllExpenses);
 router.post('/expenses', auth, expenseController.addExpense);

@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useI18n } from '../context/I18nContext';
+import { useSettings } from '../context/SettingsContext';
+import { currentCycle, getCycleOptions } from '../lib/cycle';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import Modal from '../components/ui/Modal';
@@ -13,23 +15,8 @@ const EMPTY_FORM = {
   category_id: '',
 };
 
-function getMonthOptions(lang) {
-  const result = [];
-  const now = new Date();
-  let y = now.getFullYear() + 1;
-  let m = 11;
-  const locale = lang === 'he' ? 'he-IL' : 'en-US';
-
-  for (let i = 0; i < 60; i++) {
-    const d = new Date(y, m, 1);
-    const iso = `${y}-${String(m + 1).padStart(2, '0')}`;
-    const label = d.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
-    result.push({ iso, label });
-    m--;
-    if (m < 0) { m = 11; y--; }
-  }
-  return result;
-}
+// Period options come from lib/cycle.getCycleOptions — a period is the user's financial
+// cycle, and the label spells out the dates it covers when that is not a calendar month.
 
 function fmt(n) {
   return `\u200E₪${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u200E`;
@@ -75,8 +62,12 @@ function SourceBadge({ source, isVirtual }) {
 
 export default function Expenses() {
   const { lang, t } = useI18n();
-  const now = new Date().toISOString().slice(0, 7);
-  const [month, setMonth] = useState(now);
+  const { settings } = useSettings();
+  // Derived, not synced — see Dashboard. null means "whatever cycle we are in now", which
+  // is only knowable once the anchor day has loaded.
+  const [picked, setPicked] = useState(null);
+  const month = picked ?? currentCycle(settings);
+  const setMonth = setPicked;
   const [expenses, setExpenses] = useState([]);
   const [cats, setCats] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -280,7 +271,7 @@ export default function Expenses() {
             value={month}
             onChange={e => setMonth(e.target.value)}
           >
-            {getMonthOptions(lang).map(o => (
+            {getCycleOptions(settings, lang).map(o => (
               <option key={o.iso} value={o.iso}>{o.label}</option>
             ))}
           </select>

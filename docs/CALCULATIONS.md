@@ -14,17 +14,66 @@ The rest is derived from `expenseController.js` (P&L, budgets, summary), `insigh
 
 ---
 
-## 0. Notation
+## 0. The period — read this first
+
+**Every figure below is scoped to the user's financial CYCLE, not to a calendar month.**
+
+A cycle runs from their `cycle_anchor_day` — the day their credit-card settlement leaves the
+bank — to the day before the next one. For a user charged on the 10th, the period called
+"September" is **10 Sep – 9 Oct**. This is the point: spending on 3 September was already
+paid off by the 10 September charge, out of the previous period's salary, so counting it
+against September's income spliced the tail of one financial period onto the head of the
+next and reported the sum as one month.
+
+`backend/src/services/cycle.js` is the single definition, mirrored for the bot in
+`bot/app/services/cycle.py`. Nothing else may derive a boundary. It provides:
+
+| | |
+|---|---|
+| `resolveCycle(key, settings)` | `{ start, end, last_day, days, income_month }` |
+| `currentCycleKey(settings)` | the only source of "what period is it now" |
+| `anchorShiftDays(settings)` | `anchor − 1`, the SQL date shift (below) |
+| `incomeMonthOf(key, settings)` | which `income.month` funds a cycle |
+
+Three consequences worth holding onto:
+
+- **The key is still `YYYY-MM`** — the month a cycle *starts* in. So `?month=` is unchanged,
+  and all the month-keyed arithmetic (`pastMonths`, `monthsBetween`, the decay) is untouched.
+- **`D` is not 30, and not "days in the month".** Feb 10 → Mar 9 is 28 days; Mar 10 → Apr 9
+  is 31. Cycle length is inherited from the calendar underneath it.
+- **Bucketing a row into its cycle is one SQL shift**:
+  `DATE_FORMAT(DATE_SUB(created_at, INTERVAL {anchor−1} DAY), '%Y-%m')`. Moving the anchor
+  onto the 1st makes the ordinary month truncation yield the cycle key, and
+  `DAY()` of the same shifted date is the day's index *within* its cycle. Exact only for an
+  anchor that exists in every month, which is why the setting is restricted to **1–28**.
+
+`income` has no day column, only `income.month`. The salary day is therefore a second
+setting: income tagged month `M` is treated as arriving on `M`-`salary_day`, and exactly one
+such date falls inside any cycle — so the mapping is key-to-key, not a scan.
+With `salary_day ≥ anchor` a cycle takes its own start month; below the anchor it takes the
+next one (anchor 10 / payday 5: the cycle 10 Sep – 9 Oct is funded by October's salary, paid
+Oct 5).
+
+**Defaults are `anchor = 1`, `salary_day = 1`**, under which a cycle is exactly the calendar
+month, the shift is 0, and `income_month` is the key itself — so every formula below reduces
+to what it was before cycles existed. `tests/backend/cycle.test.js` pins that identity.
+
+---
+
+## 0.1 Notation
 
 | Symbol | Meaning |
 |---|---|
-| `d` | day of month elapsed (0 for a future month, `D` for a past one) |
-| `D` | days in the queried month |
-| `S_d` | actual **variable** spend so far this month, excluding `is_virtual` |
+| `d` | days of the cycle elapsed (0 for a future cycle, `D` for a past one) |
+| `D` | length of the queried cycle, in days |
+| `S_d` | actual **variable** spend so far this cycle, excluding `is_virtual` |
 | `μ` | historical mean of the quantity, decayed over the lookback |
 | `w` | credibility weight, `d / (d + K)` with `K = 10` |
 | `w_i` | share of a typical week's spend falling on weekday `i` (0 = Sunday) |
-| `ρ` | share of the month still ahead, seasonality-aware |
+| `ρ` | share of the cycle still ahead, seasonality-aware |
+
+Where the prose below says "month" it means this period — that is what it means to the person
+reading the dashboard. Where it matters that the period is not a calendar month, it says so.
 
 **Lookback is 6 months with a 2-month half-life** (`LOOKBACK_MONTHS`, `LOOKBACK_HALF_LIFE`).
 Longer than the old flat 3 months, so there is more data; decayed, so it still tracks a real
@@ -74,7 +123,8 @@ and it lets a weak month read as weak. The outer `max` keeps the one property wo
 forecast may never show less income than the user has already been paid.
 
 `income.month` is a `YYYY-MM` column with no day granularity, so `d` is today's date rather than
-the day the money landed. Income also stays on plain calendar days rather than `dow_weights` —
+the day the money landed. Which income row belongs to this cycle is decided by `salary_day`
+(§0), not read off the row. Income also stays on plain calendar days rather than `dow_weights` —
 a salary is not likelier on a Friday.
 
 ### Expense projection (credibility weighting)
@@ -130,12 +180,12 @@ The same rule drives the bot: the daily subscription job writes no generated `[S
 
 ### The MTD clamp (`?as_of_day=N`)
 
-Used for fair month-vs-month comparison — May 1–8 vs April 1–8, so a completed previous month doesn't look better simply because it's complete. `N` is clamped to `[1, days_in_month]` of the *queried* month, which handles 31-vs-30/28/29 and leap Februaries automatically.
+Used for fair cycle-vs-cycle comparison — days 1–8 of this cycle against days 1–8 of the last, so a completed previous cycle doesn't look better simply because it's complete. `N` is a day index **into the cycle**, not a day of the month: on the 12th with an anchor of 10 we are 2 days in, and asking for day 12 of the previous cycle would compare 2 days against 12. It is clamped to `[1, D]` of the *queried* cycle, which handles the 28-vs-31 spread cycles inherit from the calendar.
 
 Two clamping mechanisms, because the tables differ:
 
-- **Expenses & savings transfers** have a real `created_at`, so they are clamped in SQL (`created_at < month-01 + N DAY`).
-- **Income** lives in a per-month table with no day granularity, so it is **pro-rated** by `N / days_in_month`.
+- **Expenses & savings transfers** have a real `created_at`, so they are clamped in SQL (`created_at < cycle.start + N DAY`). The clamp is a shorter window, not a different query — which is what collapsed the old MTD/full SQL pairs into one each.
+- **Income** lives in a per-month table with no day granularity, so it is **pro-rated** by `N / D`.
 
 Under MTD, `projected_expenses = total_expenses` (no run-rate) and `forecasted_net_pnl = current_net_pnl − subscription_total`.
 
@@ -202,10 +252,10 @@ Loads 7 endpoints in parallel via `Promise.allSettled` (partial failure degrades
 
 - **Big number** = `current_net_pnl`, one decimal.
 - **Forecast callout** = `forecasted_net_pnl`, colored emerald/rose on sign.
-- **Month-over-month chip.** The dashboard fires a *second* `/pnl` call for the previous month. When viewing the live current month it appends `&as_of_day=<today>`, so the comparison is same-length-window. `diff = current_net_pnl − prev.current_net_pnl`.
+- **Month-over-month chip.** The dashboard fires a *second* `/pnl` call for the previous month. When viewing the live cycle it appends `&as_of_day=<cycle day>` (not the day of the month), so the comparison is same-length-window. `diff = current_net_pnl − prev.current_net_pnl`.
   `safePctChange()` guards the ratio: `prev == null → N/A`, `prev == 0 && curr == 0 → 0.0%`, `prev == 0 && curr ≠ 0 → N/A` (never a fake Infinity or 100%).
 - **In / Out / Save row** = `total_income_actual`, `total_expenses`, `savings_allocation`.
-- **Trend sparkline** is computed **client-side** from the `/expenses` list, not from an API: expenses bucketed by day-of-month (skipping `is_virtual`), then **cumulative**. For the current month it stops at today; for a past month it runs to the last day. So the line only ever rises.
+- **Trend sparkline** is computed **client-side** from the `/expenses` list, not from an API: expenses bucketed by **day of the cycle** (skipping `is_virtual`), then **cumulative**. The boundaries come from `cycle_start`/`cycle_end` on the `/pnl` response rather than being re-derived in the browser — the client cannot know the anchor day independently, and two definitions of the period in one codebase is one too many. For the live cycle it stops at today; for a past one it runs to the last day. So the line only ever rises.
 
 ### Category budget cards — `GET /api/budgets`
 
@@ -243,9 +293,9 @@ Pure client-side sum of non-paused subscription amounts. This is a *catalogue* t
 `insightsController.getInsights` returns per-category totals (current / previous month / 3-month average), a daily array, weekend-vs-weekday averages, `budget_total`, and the momentum chart's `pacing_target` + `ideal[]`.
 
 - **3-month average per category**: window is months `[m-3, m-2, m-1]`, and the denominator is again `months_with_data`, so a category that only existed for one of those months isn't averaged to a third of its real value.
-- **`daily[]`** is indexed 1..`days_in_month`. For the current month, days after today are `null` (not `0`) — this is what makes the momentum line stop at today instead of crashing to the floor.
+- **`daily[]`** is indexed 1..`days_in_cycle`, day 1 being the anchor day. For the live cycle, days after today are `null` (not `0`) — this is what makes the momentum line stop at today instead of crashing to the floor.
 - **`budget_total`** = sum of **all** `budgets.monthly_limit` for the user (not filtered by category being in use). Reported for the budgets UI; it is **no longer** the pacing target.
-- **`ideal[]`** is indexed 1..`days_in_month` like `daily[]`, and is computed server-side. The frontend used to rebuild this curve from `dow_weights`; it now draws what it is given, so there is one implementation rather than two to keep in step.
+- **`ideal[]`** is indexed 1..`days_in_cycle` like `daily[]`, and is computed server-side. The frontend used to rebuild this curve from `dow_weights`; it now draws what it is given, so there is one implementation rather than two to keep in step.
 
 ### Donut — "where the money went"
 
@@ -295,7 +345,7 @@ they did. So:
 
 - `elapsedShare(d)` — day-of-week seasonality — paces the **variable** half, which is the only
   spending those weights were ever measured from.
-- `fixedShare(d)` — the cumulative share of historical **fixed** spend by day-of-month, over the
+- `fixedShare(d)` — the cumulative share of historical **fixed** spend by **day of the cycle**, over the
   same 6-month lookback — paces the **fixed** half. Not shrunk toward uniform, unlike
   `dow_weights`: the review's objection to day-of-month weights (31 noisy parameters) is about
   discretionary spending, and fixed charges are the opposite case — a handful of near-deterministic
@@ -324,7 +374,7 @@ Per category: `delta = spent − three_mo_avg`, `deltaPct = delta / three_mo_avg
 
 ### Smart insight cards
 
-1. **Burn rate** — `daily_avg = total_spent / today_day`, then the day the 3-month average total would be reached: `today_day + ceil((avg_total − total_spent) / daily_avg)`, capped at month end.
+1. **Burn rate** — `daily_avg = total_spent / cycle_day`, then the day the 3-cycle average total would be reached: `cycle_day + ceil((avg_total − total_spent) / daily_avg)`, capped at cycle end.
 2. **Top category** — largest `spent`, with its percent delta vs its own 3-month average.
 3. **Weekend habit** — `(weekend_daily_avg − weekday_daily_avg) / weekday_daily_avg`. Weekend is **Friday + Saturday** (`getDay() === 5 || 6`), matching the Israeli week, and averages are per-day (sum ÷ number of days of that kind elapsed), not per-total.
    The card is **suppressed** unless at least 2 weekend days and 3 weekday days have elapsed and
