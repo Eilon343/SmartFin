@@ -202,10 +202,10 @@ export default function Income() {
 
       {/* Month picker */}
       <div className="row" style={{ marginBottom: 20, gap: 10 }}>
-        <div style={{ position: 'relative' }}>
+        <div className="period-select-wrap">
           <select
-            className="input"
-            style={{ width: 160, appearance: 'none', paddingRight: lang === 'he' ? 12 : 36, paddingLeft: lang === 'he' ? 36 : 12, cursor: 'pointer' }}
+            className="input period-select"
+            style={{ appearance: 'none', paddingRight: lang === 'he' ? 12 : 36, paddingLeft: lang === 'he' ? 36 : 12, cursor: 'pointer' }}
             value={month}
             onChange={e => setMonth(e.target.value)}
           >
@@ -261,57 +261,83 @@ export default function Income() {
         ) : (
           <div style={{ padding: '0 22px 14px' }}>
             {entries.map(entry => (
-              <div
-                key={entry.income_id}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '36px 1fr auto auto 32px 32px',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '10px 0',
-                  borderBottom: '1px solid var(--line)',
-                }}
-              >
-                <div style={{
-                  width: 36, height: 36, borderRadius: 9,
-                  background: 'var(--hover-bg-2)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: 'var(--emerald)', flexShrink: 0,
-                }}>
+              <div key={entry.income_id} className="inc-row">
+                <div className="inc-icon">
                   <Icon name="trending-up" size={16} />
                 </div>
-                <div className="stack" style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ fontWeight: 500, fontSize: 13.5 }}>{entry.source}</span>
-                  <span className="muted-2" style={{ fontSize: 11 }}>
+                <div className="stack inc-text">
+                  <span className="inc-source">{entry.source}</span>
+                  <span className="muted-2 inc-meta">
                     {entry.month}
                     {entry.description ? ` · ${entry.description}` : ''}
                   </span>
                 </div>
-                <span className="mono tnum" style={{ fontSize: 13 }} dir="ltr">
+                <span className="mono tnum inc-amount" style={{ fontSize: 13 }} dir="ltr">
                   {entry.currency !== 'ILS' ? `${entry.currency} ` : '₪'}{fmtNum(entry.amount)}
                 </span>
-                <TypeBadge type={entry.type} />
-                <button
-                  className="btn ghost icon"
-                  style={{ width: 32, height: 32, color: 'var(--text-2)' }}
-                  onClick={() => openEdit(entry)}
-                  title={t('common_edit')}
-                >
-                  <Icon name="edit-2" size={13} />
-                </button>
-                <button
-                  className="btn ghost icon"
-                  style={{ width: 32, height: 32, color: 'var(--rose)' }}
-                  onClick={() => setDeleteTarget(entry)}
-                  title={t('common_delete')}
-                >
-                  <Icon name="trash-2" size={13} />
-                </button>
+                {/* Badge and the two actions travel together so they can drop to a second
+                    line as one group on a phone, instead of squeezing the source name to
+                    nothing between them. */}
+                <div className="inc-actions">
+                  <TypeBadge type={entry.type} />
+                  <button
+                    className="btn ghost icon"
+                    style={{ width: 32, height: 32, color: 'var(--text-2)' }}
+                    onClick={() => openEdit(entry)}
+                    title={t('common_edit')}
+                  >
+                    <Icon name="edit-2" size={13} />
+                  </button>
+                  <button
+                    className="btn ghost icon"
+                    style={{ width: 32, height: 32, color: 'var(--rose)' }}
+                    onClick={() => setDeleteTarget(entry)}
+                    title={t('common_delete')}
+                  >
+                    <Icon name="trash-2" size={13} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      <style>{`
+        .inc-row {
+          display: grid;
+          grid-template-columns: 36px minmax(0, 1fr) auto auto;
+          align-items: center;
+          gap: 12px;
+          padding: 10px 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .inc-icon {
+          width: 36px; height: 36px; border-radius: 9px;
+          background: var(--hover-bg-2);
+          display: flex; align-items: center; justify-content: center;
+          color: var(--emerald); flex-shrink: 0;
+        }
+        .inc-text { min-width: 0; }
+        .inc-source { font-weight: 500; font-size: 13.5px; }
+        .inc-meta { font-size: 11px; }
+        /* Both lines ellipsize rather than wrapping: a two-line source name and a
+           description clipped mid-word are what made these rows look broken. */
+        .inc-source, .inc-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .inc-actions { display: flex; align-items: center; gap: 8px; }
+
+        @media (max-width: 640px) {
+          /* Amount stays on line one beside the name; badge and actions take line two, which
+             gives the name the full width of the card instead of ~30px of leftovers. */
+          .inc-row {
+            grid-template-columns: 36px minmax(0, 1fr) auto;
+            row-gap: 6px;
+            column-gap: 10px;
+          }
+          .inc-actions { grid-column: 2 / -1; grid-row: 2; justify-content: flex-end; }
+        }
+      `}</style>
+
 
       {/* Add Modal */}
       <Modal open={modalOpen} onClose={closeModal}>

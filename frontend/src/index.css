@@ -303,6 +303,18 @@ body {
 .input:focus, .select:focus { border-color: var(--emerald); }
 textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height: 60px; }
 
+/* period picker (Expenses / Income) — the label carries the cycle's date range, which a
+   fixed 160px box cut off mid-word. Let it take what the row can spare, capped so it does
+   not stretch across a desktop. */
+.period-select { width: 100%; max-width: 320px; }
+.period-select-wrap { position: relative; flex: 1; min-width: 0; max-width: 320px; }
+@media (max-width: 640px) {
+  .period-select, .period-select-wrap { max-width: none; }
+}
+
+/* pagination footer */
+.pager { padding: 12px 22px; border-top: 1px solid var(--line); }
+
 /* segmented */
 .seg { display: inline-flex; padding: 3px; background: var(--input-bg); border: 1px solid var(--line-2); border-radius: 10px; }
 .seg button {
@@ -400,9 +412,26 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
   .fab svg { width: 15px !important; height: 15px !important; }
   /* hide edit/delete on sub rows — only show pause on mobile */
   .sub-row-edit, .sub-row-delete { display: none !important; }
+  /* display:none removes the buttons but NOT their two 32px tracks and two gaps — 84px of
+     a 360px row was held for nothing, which is what squeezed the subscription names. */
+  .sub-row { grid-template-columns: 36px minmax(0, 1fr) auto auto; }
 }
 @media (min-width: 881px) {
   .tx-row .tx-meta-mobile { display: none; }
+}
+
+/* Pagination controls and the FAB were both pinned to the bottom-right on a phone, so the
+   "next page" chevron sat underneath the button and could not be tapped. Stacking the pager
+   and centring its controls moves them out of the FAB's corner for good. */
+@media (max-width: 880px) {
+  .pager.between {
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 12px 16px 14px;
+  }
+  .pager .pager-count { text-align: center; }
 }
 
 /* fab */

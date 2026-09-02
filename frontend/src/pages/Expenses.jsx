@@ -264,10 +264,10 @@ export default function Expenses() {
       )}
 
       <div className="row" style={{ marginBottom: 20, gap: 10 }}>
-        <div style={{ position: 'relative' }}>
+        <div className="period-select-wrap">
           <select
-            className="input"
-            style={{ width: 160, appearance: 'none', paddingRight: lang === 'he' ? 12 : 36, paddingLeft: lang === 'he' ? 36 : 12, cursor: 'pointer' }}
+            className="input period-select"
+            style={{ appearance: 'none', paddingRight: lang === 'he' ? 12 : 36, paddingLeft: lang === 'he' ? 36 : 12, cursor: 'pointer' }}
             value={month}
             onChange={e => setMonth(e.target.value)}
           >
@@ -397,8 +397,8 @@ export default function Expenses() {
           </div>
         )}
         {sortedExpenses.length > PAGE_SIZE && (
-          <div className="between" style={{ padding: '12px 22px', borderTop: '1px solid var(--line)' }}>
-            <span className="muted" style={{ fontSize: 12 }}>
+          <div className="between pager">
+            <span className="muted pager-count" style={{ fontSize: 12 }}>
               {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, sortedExpenses.length)} / {sortedExpenses.length}
             </span>
             <div className="row" style={{ gap: 8 }}>

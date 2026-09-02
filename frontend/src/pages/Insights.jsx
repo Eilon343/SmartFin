@@ -114,30 +114,41 @@ function ExpenseDonutCard({ data, t }) {
       </div>
 
       <div className="ins-donut-grid">
-        <div className="ins-donut" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-          {slices.length === 0 ? (
-            <div className="muted" style={{ fontSize: 13, padding: 40 }}>{t('ins_donut_empty')}</div>
-          ) : (
-            <DonutChart slices={slices} activeId={active} pinnedId={pinned} onHover={setHovered} onPin={setPinned} size={220} stroke={28} />
-          )}
-          {slices.length > 0 && (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-              <div className="stack" style={{ alignItems: 'center', gap: 2 }}>
-                <span className="meta-label">{sel ? sel.name : t('ins_donut_total')}</span>
-                <div className="mono tnum ins-donut-center" style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em' }} dir="ltr">
-                  {fmt(sel ? sel.value : total)}
+        <div className="ins-donut-col">
+          <div className="ins-donut" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            {slices.length === 0 ? (
+              <div className="muted" style={{ fontSize: 13, padding: 40 }}>{t('ins_donut_empty')}</div>
+            ) : (
+              <DonutChart slices={slices} activeId={active} pinnedId={pinned} onHover={setHovered} onPin={setPinned} size={220} stroke={28} />
+            )}
+            {slices.length > 0 && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                {/* Capped to the width of the ring's hole: the label is the one piece of text
+                    here that is user-named, and an uncapped one used to run out over the ring. */}
+                <div className="stack ins-donut-hole" style={{ alignItems: 'center', gap: 2, textAlign: 'center' }}>
+                  <span className="meta-label ins-donut-name">{sel ? sel.name : t('ins_donut_total')}</span>
+                  <div className="mono tnum ins-donut-center" style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em' }} dir="ltr">
+                    {fmt(sel ? sel.value : total)}
+                  </div>
                 </div>
-                {sel ? (
-                  deltaPct != null && (
-                    <span className={`chip ${delta > 0 ? 'down' : 'up'}`} style={{ marginTop: 4 }}>
-                      <Icon name={delta > 0 ? 'trending-up' : 'trending-down'} size={11} />
-                      {delta > 0 ? '+' : ''}{deltaPct.toFixed(0)}% {t('ins_donut_vs_prev')}
-                    </span>
-                  )
-                ) : (
-                  <span className="muted" style={{ fontSize: 11.5 }}>{t('ins_donut_spent_month')}</span>
-                )}
               </div>
+            )}
+          </div>
+          {/* The comparison chip lives BELOW the ring, not inside it. Translated it runs to
+              two or three words, which no ring hole is wide enough for on a phone. The slot
+              keeps its height when empty so selecting a slice does not shift the legend. */}
+          {slices.length > 0 && (
+            <div className="ins-donut-note">
+              {sel ? (
+                deltaPct != null && (
+                  <span className={`chip ${delta > 0 ? 'down' : 'up'}`}>
+                    <Icon name={delta > 0 ? 'trending-up' : 'trending-down'} size={11} />
+                    {delta > 0 ? '+' : ''}{deltaPct.toFixed(0)}% {t('ins_donut_vs_prev')}
+                  </span>
+                )
+              ) : (
+                <span className="muted" style={{ fontSize: 11.5 }}>{t('ins_donut_spent_month')}</span>
+              )}
             </div>
           )}
         </div>
@@ -176,13 +187,30 @@ function ExpenseDonutCard({ data, t }) {
 
       <style>{`
         .ins-donut-grid { display: grid; grid-template-columns: 240px 1fr; gap: 22px; align-items: center; }
+        .ins-donut-col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        .ins-donut-hole { max-width: 150px; }
+        .ins-donut-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+        .ins-donut-note { min-height: 24px; display: flex; align-items: center; justify-content: center; text-align: center; }
         @media (max-width: 760px) { .ins-donut-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 640px) { .ins-donut-hole { max-width: 118px; } }
       `}</style>
     </div>
   );
 }
 
 /* ---------- Momentum ---------- */
+/** Matches the 640px breakpoint the page's own CSS uses for its phone layout. */
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)');
+    const handler = (e) => setNarrow(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return narrow;
+}
+
 function MomentumChart({ data, t }) {
   // The target and the ideal curve both come from the server now (forecastMath.pacingTarget
   // / momentumIdeal). They used to be `budget_total || three_mo_avg_total` with the curve
@@ -202,7 +230,12 @@ function MomentumChart({ data, t }) {
     else { running += v; cum.push(running); }
   }
 
-  const W = 720, H = 220, padL = 44, padR = 14, padT = 12, padB = 28;
+  // A phone gets its own, much less letterbox-shaped viewBox. The chart scales uniformly
+  // now (see the <svg> below), so one wide 720x220 box would have rendered ~110px tall on a
+  // 360px screen — half the height it needs to be readable.
+  const narrow = useNarrow();
+  const W = narrow ? 380 : 720, H = narrow ? 250 : 220;
+  const padL = 40, padR = 14, padT = 12, padB = 28;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const yMax = Math.max(target || 1, ...cum.filter(v => v != null), 1) * 1.05;
   const x = (i) => padL + (innerW * i) / Math.max(1, data.days_in_cycle - 1);
@@ -264,8 +297,11 @@ function MomentumChart({ data, t }) {
       </div>
 
       <div style={{ marginTop: 12, position: 'relative' }}>
-        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
-             preserveAspectRatio="none"
+        {/* Uniform scaling. With preserveAspectRatio="none" the 720-wide viewBox was squeezed
+            to the phone's ~360px while the height was held at 220, which stretched every
+            axis label and the "ideal pace" note vertically into unreadably narrow type. */}
+        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
+             style={{ width: '100%', height: 'auto', display: 'block' }}
              onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
           <defs>
             <linearGradient id="mom-fill" x1="0" y1="0" x2="0" y2="1">
@@ -757,7 +793,7 @@ export default function Insights() {
           .ins-page .seg button { flex: 1; }
           .ins-page .ins-export-label-long { display: none; }
           .ins-page .ins-export-label-short { display: inline; }
-          .ins-page .ins-donut svg { width: 172px !important; height: 172px !important; }
+          .ins-page .ins-donut > svg { width: 172px !important; height: 172px !important; }
           .ins-page .ins-donut-center { font-size: 22px !important; }
           .ins-page .card.card-pad-lg { padding: 16px !important; }
         }
