@@ -522,8 +522,8 @@ function TransactionsTable({ expenses }) {
         <div style={{ padding: '24px 22px', color: 'var(--text-3)', fontSize: 13 }}>{t('dash_no_tx_month')}</div>
       )}
       {sorted.length > PAGE_SIZE && (
-        <div className="between" style={{ padding: '12px 22px', borderTop: '1px solid var(--line)' }}>
-          <span className="muted" style={{ fontSize: 12 }}>
+        <div className="between pager">
+          <span className="muted pager-count" style={{ fontSize: 12 }}>
             {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, sorted.length)} / {sorted.length}
           </span>
           <div className="row" style={{ gap: 8 }}>
