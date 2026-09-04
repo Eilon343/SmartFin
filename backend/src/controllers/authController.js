@@ -216,6 +216,57 @@ exports.getMe = async (req, res) => {
 };
 
 /**
+ * Sets — or changes — the password on the signed-in account.
+ *
+ * Exists because an account created by Google sign-in has `password_hash IS NULL` and no
+ * way to acquire one: `login` rejects it by design, and `signup` refuses the address as
+ * taken. Google is therefore its only door, and any context where Google Sign-In cannot
+ * complete — an installed iOS PWA, whose storage jar holds none of Safari's Google
+ * cookies — locks the owner out of their own data with nothing to fall back on. This is
+ * that fallback.
+ *
+ * A valid JWT is what authorises setting the first password: it can only have come from
+ * a completed Google sign-in or a completed password login. Changing an EXISTING password
+ * additionally requires the current one, so a borrowed session cannot silently take the
+ * account over — and mounting the route under /api/auth puts it in the strict 20-per-15-min
+ * bucket, where guessing at it is not worth attempting.
+ */
+exports.setPassword = async (req, res) => {
+    const { current_password: currentPassword, new_password: newPassword } = req.body || {};
+
+    if (!newPassword || String(newPassword).length < MIN_PASSWORD_LENGTH) {
+        return res.status(400).json({
+            error: 'weak_password',
+            message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+        });
+    }
+
+    try {
+        const [rows] = await db.query(
+            'SELECT user_id, password_hash FROM users WHERE user_id = ?',
+            [req.user.user_id]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'not_found' });
+
+        const user = rows[0];
+        if (user.password_hash) {
+            const valid = currentPassword
+                ? await bcrypt.compare(String(currentPassword), user.password_hash)
+                : false;
+            if (!valid) return res.status(401).json(LOGIN_REJECTED);
+        }
+
+        const passwordHash = await bcrypt.hash(String(newPassword), BCRYPT_COST);
+        await db.query('UPDATE users SET password_hash = ? WHERE user_id = ?', [passwordHash, user.user_id]);
+
+        return res.json({ has_password: true });
+    } catch (err) {
+        console.error('setPassword error:', err);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+/**
  * Marks the welcome tour as finished. Idempotent, and deliberately write-once: the
  * `IS NULL` guard means re-finishing (or replaying it from Settings) keeps the original
  * date rather than resetting it, so onboarded_at stays a fact about when the user

@@ -9,6 +9,9 @@ const authController = require('../controllers/authController');
 router.post('/auth/signup', authController.signup);
 router.post('/auth/login', authController.login);
 router.post('/auth/google', authController.googleLogin);
+// Under /api/auth on purpose, not next to /me: it is a credential endpoint, so it belongs
+// in the strict bucket even though every call already carries a valid session.
+router.post('/auth/password', auth, authController.setPassword);
 router.post('/auth/telegram/link-code', auth, authController.createTelegramLinkCode);
 router.delete('/auth/telegram/link', auth, authController.unlinkTelegram);
 

@@ -13,6 +13,20 @@ import { useI18n } from '../context/I18nContext';
 import { useSettings } from '../context/SettingsContext';
 import { currentCycle, getRecentCycles, dayIndexIn, resolveCycle, cycleRangeLabel } from '../lib/cycle';
 
+/**
+ * Which of the three things went wrong, in the user's words.
+ *
+ * The distinction is worth drawing because the remedies are unrelated: a timeout or a
+ * missing response means the phone never reached the box (VPN down, connection dropped
+ * while the app was suspended), while a status code means it arrived and the server said
+ * no. Reported as a translation key so this can live outside the component.
+ */
+function errorKeyFor(err) {
+  if (err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT') return 'dash_err_timeout';
+  if (!err?.response) return 'dash_err_offline';
+  return 'dash_err_server';
+}
+
 const CAT_COLORS = [
   '#f59e0b', '#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fb7185',
   '#22d3ee', '#94a3b8', '#facc15', '#818cf8', '#4ade80', '#f97316',
@@ -863,6 +877,7 @@ export default function Dashboard() {
   const [subs, setSubs] = useState([]);
   const [goals, setGoals] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [openBudget, setOpenBudget] = useState(null);
   const [contributeGoal, setContributeGoal] = useState(null);
   const [contributeOpen, setContributeOpen] = useState(false);
@@ -905,6 +920,16 @@ export default function Dashboard() {
       api.get('/savings', { signal }),
     ]).then(([p, prevP, b, e, inc, s, g]) => {
       if (signal.aborted) return;
+      // allSettled means a dead network produces seven silent rejections and a page of
+      // zeros — indistinguishable from a month with nothing in it, which is how a phone
+      // that cannot reach the server ends up looking like an empty account. The P&L call
+      // is the page's spine, so its failure is the page's failure and has to be said out
+      // loud rather than absorbed.
+      if (p.status === 'rejected') {
+        setError(errorKeyFor(p.reason));
+        return;
+      }
+      setError('');
       if (p.status === 'fulfilled') {
         setPnl({
           ...p.value.data,
@@ -975,6 +1000,26 @@ export default function Dashboard() {
   const daysLeft = isCurrentMonth ? selCycle.days - dayIndexIn(selCycle, today) : null;
   const cycleRange = cycleRangeLabel(month, settings, lang);
 
+  // Checked before the skeletons: a failed load that still had no data to fall back on
+  // would otherwise show placeholder shimmer forever, which reads as "loading" rather
+  // than "broken" and gives the user nothing to act on.
+  if (error && !pnl) {
+    return (
+      <div className="view-enter" style={{ padding: '20px 0' }}>
+        <div className="card card-pad-lg" style={{ textAlign: 'center', padding: '48px 24px' }}>
+          <Icon name="wifi-off" size={32} color="var(--text-3)" />
+          <div style={{ marginTop: 14, fontSize: 15, fontWeight: 600, color: 'var(--text-1)' }}>
+            {t('dash_err_title')}
+          </div>
+          <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>{t(error)}</div>
+          <button className="btn primary" style={{ marginTop: 20 }} onClick={load}>
+            <Icon name="refresh-cw" size={14} /> {t('dash_retry')}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading && !pnl) {
     return (
       <div className="view-enter" style={{ padding: '20px 0' }}>
@@ -1029,6 +1074,19 @@ export default function Dashboard() {
 
   return (
     <div className="view-enter" style={{ opacity: loading ? 0.6 : 1, transition: 'opacity 150ms ease' }}>
+      {/* A refresh that failed while earlier figures are still on screen. Keeping the old
+          numbers is right — they were true when they arrived — but they must not be
+          presented as current without saying so. */}
+      {error && (
+        <div className="card card-pad" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Icon name="wifi-off" size={16} color="var(--amber)" />
+          <span style={{ fontSize: 13, color: 'var(--text-1)', flex: 1 }}>{t(error)}</span>
+          <button className="btn" onClick={load}>
+            <Icon name="refresh-cw" size={14} /> {t('dash_retry')}
+          </button>
+        </div>
+      )}
+
       <PageHeader
         title={t(today.getHours() < 12 ? 'dash_morning' : today.getHours() < 18 ? 'dash_afternoon' : 'dash_evening')}
         sub={isCurrentMonth

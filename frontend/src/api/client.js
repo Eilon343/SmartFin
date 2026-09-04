@@ -1,7 +1,13 @@
 import axios from 'axios';
 
+// A request with no timeout hangs forever, and on a phone that is the common case: a
+// resumed iOS PWA can hold a socket open against a connection that no longer exists, so
+// the promise never settles, `loading` never clears, and every page sits on its skeletons
+// looking like the app simply has no data. Failing after 20s turns a hang into an error
+// the UI can actually show.
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000/api',
+  timeout: 20000,
 });
 
 api.interceptors.request.use((config) => {

@@ -55,6 +55,14 @@ export default function Login() {
   function messageFor(err) {
     const status = err.response?.status;
     const code = err.response?.data?.error;
+    // No response at all is a different kind of failure from a rejected one, and saying
+    // "something went wrong" for it sends people looking for the fault in their password
+    // or in the server. The app shell is served by the service worker and renders with no
+    // network whatsoever, so this screen can be reached — and reached looking perfectly
+    // healthy — by a device that cannot reach the box at all.
+    if (!err.response) {
+      return t(err.code === 'ECONNABORTED' ? 'auth_err_timeout' : 'auth_err_offline');
+    }
     if (status === 429) return t('auth_err_ratelimit');
     if (code === 'invalid_credentials') return t('auth_err_credentials');
     if (code === 'signup_unavailable') return t('auth_err_signup');
