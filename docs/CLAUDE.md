@@ -191,6 +191,26 @@ When Gemini returns 429/5xx after retries, the request is marked `unavailable` a
 - **Duplicate cleanup is archive-based, not a delete** (migration 008). Once sync is connected it re-imports purchases already logged by hand, so `Settings → Duplicate cleanup` removes the hand-logged copy. Rows move to `deleted_expenses`/`deleted_income` — created with `LIKE` so they track their source table's columns — keeping their original primary key, and are purged after `RESTORE_WINDOW_DAYS` (30). A `deleted_at` flag was rejected: it would need `AND deleted_at IS NULL` on ~20 reads, and one missed filter inflates every total silently. **Matching rules live in `services/duplicateMatcher.js` and it is pure — test money logic there.** Same amount within ±5 days, one-to-one, closest date wins; descriptions are never compared (you type "shawarma", Isracard says `שווארמה הקסם`). A date range is never sufficient evidence — cash/Bit/PayBox never reach a feed and deleting by window would erase them. Provenance comes from `bank_transactions_raw`, not `expenses.source`, which is also how income (whose `source` is a label like 'Salary', not an origin) is covered without a schema change. Skipped card settlements have no `expense_id` and so can never authorise a deletion. The client sends explicit ids and the server re-verifies each is still matched, so a sync landing between preview and confirm cannot widen the deletion. `db/seed_dupe_from_real_data.sql` mirrors the real account's imported transactions into test user `999000002` as hand-logged rows, so connecting the same banks to that user produces genuine duplicates; `TESTING_DUPE_CLEANUP.md` is the walkthrough.
 - **`bank_transactions_raw.expense_id`/`income_id` are `ON DELETE SET NULL`** (migration 007). They were RESTRICT, which made deleting a bank-imported expense in the web UI fail with a 500. The staged row stays `import_status='imported'`, so an unlinked row is never re-imported.
 
+## Design guidelines (frontend)
+
+Followed since the 2026-09-04 Apple HIG-based review (adapted platform-agnostically, not literal
+iOS/macOS chrome — this is a responsive React PWA). Apply these to any new/changed UI in `frontend/src`:
+
+- **Contrast**: text under 18pt needs ≥4.5:1 against its background in *both* themes — check
+  `--text-3`-class captions and any colored text-on-color combo (e.g. white on `--emerald`)
+  against `[data-theme="dark"]` and `[data-theme="light"]` in `index.css` before shipping. Don't
+  eyeball it — compute the ratio.
+- **Minimum text size**: 11px on mobile, 10px on desktop. Nothing smaller, including badges/chips
+  and the bottom-nav labels.
+- **Tap targets**: default 44×44 on mobile, 28×28 absolute floor. Row-action icon buttons
+  (edit/delete/pause) should be ≥40×40 on mobile, or hidden behind a safer affordance the way
+  `.sub-row-edit`/`.sub-row-delete` already do via the `max-width: 880px` media query.
+- **Icon-only buttons**: pair `title` with an explicit `aria-label` (see the FAB in
+  `Layout.jsx` for the pattern) — `title` alone doesn't surface on touch.
+- **Color**: never encode state (over-budget, trend direction, etc.) in color alone — pair it
+  with an icon or explicit text, as the existing trend chips and progress-bar remaining-amount
+  labels already do. Keep that pattern for new indicators.
+
 ## Conventions
 
 - Currency ILS, glyph `₪`. Codebase is UTF-8 throughout (Hebrew expense descriptions are normal) — don't normalize.

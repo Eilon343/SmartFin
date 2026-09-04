@@ -120,7 +120,7 @@ function CategoryCard({ budget, color, icon, onOpen }) {
       {hasLimit && <ProgressBar value={budget.spent} max={budget.effective_limit} height={5} />}
       {hasLimit && (
         <div style={{ marginTop: 8 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', color: barColor }}>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', color: barColor }}>
             {over
               ? `${t('dash_over_by')} ${fmt(budget.spent - budget.effective_limit)}`
               : `${fmt(budget.remaining)} ${t('dash_left')}`}
@@ -405,23 +405,24 @@ function SubscriptionsMini({ subs, onTogglePause }) {
       </div>
       <div style={{ flex: 1 }}>
         {subs.slice(0, 5).map(s => (
-          <div key={s.subscription_id} className="sub-row" style={{ gridTemplateColumns: '36px 1fr auto 32px' }}>
+          <div key={s.subscription_id} className="sub-row" style={{ gridTemplateColumns: '36px 1fr auto 40px' }}>
             <div style={{ width: 36, height: 36, borderRadius: 9, background: 'var(--hover-bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Icon name={subIcon(s.name)} size={15} color="var(--text-1)" />
             </div>
             <div className="stack" style={{ opacity: s.paused ? 0.6 : 1, flex: 1, minWidth: 0 }}>
               <div className="row" style={{ gap: 8 }}>
                 <span style={{ fontWeight: 500, fontSize: 13.5 }}>{s.name}</span>
-                {!!s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
+                {!!s.paused && <span className="chip" style={{ fontSize: 11, padding: '2px 6px', background: 'var(--hover-bg)' }}>paused</span>}
               </div>
               <span className="muted-2" style={{ fontSize: 11 }}>{t('dash_next_on')} {lang === 'he' ? s.day_of_month : ordinal(s.day_of_month)}</span>
             </div>
             <span className="mono tnum" style={{ fontSize: 13, opacity: s.paused ? 0.6 : 1 }}>{fmt(s.amount, s.amount % 1 ? 2 : 0)}</span>
             <button
               className="btn ghost icon"
-              style={{ width: 32, height: 32, color: 'var(--text-1)' }}
+              style={{ width: 40, height: 40, color: 'var(--text-1)' }}
               onClick={() => onTogglePause(s)}
               title={s.paused ? "Resume" : "Pause"}
+              aria-label={s.paused ? "Resume" : "Pause"}
             >
               <Icon name={s.paused ? "play" : "pause"} size={16} style={{ fill: 'currentColor' }} />
             </button>
@@ -519,9 +520,9 @@ function TransactionsTable({ expenses }) {
             {e.is_virtual ? (
               <span className="vr virtual">{t('tx_savings')}</span>
             ) : e.source === 'bank_sync' ? (
-              <span className="vr" style={{ background: '#1a1a1a', color: '#f5f5f7', fontSize: 10, fontWeight: 600 }}>{t('tx_bank_sync')}</span>
+              <span className="vr" style={{ background: '#1a1a1a', color: '#f5f5f7', fontSize: 11, fontWeight: 600 }}>{t('tx_bank_sync')}</span>
             ) : e.source === 'apple_pay' ? (
-              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)', fontSize: 10 }}>Apple Pay</span>
+              <span className="vr" style={{ background: 'var(--hover-bg-2)', color: 'var(--text-1)', fontSize: 11 }}>Apple Pay</span>
             ) : e.source === 'bot' ? (
               <span className="vr" style={{ background: 'var(--indigo-soft)', color: 'var(--indigo)' }}>{t('bot')}</span>
             ) : e.source === 'web' ? (

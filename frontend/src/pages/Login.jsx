@@ -314,7 +314,7 @@ const styles = {
   logoWrap: { display: 'flex', justifyContent: 'center', marginBottom: 14 },
   logoIcon: {
     width: 48, height: 48, borderRadius: 14,
-    background: 'linear-gradient(135deg, #10b981, #059669)',
+    background: 'linear-gradient(135deg, var(--emerald-btn), #065f46)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     color: '#ffffff', fontWeight: 800, fontSize: 22,
   },

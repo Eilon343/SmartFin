@@ -227,10 +227,10 @@ export default function Subscriptions() {
           })}
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-          <span className="muted-2" style={{ fontSize: 10 }}>1</span>
-          <span className="muted-2" style={{ fontSize: 10 }}>10</span>
-          <span className="muted-2" style={{ fontSize: 10 }}>20</span>
-          <span className="muted-2" style={{ fontSize: 10 }}>{daysInMonth}</span>
+          <span className="muted-2" style={{ fontSize: 11 }}>1</span>
+          <span className="muted-2" style={{ fontSize: 11 }}>10</span>
+          <span className="muted-2" style={{ fontSize: 11 }}>20</span>
+          <span className="muted-2" style={{ fontSize: 11 }}>{daysInMonth}</span>
         </div>
       </div>
 
@@ -260,7 +260,7 @@ export default function Subscriptions() {
                 <div className="stack" style={{ flex: 1, minWidth: 0, opacity: s.paused ? 0.6 : 1 }}>
                   <div className="row" style={{ gap: 8, minWidth: 0 }}>
                     <span style={{ fontWeight: 500, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-                    {!!s.paused && <span className="chip" style={{ fontSize: 9, padding: '2px 6px', background: 'var(--hover-bg)' }}>{t('sub_paused')}</span>}
+                    {!!s.paused && <span className="chip" style={{ fontSize: 11, padding: '2px 6px', background: 'var(--hover-bg)' }}>{t('sub_paused')}</span>}
                   </div>
                   <span className="muted-2" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {lang === 'he' ? `חודשי · הבא ב-${s.day_of_month}` : `Monthly · next on the ${ordinal(s.day_of_month)}`}
@@ -272,25 +272,28 @@ export default function Subscriptions() {
                 </span>
                 <button
                   className="btn ghost icon"
-                  style={{ width: 32, height: 32, color: 'var(--text-1)' }}
+                  style={{ width: 40, height: 40, color: 'var(--text-1)' }}
                   onClick={() => handleTogglePause(s)}
                   title={s.paused ? t('sub_resume') : t('sub_pause')}
+                  aria-label={s.paused ? t('sub_resume') : t('sub_pause')}
                 >
                   <Icon name={s.paused ? "play" : "pause"} size={16} style={{ fill: 'currentColor' }} />
                 </button>
                 <button
                   className="btn ghost icon sub-row-edit"
-                  style={{ width: 32, height: 32 }}
+                  style={{ width: 40, height: 40 }}
                   onClick={() => openEdit(s)}
                   title={t('common_edit')}
+                  aria-label={t('common_edit')}
                 >
                   <Icon name="pencil" size={13} />
                 </button>
                 <button
                   className="btn ghost icon sub-row-delete"
-                  style={{ width: 32, height: 32, color: 'var(--rose)' }}
+                  style={{ width: 40, height: 40, color: 'var(--rose)' }}
                   onClick={() => setDeleteTarget(s)}
                   title={t('common_delete')}
+                  aria-label={t('common_delete')}
                 >
                   <Icon name="trash-2" size={13} />
                 </button>
