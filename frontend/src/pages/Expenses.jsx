@@ -375,17 +375,19 @@ export default function Expenses() {
                     <td style={{ padding: '11px 16px', textAlign: lang === 'he' ? 'left' : 'right', whiteSpace: 'nowrap' }}>
                       <button
                         className="btn ghost icon"
-                        style={{ width: 30, height: 30, color: 'var(--text-2)', marginRight: 6 }}
+                        style={{ width: 40, height: 40, color: 'var(--text-2)', marginRight: 6 }}
                         onClick={() => openEdit(e)}
                         title={t('common_edit')}
+                        aria-label={t('common_edit')}
                       >
                         <Icon name="edit-2" size={13} />
                       </button>
                       <button
                         className="btn ghost icon"
-                        style={{ width: 30, height: 30, color: 'var(--rose)' }}
+                        style={{ width: 40, height: 40, color: 'var(--rose)' }}
                         onClick={() => setDeleteTarget(e)}
                         title={t('common_delete')}
+                        aria-label={t('common_delete')}
                       >
                         <Icon name="trash-2" size={13} />
                       </button>

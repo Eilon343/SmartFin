@@ -444,7 +444,7 @@ function TrendBars({ data, t }) {
                 <span className="trend-pct-mobile mono tnum" style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: barColor }}>
                   {isUp ? '+' : ''}{r.deltaPct.toFixed(0)}%
                 </span>
-                <span className="trend-amt-mobile mono tnum" style={{ fontSize: 10.5, color: 'var(--text-3)' }} dir="ltr">
+                <span className="trend-amt-mobile mono tnum" style={{ fontSize: 11, color: 'var(--text-3)' }} dir="ltr">
                   {fmt(r.spent)}
                 </span>
               </div>

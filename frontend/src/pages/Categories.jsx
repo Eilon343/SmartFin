@@ -332,7 +332,7 @@ export default function Categories() {
         title={t('cat_title')}
         sub={t('cat_sub')}
         actions={
-          <button className="btn primary" style={{ background: 'var(--emerald)' }} onClick={() => setNewCatOpen(true)}>
+          <button className="btn primary" onClick={() => setNewCatOpen(true)}>
             <Icon name="plus" size={13} /> {t('cat_new')}
           </button>
         }

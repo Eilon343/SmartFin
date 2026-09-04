@@ -20,7 +20,7 @@
   --text-0: #f4f5f8;
   --text-1: #cfd2dc;
   --text-2: #8a8f9d;
-  --text-3: #5b6171;
+  --text-3: #848aa0;
   --input-bg: #11141d;
   --hover-bg: #161a25;
   --hover-bg-2: #1c2030;
@@ -29,6 +29,9 @@
   --scroll-thumb: #262a38;
   --emerald: #10b981;
   --emerald-soft: #10b9811f;
+  /* Darker than --emerald: white label text on --emerald is only 2.54:1 (fails 4.5:1).
+     Buttons/FAB use this instead; --emerald itself stays for text/icons/dots on --bg/--card. */
+  --emerald-btn: #087a5a;
   --rose: #f43f5e;
   --rose-soft: #f43f5e1f;
   --indigo: #6366f1;
@@ -54,7 +57,7 @@
   --text-0: #0b0f17;
   --text-1: #2a2f3c;
   --text-2: #5b6171;
-  --text-3: #8a8f9d;
+  --text-3: #666c7d;
   --input-bg: #f6f7f9;
   --hover-bg: #f1f3f7;
   --hover-bg-2: #eceff4;
@@ -63,6 +66,7 @@
   --scroll-thumb: #d3d7df;
   --emerald: #059669;
   --emerald-soft: #05966914;
+  --emerald-btn: #065f46;
   --rose: #e11d48;
   --rose-soft: #e11d4814;
   --indigo: #4f46e5;
@@ -169,7 +173,7 @@ body {
 }
 .btn:hover { background: var(--hover-bg); color: var(--text-0); }
 .btn:active { transform: translateY(1px); }
-.btn.primary { background: var(--emerald); color: #ffffff; border-color: transparent; font-weight: 600; }
+.btn.primary { background: var(--emerald-btn); color: #ffffff; border-color: transparent; font-weight: 600; }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.icon { width: 36px; padding: 0; justify-content: center; }
 .btn.ghost { background: transparent; border-color: transparent; }
@@ -334,7 +338,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 
 /* sub row */
 .sub-row {
-  display: grid; grid-template-columns: 36px 1fr auto auto 32px 32px; gap: 10px; align-items: center;
+  display: grid; grid-template-columns: 36px 1fr auto auto 40px 40px; gap: 10px; align-items: center;
   padding: 12px 4px; border-bottom: 1px solid var(--row-divider);
 }
 .sub-row:last-child { border-bottom: none; }
@@ -394,7 +398,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
   .mobile-nav-item {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 4px; flex: 1; padding: 8px 6px; border-radius: 14px;
-    font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
     color: var(--text-3); border: none; background: transparent; cursor: pointer;
     transition: color .15s, background .15s;
   }
@@ -438,7 +442,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; min-height:
 .fab {
   position: fixed; right: 24px; bottom: 24px; z-index: 60;
   width: 52px; height: 52px; border-radius: 16px;
-  background: var(--emerald); color: #ffffff;
+  background: var(--emerald-btn); color: #ffffff;
   display: flex; align-items: center; justify-content: center;
   border: 0; cursor: pointer;
   box-shadow: var(--fab-shadow);

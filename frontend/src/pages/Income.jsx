@@ -54,7 +54,7 @@ function fmtNum(n) {
 function TypeBadge({ type }) {
   const { t } = useI18n();
   return (
-    <span className={`chip ${type === 'fixed' ? 'up' : 'idg'}`} style={{ fontSize: 10 }}>
+    <span className={`chip ${type === 'fixed' ? 'up' : 'idg'}`} style={{ fontSize: 11 }}>
       {t(type === 'fixed' ? 'dash_fixed' : 'dash_variable') || type}
     </span>
   );
@@ -233,7 +233,7 @@ export default function Income() {
             <span className="ccy" style={{ fontSize: 20 }}>₪</span>
             {fmtNum(summary?.variable_total ?? 0)}
           </div>
-          <span className="chip idg" style={{ marginTop: 6, fontSize: 10 }}>{t('inc_current_month')}</span>
+          <span className="chip idg" style={{ marginTop: 6, fontSize: 11 }}>{t('inc_current_month')}</span>
         </div>
         <div className="card card-pad-lg">
           <span className="meta-label">{t('inc_total')}</span>
@@ -282,17 +282,19 @@ export default function Income() {
                   <TypeBadge type={entry.type} />
                   <button
                     className="btn ghost icon"
-                    style={{ width: 32, height: 32, color: 'var(--text-2)' }}
+                    style={{ width: 40, height: 40, color: 'var(--text-2)' }}
                     onClick={() => openEdit(entry)}
                     title={t('common_edit')}
+                    aria-label={t('common_edit')}
                   >
                     <Icon name="edit-2" size={13} />
                   </button>
                   <button
                     className="btn ghost icon"
-                    style={{ width: 32, height: 32, color: 'var(--rose)' }}
+                    style={{ width: 40, height: 40, color: 'var(--rose)' }}
                     onClick={() => setDeleteTarget(entry)}
                     title={t('common_delete')}
+                    aria-label={t('common_delete')}
                   >
                     <Icon name="trash-2" size={13} />
                   </button>

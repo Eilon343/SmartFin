@@ -40,6 +40,7 @@ function ThemeToggle({ compact }) {
     <button
       onClick={() => setTheme(isDark ? 'light' : 'dark')}
       title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: compact ? 0 : 8,
         height: 36, padding: compact ? 0 : '0 12px', width: compact ? 36 : 'auto',
@@ -66,6 +67,7 @@ function MobileThemeBtn() {
       style={{ width: 40, height: 40, background: 'none', border: 'none', boxShadow: 'none' }}
       onClick={() => setTheme(isDark ? 'light' : 'dark')}
       title={isDark ? 'Light mode' : 'Dark mode'}
+      aria-label={isDark ? 'Light mode' : 'Dark mode'}
     >
       <Icon name={isDark ? 'moon' : 'sun'} size={18} color={isDark ? 'var(--indigo)' : 'var(--amber)'} />
     </button>
@@ -170,13 +172,13 @@ export default function Layout() {
           <div className="row" style={{ gap: 10 }}>
             <div style={{
               width: 32, height: 32, borderRadius: 9,
-              background: 'linear-gradient(135deg, #10b981, #059669)',
+              background: 'linear-gradient(135deg, var(--emerald-btn), #065f46)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: '#ffffff', fontWeight: 800, fontSize: 14,
             }}>S</div>
             <div className="stack">
               <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: '-0.01em' }}>SmartFin</span>
-              <span className="muted-2" style={{ fontSize: 10.5, letterSpacing: '0.04em', textTransform: 'uppercase' }}>personal finance OS</span>
+              <span className="muted-2" style={{ fontSize: 11, letterSpacing: '0.04em', textTransform: 'uppercase' }}>personal finance OS</span>
             </div>
           </div>
         </div>
@@ -209,7 +211,7 @@ export default function Layout() {
             <Icon name="log-out" size={13} color="var(--text-3)" />
           </div>
           <div style={{ marginTop: 10, textAlign: 'center' }}>
-            <span style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.03em' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.03em' }}>
               v{__APP_VERSION__}
             </span>
           </div>
@@ -230,7 +232,7 @@ export default function Layout() {
               />
             )}
             <div className="stack" style={{ gap: 1 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-3)' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-3)' }}>
                 {greeting()}
               </span>
               <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em' }}>
@@ -240,7 +242,7 @@ export default function Layout() {
           </div>
           <div className="row" style={{ gap: 4 }}>
             <MobileThemeBtn />
-            <button className="btn ghost icon" style={{ width: 40, height: 40, background: 'none', border: 'none', boxShadow: 'none' }} onClick={() => setDrawerOpen(true)}>
+            <button className="btn ghost icon" style={{ width: 40, height: 40, background: 'none', border: 'none', boxShadow: 'none' }} onClick={() => setDrawerOpen(true)} aria-label="Open menu">
               <Icon name="menu" size={20} color="var(--text-1)" />
             </button>
           </div>
@@ -277,16 +279,16 @@ export default function Layout() {
             <div className="row" style={{ gap: 10 }}>
               <div style={{
                 width: 28, height: 28, borderRadius: 8,
-                background: 'linear-gradient(135deg, #10b981, #059669)',
+                background: 'linear-gradient(135deg, var(--emerald-btn), #065f46)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: '#fff', fontWeight: 800, fontSize: 12,
               }}>S</div>
               <div className="stack">
                 <span style={{ fontWeight: 700, fontSize: 13 }}>SmartFin</span>
-                <span className="muted-2" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Personal Finance OS</span>
+                <span className="muted-2" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Personal Finance OS</span>
               </div>
             </div>
-            <button className="btn ghost icon" onClick={() => setDrawerOpen(false)}>
+            <button className="btn ghost icon" onClick={() => setDrawerOpen(false)} aria-label="Close menu">
               <Icon name="x" size={16} />
             </button>
           </div>
@@ -330,7 +332,7 @@ export default function Layout() {
             <Icon name="log-out" size={14} /> {t('settings_signout')}
           </button>
           <div style={{ marginTop: 12, textAlign: 'center' }}>
-            <span style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.03em' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.03em' }}>
               v{__APP_VERSION__}
             </span>
           </div>

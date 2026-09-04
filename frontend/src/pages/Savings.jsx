@@ -184,7 +184,7 @@ function GoalModal({ open, goal, onClose, onSave, t }) {
                 <span style={{ fontSize: 12.5, fontWeight: 600, color: active ? 'var(--text-0)' : 'var(--text-2)' }}>
                   {opt.label}
                 </span>
-                <span style={{ fontSize: 10, color: 'var(--text-3)' }}>{opt.sub}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{opt.sub}</span>
               </button>
             );
           })}
@@ -262,15 +262,17 @@ function InvestmentCard({ g, idx, t, lang, onContribute, onEdit, onDelete, histo
                 display: 'inline-flex', alignItems: 'center', gap: 4,
                 height: 20, padding: '0 7px', borderRadius: 999,
                 background: INV_COLOR + '18', color: INV_COLOR,
-                fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
+                fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
                 flexShrink: 0,
               }}>
                 <Icon name="infinity" size={9} /> ongoing
               </span>
             </div>
             <button
-              style={{ width: 32, height: 32, borderRadius: 10, background: INV_COLOR + '20', color: INV_COLOR, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+              style={{ width: 40, height: 40, borderRadius: 10, background: INV_COLOR + '20', color: INV_COLOR, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
               onClick={() => onContribute(g)}
+              title={t('dash_contribute')}
+              aria-label={t('dash_contribute')}
             >
               <Icon name="plus" size={16} />
             </button>
@@ -298,7 +300,7 @@ function InvestmentCard({ g, idx, t, lang, onContribute, onEdit, onDelete, histo
                 display: 'inline-flex', alignItems: 'center', gap: 4,
                 height: 20, padding: '0 7px', borderRadius: 999,
                 background: 'var(--emerald-soft)', color: 'var(--emerald)',
-                fontSize: 10, fontWeight: 600,
+                fontSize: 11, fontWeight: 600,
               }}>
                 <Icon name="trending-up" size={10} /> growing
               </span>
@@ -365,8 +367,10 @@ function GoalCard({ g, idx, t, lang, onContribute, onEdit, onDelete, historyOpen
               </span>
             </div>
             <button
-              style={{ width: 32, height: 32, borderRadius: 10, background: color + '28', color, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+              style={{ width: 40, height: 40, borderRadius: 10, background: color + '28', color, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
               onClick={() => onContribute(g)}
+              title={t('dash_contribute')}
+              aria-label={t('dash_contribute')}
             >
               <Icon name="plus" size={16} />
             </button>
