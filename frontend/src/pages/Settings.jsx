@@ -10,6 +10,7 @@ import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
 import DuplicateCleanupCard from '../components/DuplicateCleanupCard';
 import TelegramLinkCard from '../components/TelegramLinkCard';
+import PasswordCard from '../components/PasswordCard';
 import api from '../api/client';
 
 /**
@@ -442,6 +443,10 @@ export default function Settings() {
       <BankSyncCard />
 
       <DuplicateCleanupCard />
+
+      {/* Above sign-out on purpose: it is the thing that makes signing out safe to do on
+          a device where Google Sign-In cannot get you back in. */}
+      <PasswordCard />
 
       <div className="card card-pad-lg">
         <h3 className="h2" style={{ marginBottom: 4 }}>{t('settings_account')}</h3>
