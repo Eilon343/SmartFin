@@ -3,7 +3,7 @@ const db = require('../config/db');
 const { decrypt } = require('../utils/cryptoUtil');
 const { notifyUser } = require('../utils/telegram');
 const bankCompanies = require('../config/bankCompanies');
-const { scrapeAccount } = require('./bankScraperService');
+const { scrapeAccount, SCRAPER_ERROR_TYPES } = require('./bankScraperService');
 
 // A current account shows one lump settlement per card per month ("2624 - ישראכרט בע\"מ"),
 // while the card connection shows the individual purchases behind it. Importing both would
@@ -301,14 +301,40 @@ async function syncConnection(connection) {
     const result = await scrapeAccount({ companyId: connection.company_id, credentials, startDate });
 
     if (!result.success) {
-        const status = result.errorType === 'InvalidPassword' ? 'invalid_credentials' : 'error';
+        // Compared against the library's own enum VALUE. This read 'InvalidPassword'
+        // — the enum's member name — which never equals the 'INVALID_PASSWORD' the
+        // scraper actually returns, so a rejected password was filed as a plain
+        // 'error' and retried every hour. Israeli issuers lock an account after about
+        // three bad logins, so that mismatch was actively dangerous, not just noisy.
+        const status = result.errorType === SCRAPER_ERROR_TYPES.INVALID_PASSWORD
+            ? 'invalid_credentials'
+            : 'error';
         await db.query(
             'UPDATE bank_connections SET status=?, last_sync_status=?, last_sync_error=? WHERE id=?',
             [status, result.errorType || 'error', result.errorMessage, connection.id]
         );
 
         const chatId = await getChatId(connection.user_id);
-        if (status === 'invalid_credentials') {
+
+        // Only tell the user when something CHANGED.
+        //
+        // A failing connection is retried every hour, and every retry used to fire the
+        // same Telegram message — so a single bad Max row produced an alert an hour,
+        // indefinitely, saying nothing new each time. The first alert is the useful
+        // one; the 24th that day is why people mute the bot, and a muted bot misses
+        // the alerts that do matter.
+        //
+        // Keyed on the pair actually shown to the user, so a failure that turns into a
+        // *different* failure still gets through. A recovery clears last_sync_error on
+        // the success path, so the next failure after a good sync always notifies.
+        const isRepeat = connection.status === status
+            && connection.last_sync_error === result.errorMessage;
+        if (isRepeat) {
+            console.log(
+                `Bank connection ${connection.id}: same failure as last attempt ` +
+                `(${status}: ${result.errorMessage}) — not re-notifying`
+            );
+        } else if (status === 'invalid_credentials') {
             // Banks lock accounts after a few bad logins, so auto-sync stays stopped
             // until the user re-enters credentials. Tell them loudly why.
             await notifyUser(
