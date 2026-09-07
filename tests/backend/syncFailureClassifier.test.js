@@ -104,3 +104,39 @@ describe('classifySyncFailure - retry flag', () => {
         expect(classifySyncFailure(conn('error', 'Generic', 'x')).retrying).toBe(true);
     });
 });
+
+/**
+ * The regression these guard.
+ *
+ * Every case above was written against the spelling of the scraper's enum MEMBER NAMES
+ * ('InvalidPassword'). What the library actually puts on a failed result is the enum's
+ * VALUE ('INVALID_PASSWORD'), and that is what the scheduler writes to last_sync_status.
+ * With a plain lowercase, 'invalid_password'.includes('invalidpassword') is false, so in
+ * production every branch below was dead and a rejected password, a blocked account and
+ * a 2FA-only bank all came back as 'unknown' — the code the UI has nothing to say about.
+ */
+describe('classifySyncFailure - the error types the scraper really emits', () => {
+    const REAL = [
+        ['INVALID_PASSWORD', 'invalid_credentials'],
+        ['CHANGE_PASSWORD', 'change_password'],
+        ['ACCOUNT_BLOCKED', 'blocked'],
+        ['TWO_FACTOR_RETRIEVER_MISSING', 'two_factor'],
+        ['TIMEOUT', 'timeout'],
+    ];
+
+    it.each(REAL)('maps the underscored value %s to %s', (errorType, expected) => {
+        expect(classifySyncFailure(conn('error', errorType, 'something went wrong')).code).toBe(expected);
+    });
+
+    it('never reports a real error type as "unknown"', () => {
+        for (const [errorType] of REAL) {
+            expect(classifySyncFailure(conn('error', errorType, 'x')).code).not.toBe('unknown');
+        }
+    });
+
+    // Rows written before the fix hold the member-name spelling. They must keep working.
+    it('still classifies rows stored in the old member-name spelling', () => {
+        expect(classifySyncFailure(conn('error', 'AccountBlocked')).code).toBe('blocked');
+        expect(classifySyncFailure(conn('error', 'TwoFactorRetrieverMissing')).code).toBe('two_factor');
+    });
+});

@@ -1,13 +1,38 @@
 const { createScraper } = require('israeli-bank-scrapers');
 
+/**
+ * The error types the library actually puts on a failed result.
+ *
+ * These are the *values* of its ScraperErrorTypes enum, not the member names. That
+ * distinction was the bug: this table used to be keyed 'InvalidPassword', 'Generic',
+ * … while `result.errorType` is 'INVALID_PASSWORD', 'GENERIC', … — so no key ever
+ * matched, every lookup fell through to `result.errorMessage`, and the raw internals
+ * of the scraper were forwarded to the user's Telegram verbatim. That is where
+ * "Unknown transaction type תשלומים צמוד דולר" came from.
+ *
+ * The enum is not exported from the package's entry point, so the values are spelled
+ * out here rather than imported. SCRAPER_ERROR_TYPES below names them once so the
+ * scheduler can compare against the same constants instead of its own string literal.
+ */
+const SCRAPER_ERROR_TYPES = {
+    INVALID_PASSWORD: 'INVALID_PASSWORD',
+    CHANGE_PASSWORD: 'CHANGE_PASSWORD',
+    TIMEOUT: 'TIMEOUT',
+    ACCOUNT_BLOCKED: 'ACCOUNT_BLOCKED',
+    TWO_FACTOR_RETRIEVER_MISSING: 'TWO_FACTOR_RETRIEVER_MISSING',
+    GENERIC: 'GENERIC',
+    GENERAL_ERROR: 'GENERAL_ERROR',
+};
+
 const ERROR_MESSAGES = {
-    InvalidPassword: 'Invalid username/password',
-    ChangePassword: 'Bank requires a password change before scraping can continue',
-    Timeout: 'Bank website timed out',
-    AccountBlocked: 'Bank account appears to be blocked',
-    TwoFactorRetrieverMissing: 'This bank requires two-factor authentication, which is not supported yet',
-    Generic: 'Scraping failed for an unknown reason',
-    General: 'Scraping failed for an unknown reason',
+    [SCRAPER_ERROR_TYPES.INVALID_PASSWORD]: 'Invalid username/password',
+    [SCRAPER_ERROR_TYPES.CHANGE_PASSWORD]: 'Bank requires a password change before scraping can continue',
+    [SCRAPER_ERROR_TYPES.TIMEOUT]: 'Bank website timed out',
+    [SCRAPER_ERROR_TYPES.ACCOUNT_BLOCKED]: 'Bank account appears to be blocked',
+    [SCRAPER_ERROR_TYPES.TWO_FACTOR_RETRIEVER_MISSING]:
+        'This bank requires two-factor authentication, which is not supported yet',
+    [SCRAPER_ERROR_TYPES.GENERIC]: 'Scraping failed for an unknown reason',
+    [SCRAPER_ERROR_TYPES.GENERAL_ERROR]: 'Scraping failed for an unknown reason',
 };
 
 // Chromium runs as root inside the backend container, which it refuses to do with its
@@ -173,7 +198,7 @@ async function scrapeAccount({ companyId, credentials, startDate }) {
         // connection as a credentials problem and STOPS the retries. None of those
         // words may appear here — an abandoned scrape is not a rejected password.
         console.error(`Bank scraper: ${companyId} —`, err.message);
-        return { success: false, errorType: 'Timeout', errorMessage: err.message };
+        return { success: false, errorType: SCRAPER_ERROR_TYPES.TIMEOUT, errorMessage: err.message };
     } finally {
         // Runs on the timeout path too, which is the point: `prepareBrowser` has
         // already handed us the Chromium the abandoned scrape is still holding, and
@@ -182,4 +207,4 @@ async function scrapeAccount({ companyId, credentials, startDate }) {
     }
 }
 
-module.exports = { scrapeAccount, SCRAPE_TIMEOUT_MS };
+module.exports = { scrapeAccount, SCRAPE_TIMEOUT_MS, SCRAPER_ERROR_TYPES, ERROR_MESSAGES };

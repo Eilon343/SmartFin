@@ -29,6 +29,23 @@ function normalise(value) {
 }
 
 /**
+ * Lowercases and strips everything that is not a letter or digit.
+ *
+ * The scraper reports its error type as the VALUE of its enum — 'INVALID_PASSWORD',
+ * 'TWO_FACTOR_RETRIEVER_MISSING' — but the markers below are written in the enum's
+ * member-name spelling. A plain lowercase left the underscores in place, so
+ * 'invalid_password'.includes('invalidpassword') was false and every branch here
+ * except 'timeout' was unreachable: a rejected password, a blocked account and a
+ * 2FA-only bank all came back as the useless code 'unknown'.
+ *
+ * Folding out the separators makes both spellings match, which also keeps rows that
+ * were written before this fix — they hold the member-name form — classifying correctly.
+ */
+function compact(value) {
+    return normalise(value).replace(/[^a-z0-9]/g, '');
+}
+
+/**
  * @param {object} connection - { status, last_sync_status, last_sync_error }
  * @returns {null|{code: string, retrying: boolean, detail: string}}
  *          null when the connection is not in a failed state.
@@ -48,7 +65,7 @@ function classifySyncFailure(connection) {
         return null;
     }
 
-    const type = normalise(connection.last_sync_status);
+    const type = compact(connection.last_sync_status);
     const detail = String(connection.last_sync_error || '');
     const rawDetail = normalise(detail);
 
