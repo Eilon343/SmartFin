@@ -11,7 +11,8 @@
     "israeli-bank-scrapers": "6.9.0",
     "jsonwebtoken": "^9.0.3",
     "mysql2": "^3.22.2",
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "web-push": "^3.6.7"
   },
   "scripts": {
     "postinstall": "node scripts/patchMaxPlanNames.js"

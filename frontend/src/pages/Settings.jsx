@@ -10,6 +10,7 @@ import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
 import DuplicateCleanupCard from '../components/DuplicateCleanupCard';
 import TelegramLinkCard from '../components/TelegramLinkCard';
+import PushNotificationsCard from '../components/PushNotificationsCard';
 import PasswordCard from '../components/PasswordCard';
 import api from '../api/client';
 
@@ -437,6 +438,8 @@ export default function Settings() {
           </div>
         ))}
       </div>
+
+      <PushNotificationsCard />
 
       <TelegramLinkCard />
 

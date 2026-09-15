@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const db = require('../config/db');
 const { decrypt } = require('../utils/cryptoUtil');
-const { notifyUser } = require('../utils/telegram');
+const { sendPush } = require('../utils/push');
 const bankCompanies = require('../config/bankCompanies');
 const { scrapeAccount, SCRAPER_ERROR_TYPES } = require('./bankScraperService');
 
@@ -102,7 +102,7 @@ const BANK_TIMEZONE = 'Asia/Jerusalem';
 // exceed one full pass over every connection at SCRAPE_TIMEOUT_MS each.
 const STALE_CYCLE_MS = 30 * 60 * 1000;
 // Consecutive failed sends before an import notification is given up on, so a
-// permanently unreachable chat cannot grow `unannounced` without bound.
+// permanently unreachable device cannot grow `unannounced` without bound.
 const MAX_NOTIFY_ATTEMPTS = 5;
 
 // When the running cycle started, or null when idle. A timestamp rather than a boolean
@@ -112,8 +112,8 @@ let syncingSince = null;
 let cycleToken = 0;
 const forceSyncIds = new Set();
 // user_id -> { count, parked, attempts } for transactions imported but not yet
-// announced, accumulated across drain ticks and RETAINED until Telegram actually
-// accepts the message.
+// announced, accumulated across drain ticks and RETAINED until the push service
+// actually accepts the message.
 const unannounced = new Map();
 
 // A manual sync is a queued request, not an immediate one: the caller registers the
@@ -261,11 +261,6 @@ const DUE_CONNECTIONS_QUERY =
         OR (status = 'error'  AND (last_attempt_at IS NULL OR last_attempt_at < ?))
         OR id IN (?)`;
 
-async function getChatId(userId) {
-    const [rows] = await db.query('SELECT telegram_chat_id FROM users WHERE user_id = ?', [userId]);
-    return rows[0]?.telegram_chat_id || null;
-}
-
 /**
  * How far back a scrape should reach.
  *
@@ -314,14 +309,14 @@ async function syncConnection(connection) {
             [status, result.errorType || 'error', result.errorMessage, connection.id]
         );
 
-        const chatId = await getChatId(connection.user_id);
+        const bankName = connection.display_name || connection.company_id;
 
         // Only tell the user when something CHANGED.
         //
         // A failing connection is retried every hour, and every retry used to fire the
-        // same Telegram message — so a single bad Max row produced an alert an hour,
+        // same notification — so a single bad Max row produced an alert an hour,
         // indefinitely, saying nothing new each time. The first alert is the useful
-        // one; the 24th that day is why people mute the bot, and a muted bot misses
+        // one; the 24th that day is why people mute the app, and a muted app misses
         // the alerts that do matter.
         //
         // Keyed on the pair actually shown to the user, so a failure that turns into a
@@ -337,22 +332,24 @@ async function syncConnection(connection) {
         } else if (status === 'invalid_credentials') {
             // Banks lock accounts after a few bad logins, so auto-sync stays stopped
             // until the user re-enters credentials. Tell them loudly why.
-            await notifyUser(
-                chatId,
-                `🔐 *Bank sync stopped — wrong credentials*\n\n` +
-                `${connection.display_name || connection.company_id} rejected the saved username/password.\n\n` +
-                `⚠️ Automatic syncing is now *paused* so repeated attempts don't lock your bank account. ` +
-                `Most Israeli banks lock after about 3 failed logins.\n\n` +
-                `Open SmartFin → Settings → Bank sync, disconnect, and reconnect with the correct details. ` +
-                `Please double-check the password on the bank's own website first.`
-            );
+            await sendPush(connection.user_id, {
+                title: '🔐 Bank sync stopped — wrong credentials',
+                body:
+                    `${bankName} rejected the saved username/password. Auto-sync is paused so ` +
+                    `your bank account doesn't get locked. Reconnect it in Settings → Bank sync.`,
+                url: '/settings',
+                tag: `bank-sync-${connection.id}`,
+                renotify: true,
+                requireInteraction: true,
+            });
         } else {
-            await notifyUser(
-                chatId,
-                `⚠️ *Bank sync failed*\n\n` +
-                `${connection.display_name || connection.company_id}: ${result.errorMessage}\n\n` +
-                `SmartFin will try again on the next scheduled sync.`
-            );
+            await sendPush(connection.user_id, {
+                title: '⚠️ Bank sync failed',
+                body: `${bankName}: ${result.errorMessage}. SmartFin will try again on the next scheduled sync.`,
+                url: '/settings',
+                tag: `bank-sync-${connection.id}`,
+                renotify: true,
+            });
         }
         return;
     }
@@ -423,12 +420,15 @@ async function syncConnection(connection) {
     }
 
     if (inserted > 0) {
-        await notifyUser(
-            await getChatId(connection.user_id),
-            `🏦 *Bank sync complete*\n\n` +
-            `${connection.display_name || connection.company_id}: *${inserted}* new transaction${inserted === 1 ? '' : 's'} found.\n\n` +
-            `They're being categorized now and will appear in SmartFin within a few minutes.`
-        );
+        await sendPush(connection.user_id, {
+            title: '🏦 Bank sync complete',
+            body:
+                `${connection.display_name || connection.company_id}: ${inserted} new ` +
+                `transaction${inserted === 1 ? '' : 's'} found. They'll appear in SmartFin within a few minutes.`,
+            url: '/',
+            tag: `bank-sync-${connection.id}`,
+            renotify: true,
+        });
     }
 }
 
@@ -749,19 +749,21 @@ async function runCategorizationDrain() {
             // could do to clear it.
             const { count: total, parked } = pending;
             const warning = parked > 0
-                ? `\n\n⚠️ ${parked} transaction${parked === 1 ? '' : 's'} could not be imported and ` +
+                ? ` ⚠️ ${parked} transaction${parked === 1 ? '' : 's'} could not be imported and ` +
                   `${parked === 1 ? 'is' : 'are'} missing from your totals.`
                 : '';
 
-            const chatId = await getChatId(userId);
-            const delivered = await notifyUser(
-                chatId,
-                `✅ *Bank transactions added*\n\n` +
-                `${total} transaction${total === 1 ? '' : 's'} imported and categorized. ` +
-                `Open SmartFin to review them.${warning}`
-            );
+            const delivered = await sendPush(userId, {
+                title: '✅ Bank transactions added',
+                body:
+                    `${total} transaction${total === 1 ? '' : 's'} imported and categorized. ` +
+                    `Tap to review them.${warning}`,
+                url: '/',
+                tag: 'bank-import',
+                renotify: true,
+            });
 
-            // Cleared only once Telegram has actually taken the message. It used to be
+            // Cleared only once the push service has actually taken the message. It used to be
             // cleared BEFORE the send, so a one-second network blip destroyed the only
             // signal the user gets that a sync worked — they saw nothing at all and
             // concluded sync was broken. Now it survives to the next tick and retries.

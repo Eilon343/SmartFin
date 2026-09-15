@@ -2,9 +2,7 @@
  * Client side of Web Push.
  *
  * Responsibilities stop at the browser boundary: detect support, ask permission, create /
- * read / remove the PushSubscription. Where a subscription is STORED is delegated to a
- * server adapter (setPushServerAdapter), so wiring the backend later is one call and no
- * change here.
+ * read / remove the PushSubscription, and mirror it to the backend (/api/push/subscriptions).
  *
  * Platform notes that shape this API:
  *  - iOS/iPadOS (16.4+) only exposes PushManager inside an app installed to the Home
@@ -15,23 +13,22 @@
  *    only on the backend).
  */
 import { urlBase64ToUint8Array } from './vapid';
+import api from '../api/client';
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || '';
 
-/** @typedef {{ save(sub: PushSubscriptionJSON): Promise<void>, remove(endpoint: string): Promise<void> }} PushServerAdapter */
+const adapter = {
+  save: async (sub) => {
+    // Subscriptions belong to an account; a signed-out device has nowhere to file one.
+    if (!localStorage.getItem('sf_token')) return;
+    await api.post('/push/subscriptions', sub);
+  },
+  remove: (endpoint) => api.delete('/push/subscriptions', { data: { endpoint } }),
+};
 
-/** @type {PushServerAdapter} */
-let adapter = { save: async () => {}, remove: async () => {} };
-
-/**
- * Plug in persistence. Example once the backend exists:
- *   setPushServerAdapter({
- *     save: (sub) => api.post('/push/subscriptions', sub),
- *     remove: (endpoint) => api.delete('/push/subscriptions', { data: { endpoint } }),
- *   });
- */
-export function setPushServerAdapter(next) {
-  adapter = { ...adapter, ...next };
+/** Asks the backend to push a test notification to every device on this account. */
+export function sendTestPush() {
+  return api.post('/push/test');
 }
 
 function isStandalone() {
