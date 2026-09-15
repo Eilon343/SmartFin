@@ -2,14 +2,25 @@ const crypto = require('crypto');
 const webpush = require('web-push');
 const db = require('../config/db');
 
-const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY } = process.env;
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@smartfin.local';
+// docker compose's env_file keeps surrounding quotes as part of the value, so a key written
+// as VAPID_PRIVATE_KEY="..." would otherwise fail to decode.
+const envValue = (name) => (process.env[name] || '').trim().replace(/^(['"])(.*)\1$/, '$2').trim();
 
-const configured = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
-if (configured) {
-    webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-} else {
+const VAPID_PUBLIC_KEY = envValue('VAPID_PUBLIC_KEY');
+const VAPID_PRIVATE_KEY = envValue('VAPID_PRIVATE_KEY');
+const VAPID_SUBJECT = envValue('VAPID_SUBJECT') || 'mailto:admin@smartfin.local';
+
+// A bad key must disable push, never crash the server: this module loads with the scheduler.
+let configured = false;
+if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
     console.warn('Web Push disabled: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY not set');
+} else {
+    try {
+        webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+        configured = true;
+    } catch (err) {
+        console.error(`Web Push disabled: invalid VAPID configuration — ${err.message}`);
+    }
 }
 
 const isPushConfigured = () => configured;
