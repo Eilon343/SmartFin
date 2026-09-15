@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS telegram_link_codes (
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id            INT PRIMARY KEY AUTO_INCREMENT,
+    user_id       BIGINT NOT NULL,
+    endpoint_hash CHAR(64) NOT NULL,
+    endpoint      TEXT NOT NULL,
+    p256dh        VARCHAR(255) NOT NULL,
+    auth          VARCHAR(255) NOT NULL,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_push_endpoint (endpoint_hash),
+    INDEX idx_push_user (user_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS categories (
     category_id INT PRIMARY KEY AUTO_INCREMENT,
     user_id     BIGINT,

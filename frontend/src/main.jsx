@@ -64,7 +64,7 @@ registerSW({
 
     if (!r) return;
 
-    // No-op until VITE_VAPID_PUBLIC_KEY is set and a server adapter is plugged in.
+    // No-op when this build has no VITE_VAPID_PUBLIC_KEY.
     initPushSync();
 
     // Reload the moment the new SW claims this client — gets fresh JS chunks.

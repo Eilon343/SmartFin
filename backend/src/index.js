@@ -7,6 +7,7 @@ const authRoutes = require('./routes/authRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const bankConnectionRoutes = require('./routes/bankConnectionRoutes');
+const pushRoutes = require('./routes/pushRoutes');
 const { startQueueProcessor } = require('./controllers/webhookController');
 const bankSyncScheduler = require('./services/bankSyncScheduler');
 const { purgeExpiredArchives } = require('./controllers/cleanupController');
@@ -63,6 +64,7 @@ app.use('/webhook', webhookLimiter);
 app.use('/api', authRoutes);
 app.use('/api', expenseRoutes);
 app.use('/api', bankConnectionRoutes);
+app.use('/api', pushRoutes);
 app.use('/webhook', webhookRoutes);
 
 app.get('/health', (_req, res) => {
