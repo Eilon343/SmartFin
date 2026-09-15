@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback } from 'react';
 import api from '../api/client';
+import { disablePush } from '../lib/push';
 
 const AuthContext = createContext(null);
 
@@ -127,6 +128,12 @@ export function AuthProvider({ children }) {
     setToken(null);
     setGoogleProfile(null);
     setAutoChecking(false);
+    // The service worker keeps recent /api responses for offline use. They are keyed by URL,
+    // not by user, so without this the next account signed in on this device could be
+    // served the previous one's finances while offline.
+    window.caches?.delete('api-cache').catch(() => {});
+    // A device that signed out must stop receiving this account's notifications.
+    disablePush();
   }, []);
 
   return (

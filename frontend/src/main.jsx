@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import { registerSW } from 'virtual:pwa-register'
+// Side-effect import: must attach its listener before `beforeinstallprompt` fires.
+import './lib/installPrompt'
+import { initPushSync } from './lib/push'
 
 /**
  * Last-resort recovery for a client stuck on an old build.
@@ -60,6 +63,9 @@ registerSW({
     });
 
     if (!r) return;
+
+    // No-op until VITE_VAPID_PUBLIC_KEY is set and a server adapter is plugged in.
+    initPushSync();
 
     // Reload the moment the new SW claims this client — gets fresh JS chunks.
     navigator.serviceWorker.addEventListener('controllerchange', () => {

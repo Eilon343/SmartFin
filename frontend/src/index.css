@@ -96,6 +96,19 @@ body {
   user-select: none;
   -webkit-user-select: none;
 }
+/* Native feel: no grey flash on tap, no long-press link/image callout, and iOS must not
+   inflate font sizes on rotation. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+body { -webkit-touch-callout: none; }
+/* Installed app only: no rubber-band bounce or browser pull-to-refresh on the page itself
+   (inner scrollers keep their own). In a browser tab the refresh gesture stays. */
+@media (display-mode: standalone) {
+  html, body { overscroll-behavior-y: none; }
+}
 .mono { font-family: 'CurrencyFallback', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, 'Noto Sans', monospace; font-feature-settings: "tnum"; }
 .tnum { font-variant-numeric: tabular-nums; }
 

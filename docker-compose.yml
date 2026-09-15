@@ -72,6 +72,7 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+        VITE_VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
     container_name: smartfin_frontend
     restart: unless-stopped
     depends_on:

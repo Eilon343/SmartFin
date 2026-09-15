@@ -7,6 +7,9 @@ ARG VITE_GOOGLE_CLIENT_ID
 # In production nginx proxies /api/ to the backend, so use a relative base URL
 ENV VITE_API_URL=/api
 ENV VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
+# Web Push public key (safe to ship to the browser). Empty = push stays disabled.
+ARG VITE_VAPID_PUBLIC_KEY=
+ENV VITE_VAPID_PUBLIC_KEY=${VITE_VAPID_PUBLIC_KEY}
 # Generate all PWA icon sizes from public/icon.svg
 RUN npm run generate-pwa-assets
 RUN npm run build
