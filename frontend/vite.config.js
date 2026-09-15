@@ -40,43 +40,43 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'apple-touch-icon-180x180.png', 'favicon.png'],
       manifest: {
+        // A stable identity. Without `id` the browser derives it from start_url, so ever
+        // changing start_url (e.g. adding a query param) would make installs look like a
+        // different app and orphan existing home-screen icons and push subscriptions.
+        id: '/',
         name: 'SmartFin',
         short_name: 'SmartFin',
         description: 'Personal Finance OS',
+        lang: 'en',
+        dir: 'auto',
+        categories: ['finance', 'productivity'],
         theme_color: '#07090d',
         background_color: '#07090d',
         display: 'standalone',
+        // Ordered fallbacks for browsers that don't support standalone.
+        display_override: ['standalone', 'minimal-ui'],
         orientation: 'portrait',
         start_url: '/',
         scope: '/',
+        // Opening the app (icon tap, notification, link) reuses the running window instead
+        // of stacking a second instance — the way a native app behaves.
+        launch_handler: { client_mode: ['navigate-existing', 'auto'] },
+        prefer_related_applications: false,
         icons: [
-          {
-            src: 'pwa-192x192.png',
-            sizes: '192x192',
-            type: 'image/png',
-          },
-          {
-            src: 'pwa-512x512.png',
-            sizes: '512x512',
-            type: 'image/png',
-          },
-          {
-            src: 'pwa-512x512.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'any',
-          },
-          {
-            src: 'maskable-icon-512x512.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'maskable',
-          },
+          { src: 'pwa-64x64.png', sizes: '64x64', type: 'image/png', purpose: 'any' },
+          { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'maskable-icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {
         clientsClaim: true,
         skipWaiting: true,
+        cleanupOutdatedCaches: true,
+        // Push / notificationclick handlers live in public/push-sw.js and are pulled into the
+        // generated worker. A browser only re-checks the main sw.js for changes, never the
+        // scripts it imports, so the version query makes each release import a fresh copy.
+        importScripts: [`/push-sw.js?v=${pkg.version}`],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -100,6 +100,9 @@ export default defineConfig({
         ],
         // Don't cache API calls in precache
         navigateFallback: '/index.html',
+        // A real navigation to a server route (OAuth redirect, webhook, version file) must
+        // reach the server, not get answered with the SPA shell by the service worker.
+        navigateFallbackDenylist: [/^\/api\//, /^\/webhook\//, /^\/version\.json$/],
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
       },
     }),

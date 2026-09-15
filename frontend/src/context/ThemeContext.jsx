@@ -13,6 +13,10 @@ export function ThemeProvider({ children }) {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    // The system status bar / title bar takes this colour. index.html hard-codes the dark
+    // value, which left a black bar above a white app in light mode.
+    document.querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', theme === 'light' ? '#f6f7f9' : '#07090d');
     try { localStorage.setItem('smartfin-theme', theme); } catch (e) {}
   }, [theme]);
 
