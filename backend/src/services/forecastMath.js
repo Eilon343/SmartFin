@@ -47,8 +47,9 @@
  * carry equal weight: at K = 10, ten days of observed spending is worth as much as
  * everything previous months say about you.
  *
- * K also bounds how much a single early purchase can move the forecast. The month's spend
- * enters the remainder as `S_d × (D − d)/(d + K)` — the `+ K` is what stops the leverage
+ * K also bounds how much a single early purchase can move the forecast. With ρ the share of
+ * the month still ahead, the month's spend enters the remainder as `S_d × ρD/((1 − ρ)D + K)`,
+ * which is `S_d × (D − d)/(d + K)` under flat weights — the `+ K` is what stops the leverage
  * exploding as d → 1, which is the whole failure mode of a raw run-rate. Tuned on the two
  * cases that matter and pull in opposite directions: one ₪400 purchase on day 1 against a
  * ₪3,000 habit (K=7 forecast ₪4,440, K=10 ₪4,130, K=14 ₪3,910) versus twenty days at
@@ -425,7 +426,10 @@ function projectVariableExpenses({
     const runRateRemaining = elapsed > 0 ? S * (remaining / elapsed) : 0;
     const histRemaining = (Number(historicalMean) || 0) * remaining;
 
-    const w = credibilityWeight(dayIndex, monthsWithData);
+    // Effective days, not calendar days. The run-rate above divides by the seasonal elapsed
+    // share, so the weight has to be measured in the same units or a quiet first day gets a
+    // huge multiplier with only a calendar day's damping. With flat weights this is `d`.
+    const w = credibilityWeight(elapsed * days, monthsWithData);
     return S + w * runRateRemaining + (1 - w) * histRemaining;
 }
 

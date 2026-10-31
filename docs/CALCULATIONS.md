@@ -68,7 +68,7 @@ to what it was before cycles existed. `tests/backend/cycle.test.js` pins that id
 | `D` | length of the queried cycle, in days |
 | `S_d` | actual **variable** spend so far this cycle, excluding `is_virtual` |
 | `μ` | historical mean of the quantity, decayed over the lookback |
-| `w` | credibility weight, `d / (d + K)` with `K = 10` |
+| `w` | credibility weight, `d_eff / (d_eff + K)` with `K = 10` and `d_eff = (1 − ρ) × D` |
 | `w_i` | share of a typical week's spend falling on weekday `i` (0 = Sunday) |
 | `ρ` | share of the cycle still ahead, seasonality-aware |
 
@@ -137,9 +137,14 @@ projected_expenses = fixed_sum + projected_variable
 
 run_rate_remaining   = S_d × ρ / (1 − ρ)      ← this month's own pace
 hist_remaining       = μ_var × ρ              ← this user's habit
-w                    = d / (d + K),  K = 10
+d_eff                = (1 − ρ) × D            ← elapsed days, seasonally weighted
+w                    = d_eff / (d_eff + K),  K = 10
 projected_variable   = S_d + w × run_rate_remaining + (1 − w) × hist_remaining
 ```
+
+`d_eff` equals `d` under flat weights. It exists because the run-rate divides by the seasonal
+share `1 − ρ`: a calendar-day weight left a quiet first day with a large multiplier and only one
+day's damping.
 
 Fixed categories (`categories.is_fixed` — Housing, Utilities, Savings) are flat monthly costs,
 already paid, so they are **not** run-rated.
@@ -159,8 +164,9 @@ Properties, each pinned by a test in `tests/math/pnl_math.test.js`:
 
 - continuous and monotone in `d` — no boundary anywhere in the month
 - at `d = D` the remaining share is 0, so the projection lands **exactly** on actuals
-- a single day's leverage is bounded: `S_d` enters the remainder as `S_d × (D−d)/(d+K)`, so at
-  d=1 the multiplier is 30/11 rather than 30
+- a single day's leverage is bounded under any weights: `S_d` enters the remainder as
+  `S_d × ρD/((1−ρ)D + K)`. Under flat weights that is `S_d × (D−d)/(d+K)`, so at d=1 the
+  multiplier is 30/11 rather than 30
 - with `S_d = 0` it returns the historical expectation, which is the right answer on the 1st —
   the old code short-circuited to ₪0 and told the user to expect a free month
 - with **no history at all** `w = 1`: there is no prior to blend toward, and shrinking a new

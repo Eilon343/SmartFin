@@ -899,3 +899,28 @@ describe('full P&L scenarios', () => {
         }
     });
 });
+
+// ── Credibility under skewed day-of-week weights ─────────────────────────────────
+
+describe('projectVariableExpenses - skewed day-of-week weights', () => {
+    const quietSaturday = fx.dowWeights([1000, 1000, 1000, 1000, 1000, 2000, 0], new Array(7).fill(26));
+    const base = { days: 30, historicalMean: 6000, monthsWithData: 6, startDate: '2026-08-01' }; // a Saturday
+
+    it('a purchase on a quiet first day cannot run away with the forecast', () => {
+        const p = fx.projectVariableExpenses({ ...base, spentToDate: 300, dayIndex: 1, weights: quietSaturday });
+        expect(Math.round(p)).toBe(6945);
+    });
+
+    it('is identical to d/(d+K) under flat weights', () => {
+        const flat = new Array(7).fill(1 / 7);
+        const d = 4, S = 800, rem = 26 / 30, w = d / (d + fx.CREDIBILITY_K);
+        const expected = S + w * S * (rem / (4 / 30)) + (1 - w) * 6000 * rem;
+        const p = fx.projectVariableExpenses({ ...base, spentToDate: S, dayIndex: d, weights: flat });
+        expect(p).toBeCloseTo(expected, 8);
+    });
+
+    it('still lands exactly on actuals on the last day', () => {
+        const p = fx.projectVariableExpenses({ ...base, spentToDate: 5000, dayIndex: 30, weights: quietSaturday });
+        expect(p).toBe(5000);
+    });
+});
