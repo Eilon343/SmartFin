@@ -114,7 +114,7 @@ September's income.
 ### Two separate Gemini parsers — keep aware of both
 - `bot/app/ai/ai_engine.py` — multi-intent (`log_expense` / `log_income` / `log_subscription` / `ERROR_UNSUPPORTED`), returns a JSON array.
 - `backend/src/controllers/webhookController.js` `buildPrompt()` — expense-only, Telegram-webhook path.
-Both call Gemini, both retry 3× with backoff on 429/5xx, both have their own prompt. Changing parsing behavior usually means editing both. Bank sync has a third, batch prompt (`callGeminiForCategories`) that categorizes up to 40 rows per request and accepts only category names that already exist.
+Both call Gemini, both retry 3× with backoff on 429/5xx, both have their own prompt. (The bot skips the retry when a 429 says the quota is exhausted.) Changing parsing behavior usually means editing both. Bank sync has a third, batch prompt (`callGeminiForCategories`) that categorizes up to 40 rows per request and accepts only category names that already exist.
 
 **Gemini model is hard-coded to `gemini-2.5-flash`.** `1.5-flash` 404s on v1beta; `2.0-flash` has quota 0 on the project key. Do not change it.
 
