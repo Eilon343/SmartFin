@@ -10,6 +10,7 @@ const bankConnectionRoutes = require('./routes/bankConnectionRoutes');
 const pushRoutes = require('./routes/pushRoutes');
 const { startQueueProcessor } = require('./controllers/webhookController');
 const bankSyncScheduler = require('./services/bankSyncScheduler');
+const weeklyScore = require('./services/weeklyScore');
 const { purgeExpiredArchives } = require('./controllers/cleanupController');
 
 if (!process.env.JWT_SECRET) {
@@ -75,6 +76,7 @@ app.listen(PORT, () => {
     console.log(`SmartFin API listening on port ${PORT}`);
     startQueueProcessor();
     bankSyncScheduler.start();
+    weeklyScore.start();
 
     // Drop duplicate-cleanup archives past their restore window. Daily is ample for a
     // 30-day window; the first run is deferred a minute so it never competes with boot.
