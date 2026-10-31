@@ -1,6 +1,6 @@
 # SmartFin — How every number the user sees is calculated
 
-Source of truth for the math behind the Dashboard, the Insights page, and the bot's weekly DM.
+Source of truth for the math behind the Dashboard, the Insights page, and the weekly summary.
 
 **Every forecasting formula lives in `backend/src/services/forecastMath.js`** — a pure module
 with no DB, no clock and no config reads. Controllers fetch rows and shape responses; they do
@@ -10,7 +10,7 @@ formulas under test are the formulas that ship.
 
 The rest is derived from `expenseController.js` (P&L, budgets, summary), `insightsController.js`,
 `incomeController.js`, `savingsController.js`, `frontend/src/pages/Dashboard.jsx`,
-`frontend/src/pages/Insights.jsx`, and `bot/app/scheduler.py`.
+`frontend/src/pages/Insights.jsx`, and `services/weeklyScore.js`.
 
 ---
 
@@ -392,37 +392,39 @@ Per category: `delta = spent − three_mo_avg`, `deltaPct = delta / three_mo_avg
 
 ---
 
-## 4. Bot — weekly spending score (`bot/app/scheduler.py`, Saturdays 09:00)
+## 4. Weekly summary (`services/weeklyScore.js`, Sundays 08:30 Israel time)
+
+Reports the Sunday-to-Saturday week that just closed, to users with a linked Telegram chat.
 
 ```
-week_start   = Sunday of this week
-week_total   = SUM(expenses) since week_start, is_virtual = FALSE
-monthly_avg  = SUM(expenses over the last 3 complete months) / months_with_data
-weekly_avg   = monthly_avg / 4.33
-expected     = weekly_avg × (elapsed_days / 7)
-ratio        = round(week_total / expected, 2)
+week_total     = SUM(expenses in the closed week), is_virtual = FALSE, variable categories only
+monthly_target = pacing_target.variable, for the cycle holding the week's last day
+expected       = monthly_target / D × 7
+ratio          = round(week_total / expected, 2)
 ```
 
-Grades: ≤0.80 Excellent 🟢 · ≤1.00 Good 🔵 · ≤1.20 Over budget 🟡 · else Way over 🔴. Zero history
-→ "not enough history yet" rather than a divide-by-zero.
+Grades: ≤0.80 Well under 🟢 · below 1.00 Under 🔵 · 1.00 Right on pace 🔵 · ≤1.20 Above 🟡 · else
+Well above 🔴. A negative `week_total` is a net refund week.
 
-Three things were wrong here and all three are fixed:
-
-- **The week started on Monday.** The job runs Saturday, so Sunday — the first working day of the
-  Israeli week — was pushed into the *previous* week's total. Every score was computed over a
-  window that both dropped a real spending day and straddled two weeks as the user lives them.
-- **6 elapsed days were compared against a 7-day expectation**, so every user read ~14% under
-  budget regardless of what they actually spent. `expected` is now scaled by elapsed days, which
-  also keeps the score correct if the job ever moves off Saturday.
-- **`is_virtual` was not filtered**, so moving money into a savings goal graded you *worse*.
-- The ratio is rounded to the precision the message prints, so the grade cannot disagree with
-  the percentage beside it ("Over budget … you spent 0% more than usual").
+- **`monthly_target` is one formula, not a branch.** With no budgets it is the decayed variable
+  habit (§3). With budgets it mixes them in, and the message says "target" instead of "usual".
+- **The week is closed.** Sunday 08:30 follows the 07:00 bank sync. Seven consecutive days hold
+  every weekday once, so `expected` needs no `dow_weights`.
+- **Fixed costs are excluded on both sides.** Rent lands in one week, so including it graded
+  the calendar rather than the user.
+- **Not enough history** is shown when `pacing_target.variable` is 0, or when there is no usable
+  cycle and budgets do not cover every category with spending. One budget must not become the
+  target for spending it never covered.
+- **Pending card charges are a footnote, not part of the total**, and approximate: a charge that
+  settled under a different amount is a new row, so its old pending row can linger.
+- `users.weekly_score_sent_for` stops a restart resending a week. A failed send retries on the
+  next 15-minute tick, up to 3 times.
 
 ---
 
 ## 5. Cross-cutting rules
 
-- **Virtual expenses** (`is_virtual = TRUE`, savings transfers) are excluded from `getSummary`, `getBudgets`, the P&L expense buckets, **every query in `insightsController`**, and the bot's weekly score — and subtracted separately as `savings_allocation`. Moving money into a savings goal is not spending it; any new query over `expenses` needs this filter.
+- **Virtual expenses** (`is_virtual = TRUE`, savings transfers) are excluded from `getSummary`, `getBudgets`, the P&L expense buckets, **every query in `insightsController`**, and the weekly summary — and subtracted separately as `savings_allocation`. Moving money into a savings goal is not spending it; any new query over `expenses` needs this filter.
 - **Fixed vs variable** (`categories.is_fixed`) exists purely for forecasting: fixed costs are never run-rated to month-end.
 - **Rounding** is applied once at the response boundary (`Math.round(x * 100) / 100`), never mid-formula.
 - **Averaging denominators are the months the user has data**, never a hard-coded window length. A category inside a user uses that same denominator, not its own count of non-zero months: a silent category spent ₪0 that cycle.
@@ -461,7 +463,7 @@ about two, and missed three real bugs.
 - The naive run-rate really did need replacing — though with credibility weighting, not the
   review's own formula, which gives zero weight to the current month's pace.
 - `ideal(d)` really was off by one.
-- The bot's weekly ratio really was skewed by the day it runs on.
+- The weekly ratio really was skewed by the day it ran on. The first fix did not resolve this, because Saturday counts as 7 elapsed days; moving to a closed week (§4) did.
 
 **Rejected:**
 - **The "day-5 discontinuity" did not exist.** The old code blended `S + (naive − S) × d/5`, and

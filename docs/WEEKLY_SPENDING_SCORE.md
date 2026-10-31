@@ -1,5 +1,9 @@
 # Weekly Spending Score: how it works and what the audit found
 
+> **Historical record.** This audits the old Saturday job in the bot, which has been replaced by
+> `backend/src/services/weeklyScore.js`. `docs/CALCULATIONS.md` §4 describes how it works now.
+> Fixed: problems 1, 2, 5 and 8 to 13. Reduced: 3, 4 and 6. Open: 7.
+
 Audit date: 2026-10-31. Code audited: `bot/app/scheduler.py` on branch `dev`, commit `e8fbb3f`.
 
 ## 1. Verdict

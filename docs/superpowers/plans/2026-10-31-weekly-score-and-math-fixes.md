@@ -326,7 +326,7 @@ State lines: 🟢 `Well under your usual`, 🔵 `Under your usual`, 🔵 `Right 
 
 ## Deployment Notes
 
-Apply `db/migrate_014_weekly_score.sql` to production **before** deploying the backend. Until it is applied, the job's user query fails and logs an error each tick, but the rest of the backend is unaffected.
+Apply `db/migrate_014_weekly_score.sql` to production **before** deploying the backend. Until it is applied, the job's user query fails and logs an error on each Sunday tick, but the rest of the backend is unaffected.
 
 The first message arrives on the first Sunday at 08:30 Israel time after deployment. Deployed before then, you will get no Saturday message that week.
 

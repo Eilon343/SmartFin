@@ -40,7 +40,6 @@ cd bot && python -m venv venv && venv\Scripts\Activate.ps1 && pip install -r req
 cd tests && npm install && npm test          # backend + math (Jest)
 cd tests && npx jest backend/pnl.test.js      # single suite
 pytest tests/bot -v                            # bot (pytest, needs pip install pytest pytest-asyncio)
-pytest tests/math/test_pnl_math.py -v
 ```
 
 When running on host set `DB_HOST=localhost`, `DB_PORT=3307` (compose maps container 3306 → host 3307).
@@ -53,7 +52,7 @@ Express 5. `index.js` → `routes/expenseRoutes.js` (all `/api/*` routes, each b
 `index.js` loads `backend/.env` first, then root `.env` with `override: false` (root fills gaps like GEMINI/JWT). `trust proxy` is set for nginx so rate-limit sees real client IP.
 
 ### Bot (`bot/app/`)
-`main.py` boots: `DatabaseManager` (own `aiomysql` pool, direct DB access — does NOT go through the backend), aiogram dispatcher, APScheduler. `bot/handlers.py` — any non-command text → `ai_engine.parse_input()` → confirmation buttons via FSM (`bot/states.py`) → `DatabaseManager` insert. `scheduler.py` — daily subscription billing (idempotent per month via `last_charged_month`), Saturday 09:00 spending-score DM.
+`main.py` boots: `DatabaseManager` (own `aiomysql` pool, direct DB access — does NOT go through the backend), aiogram dispatcher, APScheduler. `bot/handlers.py` — any non-command text → `ai_engine.parse_input()` → confirmation buttons via FSM (`bot/states.py`) → `DatabaseManager` insert. `scheduler.py` — daily subscription billing (idempotent per month via `last_charged_month`). The weekly summary is NOT here: it moved to `backend/src/services/weeklyScore.js`, so it shares its baseline with Insights.
 
 ### Frontend (`frontend/src/`)
 `api/client.js` — axios instance; injects JWT from `localStorage.sf_token`, wipes token + reloads on a 401 *with* a token. `App.jsx` — routes under `PrivateRoute`/`PublicRoute`; Google One-Tap auto-auth. Pages call the API directly; no state library. Contexts: `AuthContext`, `ThemeContext`, `I18nContext` (Hebrew/English, app is RTL-aware),

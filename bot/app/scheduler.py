@@ -1,110 +1,8 @@
 import logging
-from datetime import datetime, timedelta, date
+from datetime import date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from aiogram import Bot
-
-from app.services import cycle as cycle_svc
-
-
-def _week_start(today: date) -> date:
-    """Sunday of the week `today` falls in.
-
-    The Israeli week starts on Sunday, and this job runs on a Saturday — so anchoring to
-    Monday, as this used to, pushed Sunday (the first working day) into the *previous*
-    week's total. Every score was computed over a window that both omitted a real spending
-    day and straddled two weeks as the user experiences them.
-
-    date.weekday() is Mon=0..Sun=6, so Sunday needs 0 days taken off and Monday needs 1.
-    """
-    return today - timedelta(days=(today.weekday() + 1) % 7)
-
-
-async def _compute_spending_score(db_manager, user_id: int) -> dict:
-    pool = await db_manager.get_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            # This week (Sunday–today)
-            today = datetime.now().date()
-            week_start = _week_start(today)
-            elapsed_days = (today - week_start).days + 1
-            # is_virtual rows are savings-goal transfers, not spending. Counting them
-            # graded people worse for saving money, which is the opposite of the point.
-            await cur.execute(
-                "SELECT COALESCE(SUM(amount), 0) FROM expenses "
-                "WHERE user_id = %s AND is_virtual = FALSE AND created_at >= %s",
-                (user_id, week_start),
-            )
-            (week_total,) = await cur.fetchone()
-
-            # Monthly average over the past 3 full CYCLES. The window and the "how many
-            # periods was that" count both run on the user's anchor day: shifting a date
-            # back by (anchor - 1) days puts the anchor on the 1st, so the ordinary month
-            # truncation then buckets each row into the cycle it belongs to.
-            settings = await db_manager.get_cycle_settings(user_id)
-            this_cycle = cycle_svc.resolve_cycle(cycle_svc.current_cycle_key(settings, today), settings)
-            window_start = cycle_svc.resolve_cycle(
-                cycle_svc.add_months(this_cycle.key, -3), settings
-            ).start
-            shift = cycle_svc.anchor_shift_days(settings)
-            await cur.execute(
-                "SELECT COALESCE(SUM(amount), 0), "
-                "       COUNT(DISTINCT DATE_FORMAT(DATE_SUB(created_at, INTERVAL %s DAY),'%%Y-%%m')) "
-                "FROM expenses "
-                "WHERE user_id = %s AND is_virtual = FALSE "
-                "  AND created_at >= %s AND created_at < %s",
-                (shift, user_id, window_start, this_cycle.start),
-            )
-            row = await cur.fetchone()
-            total_past, months = row
-            monthly_avg = float(total_past) / max(int(months), 1)
-            # Weekly equivalent of monthly average (month ≈ 4.33 weeks)
-            weekly_avg = monthly_avg / 4.33
-
-    # Compare elapsed days against elapsed days. The job fires on Saturday, so the week is
-    # 6 days old, not 7 — measuring it against a full week's expectation told every user
-    # they were ~14% under budget no matter what they actually spent.
-    expected = weekly_avg * (elapsed_days / 7)
-
-    return {
-        "week_total": float(week_total),
-        "weekly_avg": round(weekly_avg, 2),
-        "expected": round(expected, 2),
-        "elapsed_days": elapsed_days,
-    }
-
-
-def _format_score_message(data: dict) -> str:
-    week = data["week_total"]
-    avg = data["weekly_avg"]
-    expected = data.get("expected", avg)
-    days = data.get("elapsed_days", 7)
-    if avg == 0 or expected == 0:
-        return "📊 *Weekly Spending Score*\nNot enough history yet — keep logging expenses!"
-
-    # Rounded to the precision the message actually reports. Without this the grade and
-    # the percentage below it could disagree — being 0.02% over the expectation printed
-    # "Over budget" next to "you spent 0% more than usual", which just reads as a bug.
-    ratio = round(week / expected, 2)
-    if ratio <= 0.8:
-        grade, emoji = "Excellent", "🟢"
-    elif ratio <= 1.0:
-        grade, emoji = "Good", "🔵"
-    elif ratio <= 1.2:
-        grade, emoji = "Over budget", "🟡"
-    else:
-        grade, emoji = "Way over budget", "🔴"
-
-    pct = (ratio - 1) * 100
-    direction = "more" if pct > 0 else "less"
-    return (
-        f"📊 *Weekly Spending Score*\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"This week ({days}d): `₪ {week:.2f}`\n"
-        f"Expected by now: `₪ {expected:.2f}`\n"
-        f"Result: {emoji} *{grade}*\n"
-        f"You spent `{abs(pct):.0f}%` {direction} than usual."
-    )
 
 
 async def _charge_due_subscriptions(bot: Bot, db_manager):
@@ -177,28 +75,6 @@ async def _charge_due_subscriptions(bot: Bot, db_manager):
 
 def setup_scheduler(bot: Bot, db_manager) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
-
-    async def send_spending_scores():
-        # Resolved per run, not captured at setup: a user who links their account
-        # after the bot starts must still get their weekly score.
-        #
-        # user_id keys the financial queries; chat_id is where the message goes. They are
-        # the same number only for legacy bot-origin accounts.
-        for user_id, chat_id in await db_manager.get_notifiable_users():
-            try:
-                data = await _compute_spending_score(db_manager, user_id)
-                text = _format_score_message(data)
-                await bot.send_message(chat_id, text, parse_mode="Markdown")
-            except Exception as e:
-                logging.error(f"Spending score error for {user_id}: {e}")
-
-    # Every Saturday at 09:00 local time
-    scheduler.add_job(
-        send_spending_scores,
-        CronTrigger(day_of_week="sat", hour=9, minute=0),
-        id="weekly_spending_score",
-        replace_existing=True,
-    )
 
     # Must be an `async def`, NOT `lambda: _charge_due_subscriptions(...)`.
     # AsyncIOScheduler routes a job to its event loop only when the function passes
