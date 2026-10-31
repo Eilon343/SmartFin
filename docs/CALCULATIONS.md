@@ -298,7 +298,7 @@ Pure client-side sum of non-paused subscription amounts. This is a *catalogue* t
 
 `insightsController.getInsights` returns per-category totals (current / previous month / typical cycle), a daily array, weekend-vs-weekday averages, `budget_total`, and the momentum chart's `pacing_target` + `ideal[]`.
 
-- **Typical cycle per category** (`three_mo_avg`, which keeps its API name so a cached PWA keeps working): the same 6-cycle decayed mean the P&L uses, from `fx.categoryHabits`. The denominator is the cycles the **user** was active, so a category that was silent in one of them counts ₪0 there and the categories sum exactly to the user's decayed total. A first cycle with under 14 days of history is dropped.
+- **Typical cycle per category** (`three_mo_avg`, which keeps its API name so a cached PWA keeps working): the same 6-cycle decayed mean the P&L uses, from `fx.categoryHabits`. The denominator is the cycles the **user** was active, so a category that was silent in one of them counts ₪0 there and the categories sum exactly to the user's decayed total. A cycle counts only if its variable spending spans 14 days, and the earliest cycle's variable spending is scaled up to a whole cycle because the user usually joined part-way through it.
 - **`daily[]`** is indexed 1..`days_in_cycle`, day 1 being the anchor day. For the live cycle, days after today are `null` (not `0`) — this is what makes the momentum line stop at today instead of crashing to the floor.
 - **`budget_total`** = sum of **all** `budgets.monthly_limit` for the user (not filtered by category being in use). Reported for the budgets UI; it is **no longer** the pacing target.
 - **`ideal[]`** is indexed 1..`days_in_cycle` like `daily[]`, and is computed server-side. The frontend used to rebuild this curve from `dow_weights`; it now draws what it is given, so there is one implementation rather than two to keep in step.
@@ -417,8 +417,9 @@ Well above 🔴. A negative `week_total` is a net refund week.
   target for spending it never covered.
 - **Pending card charges are a footnote, not part of the total**, and approximate: a charge that
   settled under a different amount is a new row, so its old pending row can linger.
-- `users.weekly_score_sent_for` stops a restart resending a week. A failed send retries on the
-  next 15-minute tick, up to 3 times.
+- `users.weekly_score_sent_for` stops a restart resending a week. A blocked or missing chat (403,
+  400) is not retried. Any other failure retries every 15 minutes until Sunday ends, so an outage
+  does not cost anyone their week.
 
 ---
 
@@ -439,7 +440,7 @@ Well above 🔴. A negative `week_total` is a net refund week.
    `budget_total`, the sum of the limits the user happened to set, while the cumulative line
    summed *all* spending; the two sides were never over the same set of categories. It was
    recorded here as structural, and it wasn't: the target is now built per category, taking the
-   budget where there is one and the 3-month average where there isn't, which covers exactly the
+   budget where there is one and the typical cycle where there isn't, which covers exactly the
    categories the line sums. The same change split the ideal curve into a fixed half paced by
    day-of-month and a variable half paced by day-of-week, which removed the second, quieter
    version of the same mismatch — the whole target being smeared evenly across a month whose rent

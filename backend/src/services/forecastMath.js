@@ -80,7 +80,7 @@ const LOOKBACK_HALF_LIFE = 2;
 
 const DECAY = Math.pow(0.5, 1 / LOOKBACK_HALF_LIFE);
 
-/** A first cycle needs this many days of history to count as a cycle at all. */
+/** A cycle needs variable spending across this many days to count as a cycle at all. */
 const MIN_CYCLE_HISTORY_DAYS = 14;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -165,8 +165,9 @@ function decayedMean(rows, anchorMonth) {
 /**
  * The user's typical monthly spend in each category, from per-cycle category totals.
  *
- * `rows` is [{ category_id, mo: 'YYYY-MM', total, first_at? }] and `cycleEndOf(mo)` gives a
- * cycle's exclusive end as 'YYYY-MM-DD'.
+ * `rows` is [{ category_id, mo: 'YYYY-MM', total, first_at?, last_at? }], where the two
+ * timestamps bound a bucket's expenses. `cycleOf(mo)` gives { end, days } with `end` an
+ * exclusive 'YYYY-MM-DD', and `isFixed(category_id)` says which categories are fixed costs.
  *
  * The denominator is the cycles the USER was active, not the cycles a category was. A
  * category that was silent in an active cycle spent ₪0 there, and counting that zero is what
@@ -175,28 +176,52 @@ function decayedMean(rows, anchorMonth) {
  * the same months and weights apply to every category, the habits sum exactly to
  * `decayedMean` of the monthly totals.
  *
- * A first cycle with under MIN_CYCLE_HISTORY_DAYS of history is dropped: five days of
- * logging is not a month, and counting it as one would set a far too low bar. `first_at` is
- * the earliest expense in a row's bucket; a row without one makes no claim. An empty
+ * A cycle only counts if its variable spending spans MIN_CYCLE_HISTORY_DAYS. Four days of
+ * logging after a long gap, or a lone generated subscription row, is not a month, and
+ * counting it as one sets a far too low bar. Rent is ignored here because it arrives whether
+ * or not the user is tracking anything. Rows with no timestamps make no claim. An empty
  * `months` means there is no usable history yet.
+ *
+ * The earliest cycle is usually partial, since the user joined part-way through it, so its
+ * variable spending is scaled to a whole cycle: ₪3,200 over 16 days is a ₪6,000 month. Fixed
+ * costs are not, because a partial cycle still held one whole rent.
  */
-function categoryHabits(rows, { anchorMonth, cycleEndOf }) {
-    const firstAt = (rows || []).reduce((min, r) => {
-        const t = r.first_at == null ? NaN : new Date(r.first_at).getTime();
-        return Number.isNaN(t) ? min : Math.min(min, t);
-    }, Infinity);
+function categoryHabits(rows, { anchorMonth, cycleOf, isFixed = () => false }) {
+    const all = rows || [];
+    const dated = new Set();
+    const spans = new Map(); // mo → { first, last } of its variable spending, in ms
+    for (const r of all) {
+        if (r.first_at == null) continue;
+        dated.add(r.mo);
+        if (isFixed(r.category_id)) continue;
+        const first = new Date(r.first_at).getTime();
+        const last = new Date(r.last_at == null ? r.first_at : r.last_at).getTime();
+        const span = spans.get(r.mo) || { first, last };
+        spans.set(r.mo, { first: Math.min(span.first, first), last: Math.max(span.last, last) });
+    }
 
-    const historyDays = (mo) => (new Date(`${cycleEndOf(mo)}T00:00:00Z`).getTime() - firstAt) / MS_PER_DAY;
-    const months = [...new Set((rows || []).map(r => r.mo))]
-        .filter(mo => firstAt === Infinity || historyDays(mo) >= MIN_CYCLE_HISTORY_DAYS)
+    const activeDays = (mo) => {
+        const span = spans.get(mo);
+        return span ? (span.last - span.first) / MS_PER_DAY + 1 : 0;
+    };
+    const months = [...new Set(all.map(r => r.mo))]
+        .filter(mo => !dated.has(mo) || activeDays(mo) >= MIN_CYCLE_HISTORY_DAYS)
         .sort();
 
+    let firstCycleScale = 1;
+    if (spans.has(months[0])) {
+        const { end, days } = cycleOf(months[0]);
+        const heldDays = (new Date(`${end}T00:00:00Z`).getTime() - spans.get(months[0]).first) / MS_PER_DAY;
+        if (heldDays > 0 && heldDays < days) firstCycleScale = days / heldDays;
+    }
+
     const totals = new Map();
-    for (const r of rows || []) {
+    for (const r of all) {
         if (!months.includes(r.mo)) continue;
         if (!totals.has(r.category_id)) totals.set(r.category_id, {});
         const byMonth = totals.get(r.category_id);
-        byMonth[r.mo] = (byMonth[r.mo] || 0) + Number(r.total);
+        const scale = r.mo === months[0] && !isFixed(r.category_id) ? firstCycleScale : 1;
+        byMonth[r.mo] = (byMonth[r.mo] || 0) + Number(r.total) * scale;
     }
 
     const byCategory = new Map();

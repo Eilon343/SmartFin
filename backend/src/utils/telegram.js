@@ -8,7 +8,9 @@ async function sendTelegramMessage(chatId, text) {
     });
     if (!res.ok) {
         const errText = await res.text().catch(() => '');
-        throw new Error(`Telegram API error ${res.status}: ${errText}`);
+        const err = new Error(`Telegram API error ${res.status}: ${errText}`);
+        err.status = res.status;
+        throw err;
     }
 }
 

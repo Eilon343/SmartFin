@@ -928,21 +928,27 @@ describe('projectVariableExpenses - skewed day-of-week weights', () => {
 // ── categoryHabits: one baseline, the user's own denominator ─────────────────────
 
 describe('categoryHabits', () => {
-    const ends = { '2026-07': '2026-08-01', '2026-08': '2026-09-01', '2026-09': '2026-10-01' };
-    const cycleEndOf = (mo) => ends[mo];
+    const cycles = {
+        '2026-04': { end: '2026-05-01', days: 30 }, '2026-07': { end: '2026-08-01', days: 31 },
+        '2026-08': { end: '2026-09-01', days: 31 }, '2026-09': { end: '2026-10-01', days: 30 },
+    };
+    const options = { anchorMonth: '2026-10', cycleOf: (mo) => cycles[mo] };
     const rows = [
         { category_id: 1, mo: '2026-07', total: 2000 }, { category_id: 1, mo: '2026-08', total: 2000 },
         { category_id: 1, mo: '2026-09', total: 2000 }, { category_id: 2, mo: '2026-07', total: 900 },
     ];
+    const active = (category_id, mo, total) => ({
+        category_id, mo, total, first_at: `${mo}-01`, last_at: `${mo}-28`,
+    });
 
     it('counts a silent cycle as zero for a sparse category', () => {
-        const { byCategory, months } = fx.categoryHabits(rows, { anchorMonth: '2026-10', cycleEndOf });
+        const { byCategory, months } = fx.categoryHabits(rows, options);
         expect(months).toHaveLength(3);
         expect(byCategory.get(2)).toBeCloseTo(203.89, 2);
     });
 
     it('category habits sum to the decayed mean of the totals', () => {
-        const { byCategory } = fx.categoryHabits(rows, { anchorMonth: '2026-10', cycleEndOf });
+        const { byCategory } = fx.categoryHabits(rows, options);
         const sum = [...byCategory.values()].reduce((a, b) => a + b, 0);
         const totals = [
             { month: '2026-07', total: 2900 }, { month: '2026-08', total: 2000 }, { month: '2026-09', total: 2000 },
@@ -951,41 +957,107 @@ describe('categoryHabits', () => {
     });
 
     it('keeps the null key for uncategorized spend', () => {
-        const { byCategory } = fx.categoryHabits(
-            [{ category_id: null, mo: '2026-09', total: 400 }], { anchorMonth: '2026-10', cycleEndOf });
+        const { byCategory } = fx.categoryHabits([{ category_id: null, mo: '2026-09', total: 400 }], options);
         expect(byCategory.get(null)).toBe(400);
     });
 
-    it('drops a first cycle with under 14 days of history', () => {
+    it('drops a first cycle with under 14 days of activity', () => {
         const short = [
-            { category_id: 1, mo: '2026-08', total: 500, first_at: '2026-08-27' },
-            { category_id: 1, mo: '2026-09', total: 6000, first_at: '2026-09-01' },
+            { category_id: 1, mo: '2026-08', total: 500, first_at: '2026-08-27', last_at: '2026-08-31' },
+            active(1, '2026-09', 6000),
         ];
-        const { months, byCategory } = fx.categoryHabits(short, { anchorMonth: '2026-10', cycleEndOf });
+        const { months, byCategory } = fx.categoryHabits(short, options);
         expect(months).toEqual(['2026-09']);
-        expect(byCategory.get(1)).toBe(6000);
+        expect(byCategory.get(1)).toBeCloseTo(6000, 6);
     });
 
-    it('keeps a first cycle with exactly 14 days of history', () => {
-        const edge = [{ category_id: 1, mo: '2026-08', total: 500, first_at: '2026-08-18' }];
-        expect(fx.categoryHabits(edge, { anchorMonth: '2026-10', cycleEndOf }).months).toEqual(['2026-08']);
+    it('keeps a cycle with exactly 14 days of activity', () => {
+        const edge = [{ category_id: 1, mo: '2026-08', total: 500, first_at: '2026-08-18', last_at: '2026-08-31' }];
+        expect(fx.categoryHabits(edge, options).months).toEqual(['2026-08']);
     });
 
     it('returns no months when the only cycle is too short', () => {
-        const only = [{ category_id: 1, mo: '2026-09', total: 500, first_at: '2026-09-27' }];
-        const result = fx.categoryHabits(only, { anchorMonth: '2026-10', cycleEndOf });
+        const only = [{ category_id: 1, mo: '2026-09', total: 500, first_at: '2026-09-27', last_at: '2026-09-30' }];
+        const result = fx.categoryHabits(only, options);
         expect(result.months).toEqual([]);
         expect(result.byCategory.size).toBe(0);
     });
 
-    it('accepts first_at as a Date, which is what mysql2 returns', () => {
-        const only = [{ category_id: 1, mo: '2026-09', total: 500, first_at: new Date('2026-09-27T10:00:00Z') }];
-        expect(fx.categoryHabits(only, { anchorMonth: '2026-10', cycleEndOf }).months).toEqual([]);
+    it('accepts timestamps as Dates, which is what mysql2 returns', () => {
+        const only = [{
+            category_id: 1, mo: '2026-09', total: 500,
+            first_at: new Date('2026-09-27T10:00:00Z'), last_at: new Date('2026-09-29T10:00:00Z'),
+        }];
+        expect(fx.categoryHabits(only, options).months).toEqual([]);
     });
 
     it('is empty for no rows', () => {
-        const result = fx.categoryHabits([], { anchorMonth: '2026-10', cycleEndOf });
-        expect(result.months).toEqual([]);
+        expect(fx.categoryHabits([], options).months).toEqual([]);
+    });
+
+    it('drops a thin cycle in the middle, for a user who came back', () => {
+        // Judging only the first cycle let four days of ₪600 count as a whole month.
+        const back = [
+            active(1, '2026-04', 6000),
+            { category_id: 1, mo: '2026-09', total: 600, first_at: '2026-09-27', last_at: '2026-09-30' },
+        ];
+        const { months, byCategory } = fx.categoryHabits(back, options);
+        expect(months).toEqual(['2026-04']);
+        expect(byCategory.get(1)).toBeCloseTo(6000, 6);
+    });
+
+    it('does not let a lone subscription row keep a silent cycle alive', () => {
+        const stopped = [
+            active(1, '2026-07', 6000), active(1, '2026-08', 6000),
+            { category_id: 1, mo: '2026-09', total: 40, first_at: '2026-09-12', last_at: '2026-09-12' },
+        ];
+        const { months, byCategory } = fx.categoryHabits(stopped, options);
+        expect(months).toEqual(['2026-07', '2026-08']);
+        expect(byCategory.get(1)).toBeCloseTo(6000, 6);
+    });
+
+    it('judges a cycle on variable rows, so rent alone does not make it active', () => {
+        const rentOnly = [
+            active(1, '2026-08', 6000), active(2, '2026-08', 4000),
+            { category_id: 2, mo: '2026-09', total: 4000, first_at: '2026-09-01', last_at: '2026-09-28' },
+        ];
+        const { months } = fx.categoryHabits(rentOnly, { ...options, isFixed: (id) => id === 2 });
+        expect(months).toEqual(['2026-08']);
+    });
+
+    it('judges activity across categories, not within one', () => {
+        const spread = [
+            { category_id: 1, mo: '2026-09', total: 300, first_at: '2026-09-01', last_at: '2026-09-02' },
+            { category_id: 2, mo: '2026-09', total: 300, first_at: '2026-09-27', last_at: '2026-09-28' },
+        ];
+        expect(fx.categoryHabits(spread, options).months).toEqual(['2026-09']);
+    });
+
+    it('scales a partial first cycle up to a whole one', () => {
+        // Joined 15 Sep at ₪200 a day: ₪3,200 over 16 days is really a ₪6,000 month.
+        const joined = [{ category_id: 1, mo: '2026-09', total: 3200, first_at: '2026-09-15', last_at: '2026-09-30' }];
+        expect(fx.categoryHabits(joined, options).byCategory.get(1)).toBeCloseTo(6000, 6);
+    });
+
+    it('never scales a fixed cost: the partial cycle still held one whole rent', () => {
+        const joined = [
+            { category_id: 1, mo: '2026-09', total: 3200, first_at: '2026-09-15', last_at: '2026-09-30' },
+            { category_id: 2, mo: '2026-09', total: 4000, first_at: '2026-09-16', last_at: '2026-09-16' },
+        ];
+        const { byCategory } = fx.categoryHabits(joined, { ...options, isFixed: (id) => id === 2 });
+        expect(byCategory.get(1)).toBeCloseTo(6000, 6);
+        expect(byCategory.get(2)).toBe(4000);
+    });
+
+    it('scales only the earliest cycle', () => {
+        const later = [
+            { category_id: 1, mo: '2026-08', total: 3100, first_at: '2026-08-01', last_at: '2026-08-31' },
+            { category_id: 1, mo: '2026-09', total: 1500, first_at: '2026-09-15', last_at: '2026-09-30' },
+        ];
+        const { byCategory } = fx.categoryHabits(later, options);
+        const expected = fx.decayedMean(
+            [{ month: '2026-08', total: 3100 }, { month: '2026-09', total: 1500 }], '2026-10');
+        expect(byCategory.get(1)).toBeCloseTo(expected, 6);
     });
 });
 

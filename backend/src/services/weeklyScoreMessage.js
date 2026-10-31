@@ -66,7 +66,7 @@ function formatWeeklyMessage({ score, weekStart, weekEnd, basis, topCategories =
 }
 
 function formatNoHistoryMessage() {
-    return '📊 *Your week*\nNot enough history yet. Your weekly summary starts after about two weeks of spending.';
+    return '📊 *Your week*\nNot enough history yet. Your weekly summary starts after your first full month here.';
 }
 
 module.exports = { escapeMarkdown, formatWeeklyMessage, formatNoHistoryMessage };

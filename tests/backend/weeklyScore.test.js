@@ -4,12 +4,11 @@ jest.mock('../../backend/src/utils/telegram', () => ({
 }));
 
 const db = require('./setup/dbMock');
-const { notifyUser } = require('../../backend/src/utils/telegram');
+const { sendTelegramMessage } = require('../../backend/src/utils/telegram');
 const {
     weekWindow,
     buildUserScore,
     runWeeklyScores,
-    MAX_SEND_ATTEMPTS,
 } = require('../../backend/src/services/weeklyScore');
 
 /**
@@ -32,9 +31,9 @@ const CATS = [
 ];
 // Three complete cycles of ₪9,000 variable spend and ₪4,000 rent.
 const HISTORY = ['2026-07', '2026-08', '2026-09'].flatMap((mo) => [
-    { category_id: 1, mo, total: '6000', first_at: `${mo}-01` },
-    { category_id: 2, mo, total: '3000', first_at: `${mo}-01` },
-    { category_id: 3, mo, total: '4000', first_at: `${mo}-01` },
+    { category_id: 1, mo, total: '6000', first_at: `${mo}-01`, last_at: `${mo}-28` },
+    { category_id: 2, mo, total: '3000', first_at: `${mo}-01`, last_at: `${mo}-28` },
+    { category_id: 3, mo, total: '4000', first_at: `${mo}-01`, last_at: `${mo}-01` },
 ]);
 
 function mockUserQueries({ buckets = HISTORY, budgets = [], week = [], pending = '0' } = {}) {
@@ -50,7 +49,7 @@ const window = weekWindow(SUNDAY_0830);
 
 beforeEach(() => {
     db.query.mockReset();
-    notifyUser.mockReset();
+    sendTelegramMessage.mockReset();
 });
 
 // ── When it runs, and over what ───────────────────────────────────────────────
@@ -202,7 +201,7 @@ describe('buildUserScore', () => {
 
 describe('buildUserScore - not enough history', () => {
     // A single five-day cycle: categoryHabits returns no months, so nothing has a habit.
-    const SHORT = [{ category_id: 1, mo: '2026-09', total: '500', first_at: '2026-09-27' }];
+    const SHORT = [{ category_id: 1, mo: '2026-09', total: '500', first_at: '2026-09-27', last_at: '2026-09-30' }];
 
     it('gives the no-history message with no budgets at all', async () => {
         mockUserQueries({ buckets: SHORT, week: [{ category_id: 1, name: 'Food', total: '300' }] });
@@ -263,6 +262,15 @@ describe('buildUserScore - not enough history', () => {
         expect(await buildUserScore(USER, window)).toContain('Your weekly target');
     });
 
+    it('promises the first full month, not two weeks', async () => {
+        mockUserQueries({ buckets: SHORT, week: [{ category_id: 1, name: 'Food', total: '300' }] });
+
+        const text = await buildUserScore(USER, window);
+
+        expect(text).toContain('first full month');
+        expect(text).not.toContain('two weeks');
+    });
+
     it('does not apply the coverage rule once there is real history', async () => {
         mockUserQueries({
             budgets: [{ category_id: 1, monthly_limit: '3000' }],
@@ -307,17 +315,17 @@ describe('runWeeklyScores', () => {
         await runWeeklyScores(new Date('2026-11-02T10:00:00Z'));
 
         expect(db.query).not.toHaveBeenCalled();
-        expect(notifyUser).not.toHaveBeenCalled();
+        expect(sendTelegramMessage).not.toHaveBeenCalled();
     });
 
     it('sends once and records the week', async () => {
         answerQueries({ users: [userRow(101)] });
-        notifyUser.mockResolvedValue(true);
+        sendTelegramMessage.mockResolvedValue();
 
         await runWeeklyScores(SUNDAY_0830);
 
-        expect(notifyUser).toHaveBeenCalledTimes(1);
-        expect(notifyUser.mock.calls[0][0]).toBe('101');
+        expect(sendTelegramMessage).toHaveBeenCalledTimes(1);
+        expect(sendTelegramMessage.mock.calls[0][0]).toBe('101');
         expect(markers()).toHaveLength(1);
         expect(markers()[0][1]).toEqual(['2026-10-25', 101]);
     });
@@ -332,54 +340,81 @@ describe('runWeeklyScores', () => {
         expect(sql).toMatch(/telegram_chat_id IS NOT NULL/i);
         expect(sql).toMatch(/weekly_score_sent_for IS NULL OR weekly_score_sent_for < \?/i);
         expect(params).toEqual(['2026-10-25']);
-        expect(notifyUser).not.toHaveBeenCalled();
+        expect(sendTelegramMessage).not.toHaveBeenCalled();
     });
 
-    it('leaves the marker unset after a failed send, so the next tick retries', async () => {
+    const failure = (status) => Object.assign(new Error('telegram'), { status });
+
+    it('keeps retrying through an outage, well past three ticks', async () => {
+        const errors = jest.spyOn(console, 'error').mockImplementation(() => {});
         answerQueries({ users: [userRow(102)] });
-        notifyUser.mockResolvedValue(false);
+        sendTelegramMessage.mockRejectedValue(new Error('getaddrinfo ENOTFOUND api.telegram.org'));
+
+        for (let i = 0; i < 6; i++) await runWeeklyScores(SUNDAY_0830);
+
+        expect(sendTelegramMessage).toHaveBeenCalledTimes(6);
+        expect(markers()).toHaveLength(0);
+        errors.mockRestore();
+    });
+
+    it.each([429, 500, 502])('retries a Telegram %i', async (status) => {
+        const errors = jest.spyOn(console, 'error').mockImplementation(() => {});
+        answerQueries({ users: [userRow(107)] });
+        sendTelegramMessage.mockRejectedValue(failure(status));
 
         await runWeeklyScores(SUNDAY_0830);
 
         expect(markers()).toHaveLength(0);
+        errors.mockRestore();
     });
 
-    it('gives up after three failures, rather than retrying a blocked chat all Sunday', async () => {
+    it('stops at once for a chat that blocked the bot', async () => {
         const errors = jest.spyOn(console, 'error').mockImplementation(() => {});
         answerQueries({ users: [userRow(103)] });
-        notifyUser.mockResolvedValue(false);
+        sendTelegramMessage.mockRejectedValue(failure(403));
 
-        for (let i = 0; i < MAX_SEND_ATTEMPTS; i++) await runWeeklyScores(SUNDAY_0830);
+        await runWeeklyScores(SUNDAY_0830);
 
-        expect(notifyUser).toHaveBeenCalledTimes(3);
+        expect(sendTelegramMessage).toHaveBeenCalledTimes(1);
         expect(markers()).toHaveLength(1);
         expect(errors).toHaveBeenCalled();
+        errors.mockRestore();
+    });
+
+    it('stops at once when Telegram rejects the message itself', async () => {
+        const errors = jest.spyOn(console, 'error').mockImplementation(() => {});
+        answerQueries({ users: [userRow(108)] });
+        sendTelegramMessage.mockRejectedValue(failure(400));
+
+        await runWeeklyScores(SUNDAY_0830);
+
+        expect(markers()).toHaveLength(1);
         errors.mockRestore();
     });
 
     it('one user failing does not stop the next', async () => {
         const errors = jest.spyOn(console, 'error').mockImplementation(() => {});
         answerQueries({ users: [userRow(104), userRow(105)], failFor: [104] });
-        notifyUser.mockResolvedValue(true);
+        sendTelegramMessage.mockResolvedValue();
 
         await runWeeklyScores(SUNDAY_0830);
 
-        expect(notifyUser).toHaveBeenCalledTimes(1);
-        expect(notifyUser.mock.calls[0][0]).toBe('105');
+        expect(sendTelegramMessage).toHaveBeenCalledTimes(1);
+        expect(sendTelegramMessage.mock.calls[0][0]).toBe('105');
         errors.mockRestore();
     });
 
     it('never overlaps itself when a tick runs long', async () => {
         answerQueries({ users: [userRow(106)] });
         let release;
-        notifyUser.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+        sendTelegramMessage.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
 
         const first = runWeeklyScores(SUNDAY_0830);
         await runWeeklyScores(SUNDAY_0830);
         await new Promise((resolve) => setImmediate(resolve));
-        release(true);
+        release();
         await first;
 
-        expect(notifyUser).toHaveBeenCalledTimes(1);
+        expect(sendTelegramMessage).toHaveBeenCalledTimes(1);
     });
 });

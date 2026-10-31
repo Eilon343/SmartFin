@@ -71,7 +71,8 @@ exports.getInsights = async (req, res) => {
                 `SELECT category_id,
                         DATE_FORMAT(DATE_SUB(created_at, INTERVAL ? DAY), '%Y-%m') AS mo,
                         COALESCE(SUM(amount), 0) AS total,
-                        MIN(created_at) AS first_at
+                        MIN(created_at) AS first_at,
+                        MAX(created_at) AS last_at
                  FROM expenses
                  WHERE user_id = ?
                    AND is_virtual = FALSE
@@ -97,7 +98,7 @@ exports.getInsights = async (req, res) => {
                 [shift, user_id, cycle.start, cycle.end]
             ),
             // Per-category, not a bare SUM. The momentum target is built category by
-            // category — budget where the user set one, 3-month habit where they did not —
+            // category — budget where the user set one, typical cycle where they did not —
             // so a total is no longer enough information. GROUP BY guards the case of two
             // budget rows for one category; `budget_total` stays the sum of them all.
             db.query(
@@ -155,9 +156,11 @@ exports.getInsights = async (req, res) => {
         // The typical cycle per category. `three_mo_avg` keeps its name because a cached PWA
         // shell can run older frontend code against this response; it is the decayed
         // 6-cycle habit now, not a 3-month average.
+        const fixedIds = new Set(categories.filter(c => c.is_fixed).map(c => c.category_id));
         const { byCategory: habits } = fx.categoryHabits(avgBuckets[0], {
             anchorMonth: month,
-            cycleEndOf: (key) => cy.resolveCycle(key, settings).end,
+            cycleOf: (key) => cy.resolveCycle(key, settings),
+            isFixed: (id) => fixedIds.has(id),
         });
 
         const by_category = categories.map(c => ({
@@ -238,7 +241,7 @@ exports.getInsights = async (req, res) => {
         const dow_weights = fx.dowWeights(dowTotals, fx.weekdayCounts(lookbackStart, cycle.start));
 
         // Momentum pacing target — every category contributes its budget if the user set
-        // one and its 3-month habit if they did not, so the target covers exactly the
+        // one and its typical cycle if they did not, so the target covers exactly the
         // categories the cumulative line sums. `by_category` is the right list to walk
         // because it already carries the Uncategorized row.
         const pacing = fx.pacingTarget(by_category.map(c => ({

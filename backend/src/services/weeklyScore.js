@@ -2,7 +2,7 @@ const db = require('../config/db');
 const fx = require('./forecastMath');
 const cy = require('./cycle');
 const { zonedParts, instantAtLocalHour } = require('../utils/zonedTime');
-const { notifyUser } = require('../utils/telegram');
+const { sendTelegramMessage } = require('../utils/telegram');
 const { formatWeeklyMessage, formatNoHistoryMessage } = require('./weeklyScoreMessage');
 
 /**
@@ -22,8 +22,12 @@ const SEND_HOUR = 8;
 const SEND_MINUTE = 30;
 const TICK_MS = 15 * 60 * 1000;
 
-/** A chat that blocked the bot fails forever; three tries is enough to rule out a blip. */
-const MAX_SEND_ATTEMPTS = 3;
+/**
+ * Telegram's answers that will never change: 403 is a chat that blocked the bot, 400 a chat
+ * that is gone or a message it refuses. Anything else is an outage, and an outage must not
+ * cost anyone their week, so those keep retrying on each tick until Sunday ends.
+ */
+const PERMANENT_FAILURES = [400, 403];
 
 /**
  * The week to report, or null when it is not yet time to send.
@@ -65,7 +69,8 @@ function fetchUserRows(user, window, cycle, lookbackStart, shift) {
             `SELECT category_id,
                     DATE_FORMAT(DATE_SUB(created_at, INTERVAL ? DAY), '%Y-%m') AS mo,
                     COALESCE(SUM(amount), 0) AS total,
-                    MIN(created_at) AS first_at
+                    MIN(created_at) AS first_at,
+                    MAX(created_at) AS last_at
              FROM expenses
              WHERE user_id = ?
                AND is_virtual = FALSE
@@ -127,9 +132,11 @@ async function buildUserScore(user, window) {
     const [[categories], [buckets], [budgetRows], [weekRowsRaw], [pendingRows]] =
         await fetchUserRows(user, window, cycle, lookbackStart, cy.anchorShiftDays(settings));
 
+    const fixedIds = new Set(categories.filter((c) => c.is_fixed).map((c) => c.category_id));
     const { byCategory: habits, months } = fx.categoryHabits(buckets, {
         anchorMonth: cycleKey,
-        cycleEndOf: (key) => cy.resolveCycle(key, settings).end,
+        cycleOf: (key) => cy.resolveCycle(key, settings),
+        isFixed: (id) => fixedIds.has(id),
     });
 
     const budgets = {};
@@ -170,22 +177,10 @@ async function buildUserScore(user, window) {
     });
 }
 
-const attempts = new Map(); // `${weekKey}:${user_id}` → failed sends this week
 let running = false;
 
 const markSent = (weekKey, userId) =>
     db.query('UPDATE users SET weekly_score_sent_for = ? WHERE user_id = ?', [weekKey, userId]);
-
-/** Counts a failed try; after the last one, stops retrying this user for this week. */
-async function recordFailure(window, user, reason) {
-    const key = `${window.weekKey}:${user.user_id}`;
-    const failed = (attempts.get(key) || 0) + 1;
-    attempts.set(key, failed);
-    if (failed < MAX_SEND_ATTEMPTS) return;
-    console.error(`Weekly score: giving up on user ${user.user_id} for ${window.weekKey}: ${reason}`);
-    attempts.delete(key);
-    await markSent(window.weekKey, user.user_id);
-}
 
 async function runWeeklyScores(now = new Date()) {
     const window = weekWindow(now);
@@ -203,14 +198,13 @@ async function runWeeklyScores(now = new Date()) {
             // One user's bad data must not cost everyone after them their summary.
             try {
                 const text = await buildUserScore(user, window);
-                if (await notifyUser(user.telegram_chat_id, text)) {
-                    await markSent(window.weekKey, user.user_id);
-                } else {
-                    await recordFailure(window, user, 'send failed');
-                }
+                await sendTelegramMessage(user.telegram_chat_id, text);
+                await markSent(window.weekKey, user.user_id);
             } catch (err) {
-                console.error(`Weekly score error for user ${user.user_id}:`, err);
-                await recordFailure(window, user, err.message).catch(() => {});
+                console.error(`Weekly score error for user ${user.user_id}:`, err.message);
+                if (PERMANENT_FAILURES.includes(err.status)) {
+                    await markSent(window.weekKey, user.user_id).catch(() => {});
+                }
             }
         }
     } finally {
@@ -224,4 +218,4 @@ function start() {
     }, TICK_MS).unref();
 }
 
-module.exports = { MAX_SEND_ATTEMPTS, weekWindow, buildUserScore, runWeeklyScores, start };
+module.exports = { weekWindow, buildUserScore, runWeeklyScores, start };
