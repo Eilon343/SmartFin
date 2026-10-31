@@ -999,3 +999,11 @@ describe('pacingTarget - budgeted_variable_categories', () => {
         expect(p.budgeted_variable_categories).toBe(1);
     });
 });
+
+// ── carryForward ─────────────────────────────────────────────────────────────────
+
+describe('carryForward', () => {
+    it('keeps an ordinary underspend', () => expect(fx.carryForward(1000, 0, 400)).toBe(600));
+    it('caps at one monthly limit', () => expect(fx.carryForward(1000, 600, 100)).toBe(1000));
+    it('never rolls a deficit forward', () => expect(fx.carryForward(1000, 0, 1500)).toBe(0));
+});

@@ -134,8 +134,7 @@ exports.getBudgets = async (req, res) => {
             if (b.carry_over) {
                 const months = monthsBetween(startMonth, month);
                 for (const m of months.slice(0, -1)) {
-                    const leftover = (limit + carry) - getSpent(b.category_id, m);
-                    carry = leftover > 0 ? leftover : 0;
+                    carry = fx.carryForward(limit, carry, getSpent(b.category_id, m));
                 }
             }
 

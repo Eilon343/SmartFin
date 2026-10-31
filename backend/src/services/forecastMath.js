@@ -576,6 +576,17 @@ function safeToSpendPerDay({
     return { per_day: headroom / daysLeft, headroom, days_left: daysLeft };
 }
 
+/**
+ * What a carry-over budget brings into the next cycle.
+ *
+ * Deficits do not roll forward, and the carry is capped at one monthly limit: uncapped, years
+ * of small underspends built a cushion that made the budget meaningless.
+ */
+function carryForward(limit, carry, spent) {
+    const leftover = (limit + carry) - spent;
+    return Math.max(0, Math.min(leftover, limit));
+}
+
 /** Round once, at the response boundary — never mid-formula. */
 const money = (n) => (n == null || !Number.isFinite(n) ? null : Math.round(n * 100) / 100);
 
@@ -602,5 +613,6 @@ module.exports = {
     projectVariableIncome,
     forecastRange,
     safeToSpendPerDay,
+    carryForward,
     money,
 };

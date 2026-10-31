@@ -272,7 +272,7 @@ Loads 7 endpoints in parallel via `Promise.allSettled` (partial failure degrades
 ```
 for each earlier month m:
     leftover = (limit + carry) − spent(m)
-    carry    = max(leftover, 0)          # deficits do NOT roll forward
+    carry    = clamp(leftover, 0, limit) # deficits do NOT roll forward; capped at one limit
 effective_limit = monthly_limit + carry
 remaining       = effective_limit − spent_this_month
 pct_used        = spent / effective_limit
