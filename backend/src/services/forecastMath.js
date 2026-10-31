@@ -80,6 +80,11 @@ const LOOKBACK_HALF_LIFE = 2;
 
 const DECAY = Math.pow(0.5, 1 / LOOKBACK_HALF_LIFE);
 
+/** A first cycle needs this many days of history to count as a cycle at all. */
+const MIN_CYCLE_HISTORY_DAYS = 14;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
 /** Number of whole months from `from` (YYYY-MM) forward to `to`. Both are strings. */
@@ -155,6 +160,53 @@ function decayedMean(rows, anchorMonth) {
         den += w;
     }
     return den > 0 ? num / den : 0;
+}
+
+/**
+ * The user's typical monthly spend in each category, from per-cycle category totals.
+ *
+ * `rows` is [{ category_id, mo: 'YYYY-MM', total, first_at? }] and `cycleEndOf(mo)` gives a
+ * cycle's exclusive end as 'YYYY-MM-DD'.
+ *
+ * The denominator is the cycles the USER was active, not the cycles a category was. A
+ * category that was silent in an active cycle spent ₪0 there, and counting that zero is what
+ * makes the categories add up: dividing ₪900 of clothes by its one month called it a ₪900
+ * habit, and the sum of those habits ran far above what the user actually spends. Because
+ * the same months and weights apply to every category, the habits sum exactly to
+ * `decayedMean` of the monthly totals.
+ *
+ * A first cycle with under MIN_CYCLE_HISTORY_DAYS of history is dropped: five days of
+ * logging is not a month, and counting it as one would set a far too low bar. `first_at` is
+ * the earliest expense in a row's bucket; a row without one makes no claim. An empty
+ * `months` means there is no usable history yet.
+ */
+function categoryHabits(rows, { anchorMonth, cycleEndOf }) {
+    const firstAt = (rows || []).reduce((min, r) => {
+        const t = r.first_at == null ? NaN : new Date(r.first_at).getTime();
+        return Number.isNaN(t) ? min : Math.min(min, t);
+    }, Infinity);
+
+    const historyDays = (mo) => (new Date(`${cycleEndOf(mo)}T00:00:00Z`).getTime() - firstAt) / MS_PER_DAY;
+    const months = [...new Set((rows || []).map(r => r.mo))]
+        .filter(mo => firstAt === Infinity || historyDays(mo) >= MIN_CYCLE_HISTORY_DAYS)
+        .sort();
+
+    const totals = new Map();
+    for (const r of rows || []) {
+        if (!months.includes(r.mo)) continue;
+        if (!totals.has(r.category_id)) totals.set(r.category_id, {});
+        const byMonth = totals.get(r.category_id);
+        byMonth[r.mo] = (byMonth[r.mo] || 0) + Number(r.total);
+    }
+
+    const byCategory = new Map();
+    for (const [categoryId, byMonth] of totals) {
+        byCategory.set(categoryId, decayedMean(
+            months.map(month => ({ month, total: byMonth[month] || 0 })),
+            anchorMonth
+        ));
+    }
+    return { byCategory, months };
 }
 
 /**
@@ -258,13 +310,12 @@ function idealPace(day, target, startDate, days, weights) {
  * The rule is one line, and it is uniform across every category on the page:
  *
  *     a category contributes its BUDGET if the user set one, and its HABIT
- *     (the 3-month average) if they did not.
+ *     (`three_mo_avg`, from `categoryHabits`) if they did not.
  *
  * That keeps the target like-for-like with the line without narrowing the line, and it
  * subsumes the old `three_mo_avg_total` fallback rather than special-casing it: a user
  * with no budgets has no budgeted categories, so the total collapses to exactly the sum
- * of the 3-month averages — the same number the fallback produced, now reached by the
- * general formula instead of a branch.
+ * of the habits — reached by the general formula instead of a branch.
  *
  * `categories` is [{ is_fixed, three_mo_avg, budget_limit }] where `budget_limit` is null
  * for an unbudgeted category. A limit of 0 is a real, deliberate budget of zero and is NOT
@@ -274,13 +325,14 @@ function idealPace(day, target, startDate, days, weights) {
  * see `momentumIdeal`.
  */
 function pacingTarget(categories = []) {
-    let budgeted = 0, habit = 0, fixed = 0, variable = 0, budgetedCount = 0;
+    let budgeted = 0, habit = 0, fixed = 0, variable = 0, budgetedCount = 0, budgetedVariable = 0;
     for (const c of categories || []) {
         const raw = c.budget_limit;
         const hasBudget = raw != null && Number.isFinite(Number(raw));
         const amount = hasBudget ? Number(raw) : (Number(c.three_mo_avg) || 0);
         if (hasBudget) { budgeted += amount; budgetedCount += 1; } else { habit += amount; }
         if (c.is_fixed) fixed += amount; else variable += amount;
+        if (hasBudget && !c.is_fixed) budgetedVariable += 1;
     }
     return {
         total: budgeted + habit,
@@ -289,6 +341,7 @@ function pacingTarget(categories = []) {
         fixed,
         variable,
         budgeted_categories: budgetedCount,
+        budgeted_variable_categories: budgetedVariable,
     };
 }
 
@@ -531,10 +584,12 @@ module.exports = {
     DOW_PRIOR_STRENGTH,
     LOOKBACK_MONTHS,
     LOOKBACK_HALF_LIFE,
+    MIN_CYCLE_HISTORY_DAYS,
     monthsBetween,
     pastMonths,
     weekdayCounts,
     decayedMean,
+    categoryHabits,
     monthlyStdDev,
     dowWeights,
     elapsedShare,

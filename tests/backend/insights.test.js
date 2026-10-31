@@ -123,7 +123,7 @@ describe('GET /api/insights - uncategorized spend', () => {
         expect(res.body.by_category.some((c) => c.category_id === null)).toBe(false);
     });
 
-    it('carries the uncategorized previous month and 3-month average too', async () => {
+    it('carries the uncategorized previous month and typical cycle too', async () => {
         mockInsights({
             current: [{ category_id: null, total: '100' }],
             previous: [{ category_id: null, total: '400' }],
@@ -137,14 +137,43 @@ describe('GET /api/insights - uncategorized spend', () => {
 
         const uncat = res.body.by_category.find((c) => c.category_id === null);
         expect(uncat.prev_spent).toBe(400);
-        expect(uncat.three_mo_avg).toBe(400); // 800 over the 2 months that have data
+        expect(uncat.three_mo_avg).toBe(417.16); // decayed: the newer ₪500 counts more than the ₪300
     });
 });
 
 // ── Averaging denominator ─────────────────────────────────────────────────────
 
 describe('GET /api/insights - per-category averages', () => {
-    it('divides by months_with_data, not by the window length', async () => {
+    it('divides a sparse category by the cycles the user was active', async () => {
+        // One clothes purchase is not a monthly clothes habit. Dividing by the category's
+        // own one month made the category figures sum far above what the user spends.
+        mockInsights({
+            categories: [
+                { category_id: 1, name: 'Clothing', is_fixed: 0 },
+                { category_id: 2, name: 'Groceries', is_fixed: 0 },
+            ],
+            lookback: [
+                { category_id: 1, mo: '2025-01', total: '900' },
+                { category_id: 2, mo: '2025-01', total: '500' },
+                { category_id: 2, mo: '2025-02', total: '500' },
+            ],
+        });
+
+        const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
+
+        const cat = res.body.by_category.find((c) => c.category_id === 1);
+        expect(cat.three_mo_avg).toBe(372.79);
+    });
+
+    it('reads six cycles of history, not three', async () => {
+        mockInsights();
+        await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
+
+        const call = db.query.mock.calls.find(([sql]) => /first_at/.test(sql));
+        expect(call[1]).toContain('2024-09-01');
+    });
+
+    it('divides by the cycles the user was active, not by the window length', async () => {
         mockInsights({
             lookback: [
                 { category_id: 1, mo: '2025-01', total: '900' },
@@ -337,9 +366,9 @@ describe('GET /api/insights - momentum pacing target', () => {
 
         const res = await request(app).get(`/api/insights?month=${MONTH}`).set(authHeader());
 
-        // 7,000 + the ₪400 uncategorized average, in the variable half.
-        expect(res.body.pacing_target.total).toBe(7400);
-        expect(res.body.pacing_target.variable).toBe(2600);
+        // 7,000 + a typical ₪128.15: ₪400 in one of the three active cycles, decayed.
+        expect(res.body.pacing_target.total).toBe(7128.15);
+        expect(res.body.pacing_target.variable).toBe(2328.15);
     });
 });
 

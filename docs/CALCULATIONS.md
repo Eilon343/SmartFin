@@ -296,9 +296,9 @@ Pure client-side sum of non-paused subscription amounts. This is a *catalogue* t
 
 ## 3. Insights page — `GET /api/insights?month=YYYY-MM`
 
-`insightsController.getInsights` returns per-category totals (current / previous month / 3-month average), a daily array, weekend-vs-weekday averages, `budget_total`, and the momentum chart's `pacing_target` + `ideal[]`.
+`insightsController.getInsights` returns per-category totals (current / previous month / typical cycle), a daily array, weekend-vs-weekday averages, `budget_total`, and the momentum chart's `pacing_target` + `ideal[]`.
 
-- **3-month average per category**: window is months `[m-3, m-2, m-1]`, and the denominator is again `months_with_data`, so a category that only existed for one of those months isn't averaged to a third of its real value.
+- **Typical cycle per category** (`three_mo_avg`, which keeps its API name so a cached PWA keeps working): the same 6-cycle decayed mean the P&L uses, from `fx.categoryHabits`. The denominator is the cycles the **user** was active, so a category that was silent in one of them counts ₪0 there and the categories sum exactly to the user's decayed total. A first cycle with under 14 days of history is dropped.
 - **`daily[]`** is indexed 1..`days_in_cycle`, day 1 being the anchor day. For the live cycle, days after today are `null` (not `0`) — this is what makes the momentum line stop at today instead of crashing to the floor.
 - **`budget_total`** = sum of **all** `budgets.monthly_limit` for the user (not filtered by category being in use). Reported for the budgets UI; it is **no longer** the pacing target.
 - **`ideal[]`** is indexed 1..`days_in_cycle` like `daily[]`, and is computed server-side. The frontend used to rebuild this curve from `dow_weights`; it now draws what it is given, so there is one implementation rather than two to keep in step.
@@ -337,8 +337,8 @@ back to `three_mo_avg_total` when budgets cover "most" spending needs a magic nu
 target jump discontinuously as the user crosses it.
 
 `three_mo_avg_total` is still the answer for a user with no budgets — but as a *consequence* of the
-rule rather than a separate path: with nothing budgeted, every category contributes its 3-month
-average and the sum is exactly `three_mo_avg_total`. `budget_total` is still reported, and is still
+rule rather than a separate path: with nothing budgeted, every category contributes its typical
+cycle and the sum is exactly `three_mo_avg_total`. `budget_total` is still reported, and is still
 the sum of every limit; it is no longer the target.
 
 **The two halves are paced on different clocks**, and this is what the fix to `dow_weights` left
@@ -374,14 +374,14 @@ The chart's subtitle names the target and what it is made of — "₪X from your
 typical spending in categories you haven't budgeted", or "no budgets set, so the target is your own
 typical monthly spending". `₪3,400 target` on its own was ambiguous even when the number was right.
 
-### Trend bars — this month vs 3-month average
+### Trend bars — this month vs typical month
 
 Per category: `delta = spent − three_mo_avg`, `deltaPct = delta / three_mo_avg` (or a flat +100% when there is no history but spend exists). Rows sort by `deltaPct` descending; bar width is `|deltaPct| / max|deltaPct|` scaled to half the track, drawn left (green, down) or right (rose, up) from a center axis. The bar is **relative**, not absolute — the widest bar is whichever category moved most, so a small category can dominate visually.
 
 ### Smart insight cards
 
-1. **Burn rate** — `daily_avg = total_spent / cycle_day`, then the day the 3-cycle average total would be reached: `cycle_day + ceil((avg_total − total_spent) / daily_avg)`, capped at cycle end.
-2. **Top category** — largest `spent`, with its percent delta vs its own 3-month average.
+1. **Burn rate** — `daily_avg = total_spent / cycle_day`, then the day the typical cycle's total would be reached: `cycle_day + ceil((avg_total − total_spent) / daily_avg)`, capped at cycle end.
+2. **Top category** — largest `spent`, with its percent delta vs its own typical cycle.
 3. **Weekend habit** — `(weekend_daily_avg − weekday_daily_avg) / weekday_daily_avg`. Weekend is **Friday + Saturday** (`getDay() === 5 || 6`), matching the Israeli week, and averages are per-day (sum ÷ number of days of that kind elapsed), not per-total.
    The card is **suppressed** unless at least 2 weekend days and 3 weekday days have elapsed and
    the weekday average is non-zero (`weekend_days_elapsed` / `weekday_days_elapsed` in the
@@ -425,7 +425,7 @@ Three things were wrong here and all three are fixed:
 - **Virtual expenses** (`is_virtual = TRUE`, savings transfers) are excluded from `getSummary`, `getBudgets`, the P&L expense buckets, **every query in `insightsController`**, and the bot's weekly score — and subtracted separately as `savings_allocation`. Moving money into a savings goal is not spending it; any new query over `expenses` needs this filter.
 - **Fixed vs variable** (`categories.is_fixed`) exists purely for forecasting: fixed costs are never run-rated to month-end.
 - **Rounding** is applied once at the response boundary (`Math.round(x * 100) / 100`), never mid-formula.
-- **Averaging denominators are always `months_with_data`**, never a hard-coded window length. This is consistent across P&L variable income, Insights category averages, and the bot's score.
+- **Averaging denominators are the months the user has data**, never a hard-coded window length. A category inside a user uses that same denominator, not its own count of non-zero months: a silent category spent ₪0 that cycle.
 - **Uncertainty is never fabricated.** Where a figure cannot be defended it is `null`, not zero and not a guess: `forecast_low`/`forecast_high` below two months of history, `safe_to_spend_per_day` on the last day of the month, the weekend card below its elapsed-day thresholds.
 - **Currency formatting** puts the sign before the symbol (`−₪221`) and wraps values in U+200E LTR marks so Hebrew RTL layout doesn't reorder them.
 

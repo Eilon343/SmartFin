@@ -924,3 +924,78 @@ describe('projectVariableExpenses - skewed day-of-week weights', () => {
         expect(p).toBe(5000);
     });
 });
+
+// ── categoryHabits: one baseline, the user's own denominator ─────────────────────
+
+describe('categoryHabits', () => {
+    const ends = { '2026-07': '2026-08-01', '2026-08': '2026-09-01', '2026-09': '2026-10-01' };
+    const cycleEndOf = (mo) => ends[mo];
+    const rows = [
+        { category_id: 1, mo: '2026-07', total: 2000 }, { category_id: 1, mo: '2026-08', total: 2000 },
+        { category_id: 1, mo: '2026-09', total: 2000 }, { category_id: 2, mo: '2026-07', total: 900 },
+    ];
+
+    it('counts a silent cycle as zero for a sparse category', () => {
+        const { byCategory, months } = fx.categoryHabits(rows, { anchorMonth: '2026-10', cycleEndOf });
+        expect(months).toHaveLength(3);
+        expect(byCategory.get(2)).toBeCloseTo(203.89, 2);
+    });
+
+    it('category habits sum to the decayed mean of the totals', () => {
+        const { byCategory } = fx.categoryHabits(rows, { anchorMonth: '2026-10', cycleEndOf });
+        const sum = [...byCategory.values()].reduce((a, b) => a + b, 0);
+        const totals = [
+            { month: '2026-07', total: 2900 }, { month: '2026-08', total: 2000 }, { month: '2026-09', total: 2000 },
+        ];
+        expect(sum).toBeCloseTo(fx.decayedMean(totals, '2026-10'), 8);
+    });
+
+    it('keeps the null key for uncategorized spend', () => {
+        const { byCategory } = fx.categoryHabits(
+            [{ category_id: null, mo: '2026-09', total: 400 }], { anchorMonth: '2026-10', cycleEndOf });
+        expect(byCategory.get(null)).toBe(400);
+    });
+
+    it('drops a first cycle with under 14 days of history', () => {
+        const short = [
+            { category_id: 1, mo: '2026-08', total: 500, first_at: '2026-08-27' },
+            { category_id: 1, mo: '2026-09', total: 6000, first_at: '2026-09-01' },
+        ];
+        const { months, byCategory } = fx.categoryHabits(short, { anchorMonth: '2026-10', cycleEndOf });
+        expect(months).toEqual(['2026-09']);
+        expect(byCategory.get(1)).toBe(6000);
+    });
+
+    it('keeps a first cycle with exactly 14 days of history', () => {
+        const edge = [{ category_id: 1, mo: '2026-08', total: 500, first_at: '2026-08-18' }];
+        expect(fx.categoryHabits(edge, { anchorMonth: '2026-10', cycleEndOf }).months).toEqual(['2026-08']);
+    });
+
+    it('returns no months when the only cycle is too short', () => {
+        const only = [{ category_id: 1, mo: '2026-09', total: 500, first_at: '2026-09-27' }];
+        const result = fx.categoryHabits(only, { anchorMonth: '2026-10', cycleEndOf });
+        expect(result.months).toEqual([]);
+        expect(result.byCategory.size).toBe(0);
+    });
+
+    it('accepts first_at as a Date, which is what mysql2 returns', () => {
+        const only = [{ category_id: 1, mo: '2026-09', total: 500, first_at: new Date('2026-09-27T10:00:00Z') }];
+        expect(fx.categoryHabits(only, { anchorMonth: '2026-10', cycleEndOf }).months).toEqual([]);
+    });
+
+    it('is empty for no rows', () => {
+        const result = fx.categoryHabits([], { anchorMonth: '2026-10', cycleEndOf });
+        expect(result.months).toEqual([]);
+    });
+});
+
+describe('pacingTarget - budgeted_variable_categories', () => {
+    it('counts only the variable budgets', () => {
+        const p = fx.pacingTarget([
+            { is_fixed: true, three_mo_avg: 0, budget_limit: 4000 },
+            { is_fixed: false, three_mo_avg: 0, budget_limit: 1000 },
+            { is_fixed: false, three_mo_avg: 300, budget_limit: null },
+        ]);
+        expect(p.budgeted_variable_categories).toBe(1);
+    });
+});
