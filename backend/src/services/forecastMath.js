@@ -577,6 +577,33 @@ function safeToSpendPerDay({
 }
 
 /**
+ * How a closed Sunday-to-Saturday week compares with a typical one.
+ *
+ * Measures everyday spending only, so `monthlyTarget` must be the variable target and
+ * `weekTotal` must exclude fixed categories: a rent charge lands in one week, so counting it
+ * graded the calendar rather than the user. Seven consecutive days hold every weekday
+ * once, so the expectation needs no day-of-week weighting, only the cycle's daily rate.
+ *
+ * The ratio is rounded to the precision the message prints, so a grade can never disagree
+ * with the percentage beside it. Null means there is no baseline to compare with.
+ */
+function weeklyScore({ weekTotal, monthlyTarget, cycleDays }) {
+    if (!(monthlyTarget > 0) || !(cycleDays > 0)) return null;
+    const expected = (monthlyTarget / cycleDays) * 7;
+    const ratio = Math.round((weekTotal / expected) * 100) / 100;
+
+    let state;
+    if (weekTotal < 0) state = 'refund';
+    else if (ratio <= 0.8) state = 'well_under';
+    else if (ratio < 1) state = 'under';
+    else if (ratio === 1) state = 'on_pace';
+    else if (ratio <= 1.2) state = 'over';
+    else state = 'well_over';
+
+    return { state, weekTotal, expected, ratio, delta: weekTotal - expected, pct: (ratio - 1) * 100 };
+}
+
+/**
  * What a carry-over budget brings into the next cycle.
  *
  * Deficits do not roll forward, and the carry is capped at one monthly limit: uncapped, years
@@ -613,6 +640,7 @@ module.exports = {
     projectVariableIncome,
     forecastRange,
     safeToSpendPerDay,
+    weeklyScore,
     carryForward,
     money,
 };
