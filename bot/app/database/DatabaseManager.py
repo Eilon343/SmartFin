@@ -48,25 +48,6 @@ class DatabaseManager:
                 row = await cur.fetchone()
                 return row[0] if row else None
 
-    async def get_notifiable_users(self) -> list[tuple[int, str]]:
-        """(user_id, telegram_chat_id) for every user reachable on Telegram.
-
-        Both values are needed: user_id keys the financial queries, telegram_chat_id is
-        where the message goes. They are only interchangeable for legacy bot-origin rows.
-        """
-        try:
-            pool = await self.get_pool()
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "SELECT user_id, telegram_chat_id FROM users "
-                        "WHERE telegram_chat_id IS NOT NULL"
-                    )
-                    return [(row[0], row[1]) for row in await cur.fetchall()]
-        except Exception as e:
-            logging.error(f"get_notifiable_users error: {e}")
-            return []
-
     async def redeem_link_code(self, code: str, chat_id: int) -> str:
         """Links this chat to the account that generated `code`.
 

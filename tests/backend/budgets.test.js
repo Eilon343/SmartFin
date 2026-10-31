@@ -41,6 +41,25 @@ describe('GET /api/budgets', () => {
         expect(budget.remaining).toBe(1050);
     });
 
+    it('caps carry-over at one monthly limit, however long the underspending', async () => {
+        authOk();
+        db.query
+            .mockResolvedValueOnce([[{
+                budget_id: 1, category_id: 3, category: 'Food',
+                monthly_limit: 1500, carry_over: 1, start_month: '2026-01',
+            }]])
+            .mockResolvedValueOnce([[]]) // nothing spent in any cycle
+            .mockResolvedValueOnce([[{ category_id: 3, category: 'Food' }]]);
+
+        const res = await request(app)
+            .get('/api/budgets?month=2026-04')
+            .set(authHeader());
+
+        const budget = res.body.budgets.find(b => b.category === 'Food');
+        expect(budget.carried_in).toBe(1500);
+        expect(budget.effective_limit).toBe(3000);
+    });
+
     it('returns empty budgets array when none set', async () => {
         mockBudgetsEmpty();
 

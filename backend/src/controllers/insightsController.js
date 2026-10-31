@@ -5,14 +5,14 @@ const cy = require('../services/cycle');
 // Returns deep analytics for a single CYCLE — used by the Insights page.
 // month=YYYY-MM names the cycle by the month it starts in (defaults to the current one).
 // Returns:
-//  - per-category totals (current, previous, 3-cycle avg)
+//  - per-category totals (current, previous, typical cycle)
 //  - daily totals for the requested cycle (1..days_in_cycle, indexed from the anchor day)
 //  - weekend vs weekday averages (computed from daily)
 //  - pacing_target + ideal[] for the momentum chart (see forecastMath.pacingTarget)
 //  - budget_total (sum of all category monthly_limits) — reported for the budgets UI
 //
 // The lookback key math below is untouched: a cycle is still identified by a 'YYYY-MM'
-// string, so "the three periods before this one" is the same arithmetic it always was.
+// string, so "the periods before this one" is the same arithmetic it always was.
 // Only the boundaries those keys resolve to have changed.
 exports.getInsights = async (req, res) => {
     const user_id = req.user.user_id;
@@ -34,20 +34,10 @@ exports.getInsights = async (req, res) => {
     const prevMonth = `${py}-${String(pm).padStart(2, '0')}`;
     const prevCycle = cy.resolveCycle(prevMonth, settings);
 
-    // 3-month avg window: months [m-3, m-2, m-1]
-    const lookback = [];
-    for (let i = 1; i <= 3; i++) {
-        let yy = y, mm = m - i;
-        while (mm <= 0) { mm += 12; yy--; }
-        lookback.push(`${yy}-${String(mm).padStart(2, '0')}`);
-    }
-    const avgWindowStart = cy.cycleStart(lookback[2], settings);
-
-    // The day-of-week shape gets the full lookback the forecast uses — 7 weights want
-    // more than 3 months to be anything but noise, and this window feeds no per-category
-    // figure, so widening it changes nothing else on the page.
-    const dowMonths = fx.pastMonths(month, fx.LOOKBACK_MONTHS);
-    const dowWindowStart = cy.cycleStart(dowMonths[dowMonths.length - 1], settings);
+    // Every history figure on the page uses the forecast's lookback, so Insights and the
+    // P&L agree on what a typical month is.
+    const lookback = fx.pastMonths(month, fx.LOOKBACK_MONTHS);
+    const lookbackStart = cy.cycleStart(lookback[lookback.length - 1], settings);
 
     try {
         const [catRows, curBuckets, prevBuckets, avgBuckets, dailyRows, budgetRows, dowRows, fixedDomRows] = await Promise.all([
@@ -80,14 +70,16 @@ exports.getInsights = async (req, res) => {
             db.query(
                 `SELECT category_id,
                         DATE_FORMAT(DATE_SUB(created_at, INTERVAL ? DAY), '%Y-%m') AS mo,
-                        COALESCE(SUM(amount), 0) AS total
+                        COALESCE(SUM(amount), 0) AS total,
+                        MIN(created_at) AS first_at,
+                        MAX(created_at) AS last_at
                  FROM expenses
                  WHERE user_id = ?
                    AND is_virtual = FALSE
                    AND created_at >= ?
                    AND created_at < ?
                  GROUP BY category_id, mo`,
-                [shift, user_id, avgWindowStart, cycle.start]
+                [shift, user_id, lookbackStart, cycle.start]
             ),
             db.query(
                 // Split by is_fixed: daily[] is every shekel that left (it draws the
@@ -106,7 +98,7 @@ exports.getInsights = async (req, res) => {
                 [shift, user_id, cycle.start, cycle.end]
             ),
             // Per-category, not a bare SUM. The momentum target is built category by
-            // category — budget where the user set one, 3-month habit where they did not —
+            // category — budget where the user set one, typical cycle where they did not —
             // so a total is no longer enough information. GROUP BY guards the case of two
             // budget rows for one category; `budget_total` stays the sum of them all.
             db.query(
@@ -132,7 +124,7 @@ exports.getInsights = async (req, res) => {
                    AND e.created_at >= ?
                    AND e.created_at < ?
                  GROUP BY dow`,
-                [user_id, dowWindowStart, cycle.start]
+                [user_id, lookbackStart, cycle.start]
             ),
             // Day-of-CYCLE shape of fixed spending, the other half of the ideal curve.
             // This is the exact complement of the query above: that one models habitual
@@ -153,7 +145,7 @@ exports.getInsights = async (req, res) => {
                    AND e.created_at >= ?
                    AND e.created_at < ?
                  GROUP BY dom`,
-                [shift, user_id, dowWindowStart, cycle.start]
+                [shift, user_id, lookbackStart, cycle.start]
             ),
         ]);
 
@@ -161,29 +153,24 @@ exports.getInsights = async (req, res) => {
         const curMap = Object.fromEntries(curBuckets[0].map(r => [r.category_id, Number(r.total)]));
         const prevMap = Object.fromEntries(prevBuckets[0].map(r => [r.category_id, Number(r.total)]));
 
-        // 3-month avg per category — denom = months_with_data so partial history isn't unfairly low
-        const avgAccum = {}; // {cat_id: { sum, monthsSet }}
-        for (const r of avgBuckets[0]) {
-            const cid = r.category_id;
-            if (!avgAccum[cid]) avgAccum[cid] = { sum: 0, months: new Set() };
-            avgAccum[cid].sum += Number(r.total);
-            avgAccum[cid].months.add(r.mo);
-        }
-
-        const by_category = categories.map(c => {
-            const a = avgAccum[c.category_id];
-            const months_with_data = a ? a.months.size : 0;
-            return {
-                category_id: c.category_id,
-                name: c.name,
-                is_fixed: !!c.is_fixed,
-                spent: Math.round((curMap[c.category_id] || 0) * 100) / 100,
-                prev_spent: Math.round((prevMap[c.category_id] || 0) * 100) / 100,
-                three_mo_avg: months_with_data > 0
-                    ? Math.round((a.sum / months_with_data) * 100) / 100
-                    : 0,
-            };
+        // The typical cycle per category. `three_mo_avg` keeps its name because a cached PWA
+        // shell can run older frontend code against this response; it is the decayed
+        // 6-cycle habit now, not a 3-month average.
+        const fixedIds = new Set(categories.filter(c => c.is_fixed).map(c => c.category_id));
+        const { byCategory: habits } = fx.categoryHabits(avgBuckets[0], {
+            anchorMonth: month,
+            cycleOf: (key) => cy.resolveCycle(key, settings),
+            isFixed: (id) => fixedIds.has(id),
         });
+
+        const by_category = categories.map(c => ({
+            category_id: c.category_id,
+            name: c.name,
+            is_fixed: !!c.is_fixed,
+            spent: Math.round((curMap[c.category_id] || 0) * 100) / 100,
+            prev_spent: Math.round((prevMap[c.category_id] || 0) * 100) / 100,
+            three_mo_avg: Math.round((habits.get(c.category_id) || 0) * 100) / 100,
+        }));
 
         // Uncategorized spend, the same way getBudgets surfaces it.
         //
@@ -193,16 +180,13 @@ exports.getInsights = async (req, res) => {
         // daily[] array below is grouped by DAY, not by category, so it always DID include
         // them — meaning one response contradicted itself, and the momentum line ran above
         // the total the burn-rate card was computed from.
-        const uncatAvg = avgAccum['null'] || avgAccum[null];
         const uncat = {
             category_id: null,
             name: 'Uncategorized',
             is_fixed: false,
             spent: Math.round((curMap['null'] || curMap[null] || 0) * 100) / 100,
             prev_spent: Math.round((prevMap['null'] || prevMap[null] || 0) * 100) / 100,
-            three_mo_avg: uncatAvg && uncatAvg.months.size > 0
-                ? Math.round((uncatAvg.sum / uncatAvg.months.size) * 100) / 100
-                : 0,
+            three_mo_avg: Math.round((habits.get(null) || 0) * 100) / 100,
         };
         if (uncat.spent > 0 || uncat.prev_spent > 0 || uncat.three_mo_avg > 0) by_category.push(uncat);
 
@@ -254,10 +238,10 @@ exports.getInsights = async (req, res) => {
             const i = Number(r.dow);
             if (i >= 0 && i <= 6) dowTotals[i] = Number(r.total);
         }
-        const dow_weights = fx.dowWeights(dowTotals, fx.weekdayCounts(dowWindowStart, cycle.start));
+        const dow_weights = fx.dowWeights(dowTotals, fx.weekdayCounts(lookbackStart, cycle.start));
 
         // Momentum pacing target — every category contributes its budget if the user set
-        // one and its 3-month habit if they did not, so the target covers exactly the
+        // one and its typical cycle if they did not, so the target covers exactly the
         // categories the cumulative line sums. `by_category` is the right list to walk
         // because it already carries the Uncategorized row.
         const pacing = fx.pacingTarget(by_category.map(c => ({

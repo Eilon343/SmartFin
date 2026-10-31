@@ -134,8 +134,7 @@ exports.getBudgets = async (req, res) => {
             if (b.carry_over) {
                 const months = monthsBetween(startMonth, month);
                 for (const m of months.slice(0, -1)) {
-                    const leftover = (limit + carry) - getSpent(b.category_id, m);
-                    carry = leftover > 0 ? leftover : 0;
+                    carry = fx.carryForward(limit, carry, getSpent(b.category_id, m));
                 }
             }
 
@@ -335,7 +334,7 @@ exports.togglePauseSubscription = async (req, res) => {
 //                        (floored at variable_actual — never forecast less than received)
 //   projected_expenses = fixed_sum + credibility-weighted projection of variable spend,
 //                        blending this month's pace with the user's own history by
-//                        w = d / (d + 7). Fixed costs are never run-rated.
+//                        w = d_eff / (d_eff + 10). Fixed costs are never run-rated.
 //   forecast_low/high  = ±1σ of the *unspent* part of the month, or null below 2 months
 //                        of history — never a fabricated interval.
 //   safe_to_spend      = what is left per remaining day after everything committed.

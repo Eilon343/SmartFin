@@ -60,8 +60,12 @@ def _make_db(
 
 
 def _gemini_text_response(text: str) -> MagicMock:
+    # A bare MagicMock invents a truthy prompt_feedback.block_reason, which reads as a
+    # safety block. A real response that was not blocked has neither set.
     r = MagicMock()
     r.text = text
+    r.prompt_feedback = None
+    r.candidates = []
     return r
 
 
@@ -258,13 +262,13 @@ class TestGetDynamicFinancialContext:
         mock_cur.__aenter__ = AsyncMock(return_value=mock_cur)
         mock_cur.__aexit__ = AsyncMock(return_value=False)
         # Query order: cycle settings fetchone, cat_query fetchall, total_query fetchone,
-        # budgets_query fetchall.
+        # budgets_query fetchall, then trend_query fetchall for timeframes longer than a cycle.
         #
         # The settings read comes first because the timeframes are financial CYCLES now,
         # not calendar months — "how much did I spend this month" has to mean the same
         # window the dashboard shows. (1, 1) is the default anchor/salary day, under which
         # a cycle is exactly the calendar month these tests were written against.
-        mock_cur.fetchall = AsyncMock(side_effect=[cat_rows, budget_rows or []])
+        mock_cur.fetchall = AsyncMock(side_effect=[cat_rows, budget_rows or [], []])
         mock_cur.fetchone = AsyncMock(side_effect=[(1, 1), (total_value,)])
 
         mock_conn = AsyncMock()

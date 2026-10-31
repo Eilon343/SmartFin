@@ -39,14 +39,13 @@ pytest tests/bot -v
 ### Math tests (Python)
 
 ```bash
-pytest tests/math/test_pnl_math.py -v
 ```
 
 ### Everything at once
 
 ```bash
 # From project root
-cd tests && npm test && cd .. && pytest tests/bot tests/math/test_pnl_math.py -v
+cd tests && npm test && cd .. && pytest tests/bot -v
 ```
 
 ---
@@ -67,7 +66,7 @@ cd tests && npm test && cd .. && pytest tests/bot tests/math/test_pnl_math.py -v
 | `bot/test_handlers.py` | Budget warning thresholds, FSM, day clamping |
 | `bot/test_database.py` | DB layer: add_expense, add_income, category lookup |
 | `bot/test_scheduler.py` | Spending score math, subscription due-date logic |
-| `math/test_pnl_math.py` | Pure formula correctness (Python) |
+| `math/weekly_score.test.js` | Weekly score and message, including Telegram Markdown safety |
 | `math/pnl_math.test.js` | Pure formula correctness (JS), end-to-end scenarios |
 
 ---

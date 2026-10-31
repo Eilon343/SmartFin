@@ -47,8 +47,9 @@
  * carry equal weight: at K = 10, ten days of observed spending is worth as much as
  * everything previous months say about you.
  *
- * K also bounds how much a single early purchase can move the forecast. The month's spend
- * enters the remainder as `S_d × (D − d)/(d + K)` — the `+ K` is what stops the leverage
+ * K also bounds how much a single early purchase can move the forecast. With ρ the share of
+ * the month still ahead, the month's spend enters the remainder as `S_d × ρD/((1 − ρ)D + K)`,
+ * which is `S_d × (D − d)/(d + K)` under flat weights — the `+ K` is what stops the leverage
  * exploding as d → 1, which is the whole failure mode of a raw run-rate. Tuned on the two
  * cases that matter and pull in opposite directions: one ₪400 purchase on day 1 against a
  * ₪3,000 habit (K=7 forecast ₪4,440, K=10 ₪4,130, K=14 ₪3,910) versus twenty days at
@@ -78,6 +79,11 @@ const LOOKBACK_MONTHS = 6;
 const LOOKBACK_HALF_LIFE = 2;
 
 const DECAY = Math.pow(0.5, 1 / LOOKBACK_HALF_LIFE);
+
+/** A cycle needs variable spending across this many days to count as a cycle at all. */
+const MIN_CYCLE_HISTORY_DAYS = 14;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
@@ -154,6 +160,78 @@ function decayedMean(rows, anchorMonth) {
         den += w;
     }
     return den > 0 ? num / den : 0;
+}
+
+/**
+ * The user's typical monthly spend in each category, from per-cycle category totals.
+ *
+ * `rows` is [{ category_id, mo: 'YYYY-MM', total, first_at?, last_at? }], where the two
+ * timestamps bound a bucket's expenses. `cycleOf(mo)` gives { end, days } with `end` an
+ * exclusive 'YYYY-MM-DD', and `isFixed(category_id)` says which categories are fixed costs.
+ *
+ * The denominator is the cycles the USER was active, not the cycles a category was. A
+ * category that was silent in an active cycle spent ₪0 there, and counting that zero is what
+ * makes the categories add up: dividing ₪900 of clothes by its one month called it a ₪900
+ * habit, and the sum of those habits ran far above what the user actually spends. Because
+ * the same months and weights apply to every category, the habits sum exactly to
+ * `decayedMean` of the monthly totals.
+ *
+ * A cycle only counts if its variable spending spans MIN_CYCLE_HISTORY_DAYS. Four days of
+ * logging after a long gap, or a lone generated subscription row, is not a month, and
+ * counting it as one sets a far too low bar. Rent is ignored here because it arrives whether
+ * or not the user is tracking anything. Rows with no timestamps make no claim. An empty
+ * `months` means there is no usable history yet.
+ *
+ * The earliest cycle is usually partial, since the user joined part-way through it, so its
+ * variable spending is scaled to a whole cycle: ₪3,200 over 16 days is a ₪6,000 month. Fixed
+ * costs are not, because a partial cycle still held one whole rent.
+ */
+function categoryHabits(rows, { anchorMonth, cycleOf, isFixed = () => false }) {
+    const all = rows || [];
+    const dated = new Set();
+    const spans = new Map(); // mo → { first, last } of its variable spending, in ms
+    for (const r of all) {
+        if (r.first_at == null) continue;
+        dated.add(r.mo);
+        if (isFixed(r.category_id)) continue;
+        const first = new Date(r.first_at).getTime();
+        const last = new Date(r.last_at == null ? r.first_at : r.last_at).getTime();
+        const span = spans.get(r.mo) || { first, last };
+        spans.set(r.mo, { first: Math.min(span.first, first), last: Math.max(span.last, last) });
+    }
+
+    const activeDays = (mo) => {
+        const span = spans.get(mo);
+        return span ? (span.last - span.first) / MS_PER_DAY + 1 : 0;
+    };
+    const months = [...new Set(all.map(r => r.mo))]
+        .filter(mo => !dated.has(mo) || activeDays(mo) >= MIN_CYCLE_HISTORY_DAYS)
+        .sort();
+
+    let firstCycleScale = 1;
+    if (spans.has(months[0])) {
+        const { end, days } = cycleOf(months[0]);
+        const heldDays = (new Date(`${end}T00:00:00Z`).getTime() - spans.get(months[0]).first) / MS_PER_DAY;
+        if (heldDays > 0 && heldDays < days) firstCycleScale = days / heldDays;
+    }
+
+    const totals = new Map();
+    for (const r of all) {
+        if (!months.includes(r.mo)) continue;
+        if (!totals.has(r.category_id)) totals.set(r.category_id, {});
+        const byMonth = totals.get(r.category_id);
+        const scale = r.mo === months[0] && !isFixed(r.category_id) ? firstCycleScale : 1;
+        byMonth[r.mo] = (byMonth[r.mo] || 0) + Number(r.total) * scale;
+    }
+
+    const byCategory = new Map();
+    for (const [categoryId, byMonth] of totals) {
+        byCategory.set(categoryId, decayedMean(
+            months.map(month => ({ month, total: byMonth[month] || 0 })),
+            anchorMonth
+        ));
+    }
+    return { byCategory, months };
 }
 
 /**
@@ -257,13 +335,12 @@ function idealPace(day, target, startDate, days, weights) {
  * The rule is one line, and it is uniform across every category on the page:
  *
  *     a category contributes its BUDGET if the user set one, and its HABIT
- *     (the 3-month average) if they did not.
+ *     (`three_mo_avg`, from `categoryHabits`) if they did not.
  *
  * That keeps the target like-for-like with the line without narrowing the line, and it
  * subsumes the old `three_mo_avg_total` fallback rather than special-casing it: a user
  * with no budgets has no budgeted categories, so the total collapses to exactly the sum
- * of the 3-month averages — the same number the fallback produced, now reached by the
- * general formula instead of a branch.
+ * of the habits — reached by the general formula instead of a branch.
  *
  * `categories` is [{ is_fixed, three_mo_avg, budget_limit }] where `budget_limit` is null
  * for an unbudgeted category. A limit of 0 is a real, deliberate budget of zero and is NOT
@@ -273,13 +350,14 @@ function idealPace(day, target, startDate, days, weights) {
  * see `momentumIdeal`.
  */
 function pacingTarget(categories = []) {
-    let budgeted = 0, habit = 0, fixed = 0, variable = 0, budgetedCount = 0;
+    let budgeted = 0, habit = 0, fixed = 0, variable = 0, budgetedCount = 0, budgetedVariable = 0;
     for (const c of categories || []) {
         const raw = c.budget_limit;
         const hasBudget = raw != null && Number.isFinite(Number(raw));
         const amount = hasBudget ? Number(raw) : (Number(c.three_mo_avg) || 0);
         if (hasBudget) { budgeted += amount; budgetedCount += 1; } else { habit += amount; }
         if (c.is_fixed) fixed += amount; else variable += amount;
+        if (hasBudget && !c.is_fixed) budgetedVariable += 1;
     }
     return {
         total: budgeted + habit,
@@ -288,6 +366,7 @@ function pacingTarget(categories = []) {
         fixed,
         variable,
         budgeted_categories: budgetedCount,
+        budgeted_variable_categories: budgetedVariable,
     };
 }
 
@@ -425,7 +504,10 @@ function projectVariableExpenses({
     const runRateRemaining = elapsed > 0 ? S * (remaining / elapsed) : 0;
     const histRemaining = (Number(historicalMean) || 0) * remaining;
 
-    const w = credibilityWeight(dayIndex, monthsWithData);
+    // Effective days, not calendar days. The run-rate above divides by the seasonal elapsed
+    // share, so the weight has to be measured in the same units or a quiet first day gets a
+    // huge multiplier with only a calendar day's damping. With flat weights this is `d`.
+    const w = credibilityWeight(elapsed * days, monthsWithData);
     return S + w * runRateRemaining + (1 - w) * histRemaining;
 }
 
@@ -519,6 +601,44 @@ function safeToSpendPerDay({
     return { per_day: headroom / daysLeft, headroom, days_left: daysLeft };
 }
 
+/**
+ * How a closed Sunday-to-Saturday week compares with a typical one.
+ *
+ * Measures everyday spending only, so `monthlyTarget` must be the variable target and
+ * `weekTotal` must exclude fixed categories: a rent charge lands in one week, so counting it
+ * graded the calendar rather than the user. Seven consecutive days hold every weekday
+ * once, so the expectation needs no day-of-week weighting, only the cycle's daily rate.
+ *
+ * The ratio is rounded to the precision the message prints, so a grade can never disagree
+ * with the percentage beside it. Null means there is no baseline to compare with.
+ */
+function weeklyScore({ weekTotal, monthlyTarget, cycleDays }) {
+    if (!(monthlyTarget > 0) || !(cycleDays > 0)) return null;
+    const expected = (monthlyTarget / cycleDays) * 7;
+    const ratio = Math.round((weekTotal / expected) * 100) / 100;
+
+    let state;
+    if (weekTotal < 0) state = 'refund';
+    else if (ratio <= 0.8) state = 'well_under';
+    else if (ratio < 1) state = 'under';
+    else if (ratio === 1) state = 'on_pace';
+    else if (ratio <= 1.2) state = 'over';
+    else state = 'well_over';
+
+    return { state, weekTotal, expected, ratio, delta: weekTotal - expected, pct: (ratio - 1) * 100 };
+}
+
+/**
+ * What a carry-over budget brings into the next cycle.
+ *
+ * Deficits do not roll forward, and the carry is capped at one monthly limit: uncapped, years
+ * of small underspends built a cushion that made the budget meaningless.
+ */
+function carryForward(limit, carry, spent) {
+    const leftover = (limit + carry) - spent;
+    return Math.max(0, Math.min(leftover, limit));
+}
+
 /** Round once, at the response boundary — never mid-formula. */
 const money = (n) => (n == null || !Number.isFinite(n) ? null : Math.round(n * 100) / 100);
 
@@ -527,10 +647,12 @@ module.exports = {
     DOW_PRIOR_STRENGTH,
     LOOKBACK_MONTHS,
     LOOKBACK_HALF_LIFE,
+    MIN_CYCLE_HISTORY_DAYS,
     monthsBetween,
     pastMonths,
     weekdayCounts,
     decayedMean,
+    categoryHabits,
     monthlyStdDev,
     dowWeights,
     elapsedShare,
@@ -543,5 +665,7 @@ module.exports = {
     projectVariableIncome,
     forecastRange,
     safeToSpendPerDay,
+    weeklyScore,
+    carryForward,
     money,
 };

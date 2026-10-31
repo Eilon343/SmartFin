@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
     -- Defaulting both to 1 makes a cycle exactly a calendar month.
     cycle_anchor_day  TINYINT UNSIGNED NOT NULL DEFAULT 1,
     salary_day        TINYINT UNSIGNED NOT NULL DEFAULT 1,
+    -- First day of the week the weekly summary was last sent for (migration 014). The job
+    -- ticks all Sunday, so this is what stops a restart sending the same week twice.
+    weekly_score_sent_for DATE NULL,
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_users_cycle_anchor_day CHECK (cycle_anchor_day BETWEEN 1 AND 28),
     CONSTRAINT chk_users_salary_day       CHECK (salary_day       BETWEEN 1 AND 28)

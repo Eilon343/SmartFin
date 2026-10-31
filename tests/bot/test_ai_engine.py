@@ -7,15 +7,23 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
-from app.ai.ai_engine import parse_input, _build_prompt
+from app.ai.ai_engine import AIEngineError, parse_input, _build_prompt
 
 CATEGORIES = ["Food", "Transport", "Housing", "Entertainment", "Shopping", "Utilities", "Health", "Other"]
 
 
-def _mock_response(payload: dict) -> MagicMock:
+def _text_response(text: str) -> MagicMock:
+    # A bare MagicMock invents a truthy prompt_feedback.block_reason, which reads as a
+    # safety block. A real response that was not blocked has neither set.
     r = MagicMock()
-    r.text = json.dumps(payload)
+    r.text = text
+    r.prompt_feedback = None
+    r.candidates = []
     return r
+
+
+def _mock_response(payload: dict) -> MagicMock:
+    return _text_response(json.dumps(payload))
 
 
 # ── Prompt content ────────────────────────────────────────────────────────────
@@ -55,7 +63,7 @@ class TestParseInputIntents:
         payload = {"intent": "log_expense", "amount": 55.0, "currency": "ILS", "item": "shawarma", "category": "Food", "source": "bot"}
         with patch("app.ai.ai_engine._get_client") as mock:
             mock.return_value.models.generate_content.return_value = _mock_response(payload)
-            result = await parse_input("55 shekel shawarma", CATEGORIES)
+            [result] = await parse_input("55 shekel shawarma", CATEGORIES)
         assert result["intent"] == "log_expense"
         assert result["amount"] == 55.0
         assert result["category"] == "Food"
@@ -65,7 +73,7 @@ class TestParseInputIntents:
         payload = {"intent": "log_expense", "amount": 30.0, "currency": "ILS", "item": "coffee", "category": "Food", "source": "bot"}
         with patch("app.ai.ai_engine._get_client") as mock:
             mock.return_value.models.generate_content.return_value = _mock_response(payload)
-            result = await parse_input("30 שקל קפה", CATEGORIES)
+            [result] = await parse_input("30 שקל קפה", CATEGORIES)
         assert result["intent"] == "log_expense"
         assert result["amount"] == 30.0
 
@@ -75,7 +83,7 @@ class TestParseInputIntents:
         payload = {"intent": "log_income", "amount": 800.0, "currency": "ILS", "source": "Table sale", "income_type": "variable"}
         with patch("app.ai.ai_engine._get_client") as mock:
             mock.return_value.models.generate_content.return_value = _mock_response(payload)
-            result = await parse_input("הכנסתי 800 שקל במכירת שולחן", CATEGORIES)
+            [result] = await parse_input("הכנסתי 800 שקל במכירת שולחן", CATEGORIES)
         assert result["intent"] == "log_income"
         assert result["amount"] == 800.0
         assert result["income_type"] == "variable"
@@ -85,7 +93,7 @@ class TestParseInputIntents:
         payload = {"intent": "log_income", "amount": 15000.0, "currency": "ILS", "source": "Salary", "income_type": "fixed"}
         with patch("app.ai.ai_engine._get_client") as mock:
             mock.return_value.models.generate_content.return_value = _mock_response(payload)
-            result = await parse_input("got salary 15000", CATEGORIES)
+            [result] = await parse_input("got salary 15000", CATEGORIES)
         assert result["intent"] == "log_income"
         assert result["income_type"] == "fixed"
 
@@ -94,7 +102,7 @@ class TestParseInputIntents:
         payload = {"intent": "log_subscription", "amount": 39.90, "currency": "ILS", "name": "Netflix", "category": "Entertainment", "day": 15}
         with patch("app.ai.ai_engine._get_client") as mock:
             mock.return_value.models.generate_content.return_value = _mock_response(payload)
-            result = await parse_input("add Netflix 39.90 monthly on the 15th", CATEGORIES)
+            [result] = await parse_input("add Netflix 39.90 monthly on the 15th", CATEGORIES)
         assert result["intent"] == "log_subscription"
         assert result["day"] == 15
 
@@ -103,7 +111,7 @@ class TestParseInputIntents:
         payload = {"intent": "ERROR_UNSUPPORTED"}
         with patch("app.ai.ai_engine._get_client") as mock:
             mock.return_value.models.generate_content.return_value = _mock_response(payload)
-            result = await parse_input("what is the weather today?", CATEGORIES)
+            [result] = await parse_input("what is the weather today?", CATEGORIES)
         assert result["intent"] == "ERROR_UNSUPPORTED"
 
     @pytest.mark.asyncio
@@ -120,7 +128,7 @@ class TestParseInputIntents:
         payload = {"intent": "log_expense", "amount": 120.0, "currency": "ILS", "item": "Supermarket", "category": "Shopping", "source": "bot"}
         with patch("app.ai.ai_engine._get_client") as mock:
             mock.return_value.models.generate_content.return_value = _mock_response(payload)
-            result = await parse_input("Apple Pay transaction: 120 ILS at Supermarket", CATEGORIES)
+            [result] = await parse_input("Apple Pay transaction: 120 ILS at Supermarket", CATEGORIES)
         assert result["intent"] == "log_expense"
         assert result["source"] == "bot"
 
@@ -143,7 +151,7 @@ class TestRetryLogic:
         with patch("app.ai.ai_engine._get_client") as mock_client, \
              patch("asyncio.sleep", new_callable=AsyncMock):
             mock_client.return_value.models.generate_content.side_effect = side_effect
-            result = await parse_input("coffee 55", CATEGORIES)
+            [result] = await parse_input("coffee 55", CATEGORIES)
 
         assert call_count == 3
         assert result["intent"] == "log_expense"
@@ -157,15 +165,34 @@ class TestRetryLogic:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise Exception("429 RESOURCE_EXHAUSTED - quota exceeded")
+                raise Exception("429 Too Many Requests")
             return good_response
 
         with patch("app.ai.ai_engine._get_client") as mock_client, \
              patch("asyncio.sleep", new_callable=AsyncMock):
             mock_client.return_value.models.generate_content.side_effect = side_effect
-            result = await parse_input("hello", CATEGORIES)
+            await parse_input("hello", CATEGORIES)
 
         assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_exhausted_quota_is_not_retried(self):
+        """An exhausted quota will not recover within the backoff, so it fails at once."""
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise Exception("429 RESOURCE_EXHAUSTED - quota exceeded")
+
+        with patch("app.ai.ai_engine._get_client") as mock_client, \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            mock_client.return_value.models.generate_content.side_effect = side_effect
+            with pytest.raises(AIEngineError) as exc:
+                await parse_input("hello", CATEGORIES)
+
+        assert exc.value.category == "quota"
+        assert call_count == 1
 
     @pytest.mark.asyncio
     async def test_raises_after_3_failed_attempts(self):
@@ -180,7 +207,7 @@ class TestRetryLogic:
 
     @pytest.mark.asyncio
     async def test_non_retryable_error_raises_immediately(self):
-        """JSON decode error should not retry — it's a prompt/logic bug not transient."""
+        """An unrecognised error is not transient, so it surfaces as 'unknown' without retrying."""
         call_count = 0
 
         def side_effect(*args, **kwargs):
@@ -190,9 +217,11 @@ class TestRetryLogic:
 
         with patch("app.ai.ai_engine._get_client") as mock_client:
             mock_client.return_value.models.generate_content.side_effect = side_effect
-            with pytest.raises(ValueError):
+            with pytest.raises(AIEngineError) as exc:
                 await parse_input("coffee", CATEGORIES)
 
+        assert exc.value.category == "unknown"
+        assert isinstance(exc.value.original, ValueError)
         assert call_count == 1  # no retry for non-503/429 errors
 
     @pytest.mark.asyncio
@@ -219,18 +248,28 @@ class TestRetryLogic:
 
 class TestJsonParsing:
     @pytest.mark.asyncio
+    async def test_returns_every_item_in_a_multi_item_message(self):
+        items = [
+            {"intent": "log_expense", "amount": 7.0, "currency": "ILS", "item": "coffee", "category": "Food", "source": "bot"},
+            {"intent": "log_expense", "amount": 5.0, "currency": "ILS", "item": "bus", "category": "Transport", "source": "bot"},
+        ]
+        with patch("app.ai.ai_engine._get_client") as mock:
+            mock.return_value.models.generate_content.return_value = _text_response(json.dumps(items))
+            result = await parse_input("7 coffee and 5 bus", CATEGORIES)
+        assert [r["item"] for r in result] == ["coffee", "bus"]
+
+    @pytest.mark.asyncio
     async def test_null_fields_allowed(self):
         payload = {"intent": "log_expense", "amount": 55.0, "currency": "ILS", "item": None, "category": None, "source": "bot"}
         with patch("app.ai.ai_engine._get_client") as mock:
             mock.return_value.models.generate_content.return_value = _mock_response(payload)
-            result = await parse_input("55 something", CATEGORIES)
+            [result] = await parse_input("55 something", CATEGORIES)
         assert result["item"] is None
 
     @pytest.mark.asyncio
     async def test_raises_on_invalid_json_response(self):
-        bad = MagicMock()
-        bad.text = "not json at all"
         with patch("app.ai.ai_engine._get_client") as mock:
-            mock.return_value.models.generate_content.return_value = bad
-            with pytest.raises(Exception):
+            mock.return_value.models.generate_content.return_value = _text_response("not json at all")
+            with pytest.raises(AIEngineError) as exc:
                 await parse_input("test", CATEGORIES)
+        assert exc.value.category == "parse"
