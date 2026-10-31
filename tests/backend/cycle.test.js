@@ -121,6 +121,14 @@ describe('chargeDateInCycle', () => {
         expect(cy.chargeDateInCycle(c, 3) > cy.chargeDateInCycle(c, 12)).toBe(true);
     });
 
+    it('on Oct 25 with anchor 10, the 5th is still ahead and the 15th has passed', () => {
+        const oct = cy.resolveCycle('2026-10', ISRAELI); // Oct 10 - Nov 9
+        expect(cy.chargeDateInCycle(oct, 5)).toBe('2026-11-05');
+        expect(cy.chargeDateInCycle(oct, 15)).toBe('2026-10-15');
+        expect(cy.chargeDateInCycle(oct, 5) > '2026-10-25').toBe(true);
+        expect(cy.chargeDateInCycle(oct, 15) > '2026-10-25').toBe(false);
+    });
+
     it('clamps a billing day past the end of its month, as a real direct debit does', () => {
         const feb = cy.resolveCycle('2026-01', ISRAELI); // Jan 10 - Feb 9
         expect(cy.chargeDateInCycle(feb, 31)).toBe('2026-01-31');

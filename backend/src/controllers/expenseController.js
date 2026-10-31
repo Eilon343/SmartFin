@@ -335,7 +335,7 @@ exports.togglePauseSubscription = async (req, res) => {
 //                        (floored at variable_actual — never forecast less than received)
 //   projected_expenses = fixed_sum + credibility-weighted projection of variable spend,
 //                        blending this month's pace with the user's own history by
-//                        w = d / (d + 7). Fixed costs are never run-rated.
+//                        w = d_eff / (d_eff + 10). Fixed costs are never run-rated.
 //   forecast_low/high  = ±1σ of the *unspent* part of the month, or null below 2 months
 //                        of history — never a fabricated interval.
 //   safe_to_spend      = what is left per remaining day after everything committed.

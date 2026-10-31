@@ -318,6 +318,10 @@ describe('GET /api/pnl - forecasted income', () => {
 // ── forecast range and safe-to-spend ──────────────────────────────────────────
 
 describe('GET /api/pnl - forecast range', () => {
+    // Not optional: on the last day of a cycle `remaining` is 0, so the band collapses.
+    beforeEach(freezeMidCycle);
+    afterEach(() => jest.useRealTimers());
+
     it('is null below two months of history rather than a fabricated interval', async () => {
         mockPnL({ expenses: '1000', incomeHistory: history(1, 900), expenseHistory: history(1, 500) });
 
@@ -357,8 +361,12 @@ describe('GET /api/pnl - forecast range', () => {
 });
 
 describe('GET /api/pnl - safe to spend', () => {
+    beforeEach(freezeMidCycle);
+    afterEach(() => jest.useRealTimers());
+
     it('is what is left per remaining day after everything committed', async () => {
-        mockPnL({ fixedIncome: '10000', expenses: '2000', subscriptions: '300', savings: '500' });
+        // Billing day 28 is still ahead of the frozen 15th, so the ₪300 is committed.
+        mockPnL({ fixedIncome: '10000', expenses: '2000', subscriptions: '300', subscriptionDay: 28, savings: '500' });
 
         const res = await request(app).get('/api/pnl').set(authHeader());
 
@@ -390,6 +398,9 @@ describe('GET /api/pnl - safe to spend', () => {
 // ── projected_expenses scaling ─────────────────────────────────────────────────
 
 describe('GET /api/pnl - projected_expenses only scales current month', () => {
+    beforeEach(freezeMidCycle);
+    afterEach(() => jest.useRealTimers());
+
     it('past month query returns actual expenses unchanged', async () => {
         // When querying a past month, projected_expenses === total_expenses
         mockPnL({ expenses: '1500' });

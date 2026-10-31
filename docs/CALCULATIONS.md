@@ -171,7 +171,7 @@ Properties, each pinned by a test in `tests/math/pnl_math.test.js`:
 `subscription_total` counts only subscriptions whose charge is **still ahead**:
 
 - future month → all of them
-- current month → only those with `day_of_month > DAY(CURDATE())`
+- current cycle → only those whose `chargeDateInCycle()` date is after today
 - past month → **0**
 
 Rationale: once the billing day passes, bank/card sync has already imported the real charge into `expenses`, and that charge is inside `projected_expenses`. Counting the subscription too subtracted the same money twice. Because it is forward-looking, it is **never pro-rated** by the MTD clamp, and it belongs only to `forecasted_net_pnl`.
