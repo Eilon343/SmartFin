@@ -8,6 +8,7 @@ const expenseRoutes = require('./routes/expenseRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const bankConnectionRoutes = require('./routes/bankConnectionRoutes');
 const pushRoutes = require('./routes/pushRoutes');
+const agentRoutes = require('./routes/agentRoutes');
 const { startQueueProcessor } = require('./controllers/webhookController');
 const bankSyncScheduler = require('./services/bankSyncScheduler');
 const weeklyScore = require('./services/weeklyScore');
@@ -62,6 +63,7 @@ app.use('/api/auth', authLimiter);
 app.use('/api', apiLimiter);
 app.use('/webhook', webhookLimiter);
 
+app.use('/api/agent', agentRoutes);
 app.use('/api', authRoutes);
 app.use('/api', expenseRoutes);
 app.use('/api', bankConnectionRoutes);
