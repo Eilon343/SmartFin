@@ -83,6 +83,25 @@ services:
       - smartfin-network
     mem_limit: 64m
 
+  # Public tunnel for the external AI agent. Off by default; start it with
+  #   docker compose --profile agent up -d
+  # It forwards only to nginx's internal :8081 block, which serves /api/agent/* and nothing
+  # else. In the Cloudflare dashboard, point the tunnel's public hostname at
+  # http://frontend:8081. See docs/AGENT_API.md.
+  cloudflared:
+    image: cloudflare/cloudflared:2025.10.0
+    container_name: smartfin_cloudflared
+    restart: unless-stopped
+    profiles: ["agent"]
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - frontend
+    networks:
+      - smartfin-network
+    mem_limit: 64m
+
 networks:
   smartfin-network:
     driver: bridge

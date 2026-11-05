@@ -3,6 +3,7 @@ const express = require('express');
 
 const app = express();
 app.use(express.json());
+app.use('/api/agent', require('../../../backend/src/routes/agentRoutes'));
 app.use('/api', require('../../../backend/src/routes/authRoutes'));
 app.use('/api', require('../../../backend/src/routes/expenseRoutes'));
 app.use('/api', require('../../../backend/src/routes/bankConnectionRoutes'));

@@ -111,6 +111,14 @@ September's income.
   to the old calendar-month behaviour. That identity is the load-bearing regression test.
 - `docs/CALCULATIONS.md` §0 is the full write-up.
 
+### Agent API (`/api/agent/*`) — read-only, public via Cloudflare Tunnel
+`routes/agentRoutes.js` + `controllers/agentController.js`, authenticated by `middleware/agentAuth.js`
+against `agent_api_keys` (SHA-256 only; keys made by `backend/scripts/createAgentKey.js`). The
+controller calls getPnL/getBudgets/getInsights in-process so numbers match the dashboard.
+**Hard rule: the agent must never read or learn of bank data** — no `bank_*` table, no
+`SELECT *`, no `source` field. `tests/backend/agent.test.js` enforces it. nginx `:8081` serves
+only these two paths and is the only thing the tunnel reaches. See `docs/AGENT_API.md`.
+
 ### Two separate Gemini parsers — keep aware of both
 - `bot/app/ai/ai_engine.py` — multi-intent (`log_expense` / `log_income` / `log_subscription` / `ERROR_UNSUPPORTED`), returns a JSON array.
 - `backend/src/controllers/webhookController.js` `buildPrompt()` — expense-only, Telegram-webhook path.

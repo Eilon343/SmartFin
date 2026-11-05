@@ -226,6 +226,19 @@ CREATE TABLE IF NOT EXISTS bank_transactions_raw (
     CONSTRAINT fk_btr_income  FOREIGN KEY (income_id)  REFERENCES income(income_id)   ON DELETE SET NULL
 );
 
+-- Read-only keys for an external AI agent (/api/agent/*). See migrate_015.
+CREATE TABLE IF NOT EXISTS agent_api_keys (
+    key_id       INT PRIMARY KEY AUTO_INCREMENT,
+    user_id      BIGINT NOT NULL,
+    key_hash     CHAR(64) NOT NULL,
+    label        VARCHAR(100),
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP NULL,
+    revoked_at   TIMESTAMP NULL,
+    UNIQUE KEY uq_agent_key_hash (key_hash),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 -- Base categories (user_id NULL = shared across all users)
 -- is_fixed=TRUE for categories that recur as flat monthly costs (not run-rated in forecast)
 INSERT INTO categories (user_id, name, is_base, is_fixed)
