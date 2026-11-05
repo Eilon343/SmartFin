@@ -14,44 +14,43 @@ allowlists, and `tests/backend/agent.test.js` fails if a query or response break
 Other boundaries:
 - The agent key works **only** on `/api/agent/*`. The dashboard JWT is not accepted there,
   and the agent key is not accepted anywhere else.
-- Only nginx's internal `:8081` block is reachable through the tunnel, and it serves
-  nothing but these two paths. The dashboard, all other `/api` routes and the webhook stay
-  on Tailscale only.
+- Only nginx's `:8081` block is public (Tailscale Funnel on port 8443), and it serves
+  nothing but these two paths. Compose binds 8081 to 127.0.0.1. The dashboard on 443, all
+  other `/api` routes and the webhook stay private to the tailnet.
+- Funnel runs on **8443, never 443**: Funnel exposes a whole port, and 443 is the dashboard.
 - Rate limit: 30 requests per minute per key.
 
 ## Setup (on the Mac Mini)
 
-1. Run the migration:
+The deploy workflow applies `migrate_015` and rebuilds the stack, so after merging to
+master only these one-time steps remain:
+
+1. Allow Funnel for the Mac Mini in the Tailscale admin console (ACL policy → `nodeAttrs`
+   with `"attr": ["funnel"]`). The first `tailscale funnel` run prints a link that enables it.
+2. Publish the agent port, once (`--bg` persists across reboots):
    ```bash
-   docker compose exec -T db mysql -uroot -p"$MYSQL_ROOT_PASSWORD" smartfin < db/migrate_015_agent_api_keys.sql
-   ```
-2. Rebuild the backend and frontend (nginx):
-   ```bash
-   docker compose up -d --build backend frontend
+   tailscale funnel --bg --https=8443 http://127.0.0.1:8081
+   tailscale funnel status
    ```
 3. Create a key for your account (printed once; only its hash is stored):
    ```bash
-   docker compose exec backend node scripts/createAgentKey.js create you@example.com instinct
+   docker exec smartfin_backend node scripts/createAgentKey.js create you@example.com instinct
    ```
    `list <email>` shows keys; `revoke <key_id>` disables one immediately.
-4. Cloudflare Tunnel: in Cloudflare Zero Trust → Networks → Tunnels, create a tunnel, add a
-   public hostname (e.g. `smartfin-agent.yourdomain.com`) with service
-   `http://frontend:8081`, and copy the tunnel token into `.env`:
-   ```
-   CLOUDFLARE_TUNNEL_TOKEN=...
-   ```
-   Then start it:
+4. Check from outside the tailnet (e.g. a phone on mobile data):
    ```bash
-   docker compose --profile agent up -d cloudflared
-   ```
-5. Check from outside:
-   ```bash
-   curl -H "Authorization: Bearer sfa_..." https://smartfin-agent.yourdomain.com/api/agent/snapshot
+   curl -H "Authorization: Bearer sfa_..." https://mac-mini-home.tail61d766.ts.net:8443/api/agent/snapshot
    ```
    and that everything else is closed (expect 404):
    ```bash
-   curl -i https://smartfin-agent.yourdomain.com/api/expenses
+   curl -i https://mac-mini-home.tail61d766.ts.net:8443/api/expenses
    ```
+   and that the dashboard is NOT public (expect a timeout from outside the tailnet):
+   ```bash
+   curl -m 10 -i https://mac-mini-home.tail61d766.ts.net/
+   ```
+
+To take the agent offline: `tailscale funnel --https=8443 off`.
 
 ## Endpoints
 
