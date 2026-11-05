@@ -5,11 +5,11 @@ const agentAuth = require('../middleware/agentAuth');
 const agentController = require('../controllers/agentController');
 
 // Read-only endpoints for the external AI agent. This is the ONLY part of the API exposed
-// to the internet (nginx `agent` server block → Cloudflare Tunnel). Authenticated by an
+// to the internet (nginx :8081 block → Tailscale Funnel on :8443). Authenticated by an
 // agent API key, never by the dashboard JWT, and nothing here writes.
 const router = express.Router();
 
-// Per key, not per IP: behind the tunnel every request arrives from the same proxy.
+// Per key, not per IP: behind Funnel every request arrives from the same proxy.
 const agentLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 30,

@@ -79,25 +79,9 @@ services:
       - backend
     ports:
       - "8080:8080"
-    networks:
-      - smartfin-network
-    mem_limit: 64m
-
-  # Public tunnel for the external AI agent. Off by default; start it with
-  #   docker compose --profile agent up -d
-  # It forwards only to nginx's internal :8081 block, which serves /api/agent/* and nothing
-  # else. In the Cloudflare dashboard, point the tunnel's public hostname at
-  # http://frontend:8081. See docs/AGENT_API.md.
-  cloudflared:
-    image: cloudflare/cloudflared:2025.10.0
-    container_name: smartfin_cloudflared
-    restart: unless-stopped
-    profiles: ["agent"]
-    command: tunnel --no-autoupdate run
-    environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    depends_on:
-      - frontend
+      # Agent API only (nginx :8081 block). Bound to localhost so nothing on the network
+      # reaches it; Tailscale Funnel on the host publishes it: see docs/AGENT_API.md.
+      - "127.0.0.1:8081:8081"
     networks:
       - smartfin-network
     mem_limit: 64m
