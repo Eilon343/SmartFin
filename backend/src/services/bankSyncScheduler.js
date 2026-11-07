@@ -12,7 +12,10 @@ const { scrapeAccount, SCRAPER_ERROR_TYPES } = require('./bankScraperService');
 // connected, otherwise the money would vanish from the books entirely.
 const CARD_SETTLEMENT_PATTERNS = [
     { companyId: 'isracard', pattern: /ישראכרט|isracard/i },
-    { companyId: 'max', pattern: /מקס איט|max it|לאומי קארד/i },
+    // A Leumi debit card is issued by MAX, and each swipe posts to the Leumi account on its
+    // own ("לאומי דביט", plus the monthly "דמי כרטיס דביט") as well as to the MAX feed with
+    // the real merchant. Per purchase rather than a monthly lump, but the same duplicate.
+    { companyId: 'max', pattern: /מקס איט|max it|לאומי קארד|לאומי דביט|דמי כרטיס דביט/i },
     // "כאל" must stand alone — it is a substring of ordinary words like מיכאל,
     // and a false match here silently deletes a real transaction.
     { companyId: 'visaCal', pattern: /ויזה כאל|כ\.א\.ל|(?<![א-ת])כאל(?![א-ת])|כרטיסי אשראי לישראל/i },
