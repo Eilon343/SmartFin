@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const fx = require('../services/forecastMath');
 const cy = require('../services/cycle');
+const inst = require('../services/installments');
 
 /**
  * Every endpoint below scopes its numbers to one financial CYCLE, not one calendar month.
@@ -230,14 +231,21 @@ exports.getSubscriptions = async (req, res) => {
         const [rows] = await db.query(
             `SELECT s.subscription_id, s.name, s.amount, s.currency,
                     s.day_of_month, s.active, s.paused, s.last_charged_month,
-                    s.category_id, c.name AS category
+                    s.category_id, c.name AS category,
+                    s.auto_detected, s.confirmed_at
              FROM subscriptions s
              LEFT JOIN categories c ON s.category_id = c.category_id
              WHERE s.user_id = ? AND s.active = TRUE
              ORDER BY s.day_of_month`,
             [user_id]
         );
-        res.json(rows.map(r => ({ ...r, amount: Number(r.amount) })));
+        res.json(rows.map(r => ({
+            ...r,
+            amount: Number(r.amount),
+            // Auto-detected rows await the user's approval until confirmed_at is set.
+            auto_detected: !!Number(r.auto_detected),
+            needs_review: !!Number(r.auto_detected) && r.confirmed_at == null,
+        })));
     } catch (err) {
         console.error('getSubscriptions error:', err);
         res.status(500).json({ error: 'Failed to fetch subscriptions' });
@@ -349,6 +357,14 @@ exports.togglePauseSubscription = async (req, res) => {
 // already inside projected_expenses; counting the subscription as well subtracted the
 // same money twice. Being forward-only, it is NOT pro-rated by the MTD clamp, and it
 // belongs to forecasted_net_pnl alone — current_net_pnl is actuals only.
+//
+// installments_ahead and loan_payments_ahead follow exactly the same rule (migration 016):
+// money already committed that has not reached `expenses` yet.
+//   installments_ahead  = card installment payments not yet imported whose month falls in
+//                         this cycle (installment_plans; a payment is either imported or
+//                         projected, never both — see services/installments.js).
+//   loan_payments_ahead = active loans (manual entry) whose payment day in this cycle is
+//                         still ahead. Once it passes, the real debit is in `expenses`.
 
 exports.getPnL = async (req, res) => {
     const user_id = req.user.user_id;
@@ -398,7 +414,7 @@ exports.getPnL = async (req, res) => {
              WHERE e.user_id = ? AND e.created_at >= ? AND e.created_at < ? AND e.is_virtual = FALSE
              GROUP BY COALESCE(c.is_fixed, FALSE)`;
 
-        const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows], [expPastRows], [dowRows]] = await Promise.all([
+        const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows], [expPastRows], [dowRows], [planRows], [loanRows]] = await Promise.all([
             db.query(expensesSql, [user_id, cycle.start, windowEnd]),
             // Subscriptions that have NOT been charged yet in this cycle. Once the billing
             // day passes, the real charge is already in `expenses` — imported by bank/card
@@ -462,7 +478,19 @@ exports.getPnL = async (req, res) => {
                    AND e.created_at < ?
                  GROUP BY dow`,
                 [user_id, lookbackStart, cycle.start]
-            )
+            ),
+            // Card installment plans: future payments are projected from these.
+            db.query(
+                `SELECT monthly_amount, total_payments, last_number, last_payment_date
+                 FROM installment_plans WHERE user_id = ? AND last_number < total_payments`,
+                [user_id]
+            ),
+            // Active loans with a known payment day.
+            db.query(
+                `SELECT monthly_payment, payment_day, next_payment_date FROM loans
+                 WHERE user_id = ? AND active = TRUE AND monthly_payment > 0`,
+                [user_id]
+            ),
         ]);
 
         // Bucket expenses by fixed/variable. Row may be missing if no rows in that bucket.
@@ -484,6 +512,26 @@ exports.getPnL = async (req, res) => {
         const subscription_total = (subRows || [])
             .filter(s => cy.chargeDateInCycle(cycle, s.day_of_month) > todayISO)
             .reduce((sum, s) => sum + Number(s.amount), 0);
+        // Committed money still to leave this cycle that is not in `expenses` yet.
+        // A past cycle has none: every date in it is already behind us.
+        // DATE columns come back as local-midnight Dates; read them with local getters.
+        const isoOf = (v) => (v instanceof Date
+            ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`
+            : (v == null ? null : String(v).slice(0, 10)));
+        const installments_ahead = inst.installmentsAhead(
+            (planRows || []).map(r => ({ ...r, last_payment_date: isoOf(r.last_payment_date) }))
+                .filter(r => r.last_payment_date),
+            todayISO > cycle.start ? cy.addDays(todayISO, 1) : cycle.start,
+            cycle.end
+        );
+        const loan_payments_ahead = (loanRows || [])
+            .map(l => {
+                const day = l.payment_day || (l.next_payment_date ? Number(isoOf(l.next_payment_date).slice(8, 10)) : null);
+                return day ? { amount: Number(l.monthly_payment), date: cy.chargeDateInCycle(cycle, day) } : null;
+            })
+            .filter(l => l && l.date > todayISO)
+            .reduce((sum, l) => sum + l.amount, 0);
+        const commitments_ahead = subscription_total + installments_ahead + loan_payments_ahead;
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total) * proRate;
         const variable_actual = Number(varActualRows[0].total) * proRate;
@@ -568,8 +616,8 @@ exports.getPnL = async (req, res) => {
         // The forecast is the only place subscription_total belongs — in both branches,
         // so "money still to come out" is never silently dropped by the MTD clamp.
         const forecasted_net_pnl = isMTD
-            ? current_net_pnl - subscription_total
-            : projected_income - projected_expenses - subscription_total - savings_allocation;
+            ? current_net_pnl - commitments_ahead
+            : projected_income - projected_expenses - commitments_ahead - savings_allocation;
 
         // ±1σ on the unspent part of the month only. Suppressed entirely outside the live
         // month: a completed month has no uncertainty left to describe.
@@ -588,7 +636,7 @@ exports.getPnL = async (req, res) => {
             ? fx.safeToSpendPerDay({
                 projectedIncome: projected_income,
                 spentToDate: total_expenses,
-                subscriptionsAhead: subscription_total,
+                subscriptionsAhead: commitments_ahead,
                 savingsAllocation: savings_allocation,
                 dayIndex,
                 days: daysInCycle,
@@ -617,6 +665,9 @@ exports.getPnL = async (req, res) => {
             projected_variable_expenses: Math.round(projected_variable * 100) / 100,
             projected_expenses: Math.round(projected_expenses * 100) / 100,
             subscription_total: Math.round(subscription_total * 100) / 100,
+            installments_ahead: Math.round(installments_ahead * 100) / 100,
+            loan_payments_ahead: Math.round(loan_payments_ahead * 100) / 100,
+            commitments_ahead: Math.round(commitments_ahead * 100) / 100,
             savings_allocation: Math.round(savings_allocation * 100) / 100,
             current_net_pnl: Math.round(current_net_pnl * 100) / 100,
             forecasted_net_pnl: Math.round(forecasted_net_pnl * 100) / 100,

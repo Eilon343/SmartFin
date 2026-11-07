@@ -22,5 +22,7 @@ const agentLimiter = rateLimit({
 router.use(agentLimiter);
 router.get('/snapshot', agentAuth, agentController.getSnapshot);
 router.get('/what-if', agentAuth, agentController.whatIf);
+router.get('/loans', agentAuth, agentController.getLoans);
+router.get('/installments', agentAuth, agentController.getInstallments);
 
 module.exports = router;

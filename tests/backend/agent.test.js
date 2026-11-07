@@ -89,6 +89,18 @@ describe('agent auth', () => {
 });
 
 describe('GET /api/agent/snapshot', () => {
+    test('carries the commitments blocks (subscriptions, installments, loans)', async () => {
+        const res = await request(app).get('/api/agent/snapshot').set(agent);
+        expect(res.status).toBe(200);
+        const b = res.body;
+        expect(b.subscriptions).toEqual({ monthly_total: 0, items: [] });
+        expect(b.installments).toMatchObject({ active_count: 0, monthly_commitment: 0, items: [] });
+        expect(b.loans_summary).toMatchObject({ count: 0, total_outstanding: 0, total_monthly_payment: 0, next_payment: null });
+        expect(b.recurring_monthly_total).toBe(0);
+        expect(b).toHaveProperty('installments_ahead');
+        expect(b).toHaveProperty('loan_payments_ahead');
+    });
+
     test('returns flat cycle figures and per-category budget state', async () => {
         const res = await request(app).get('/api/agent/snapshot').set(agent);
         expect(res.status).toBe(200);

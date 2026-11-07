@@ -159,7 +159,12 @@ async function scrapeAccount({ companyId, credentials, startDate }) {
     const options = {
         companyId,
         startDate,
-        combineInstallments: true,
+        // false: return EVERY installment payment, each dated to its own month. With true
+        // the library keeps only payment 1 of each plan (filterOldTransactions drops
+        // number > 1), so a ₪3,600 purchase in 12 payments was recorded as ₪300 and the
+        // other eleven payments never reached the app. Payment 1's date and amount are the
+        // same either way, so its content hash, and the dedup, are unchanged.
+        combineInstallments: false,
         showBrowser: false,
         args: CONTAINER_BROWSER_ARGS,
         // The library's only hook that hands back the browser it launched.

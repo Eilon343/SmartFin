@@ -70,6 +70,8 @@ function mockPnL({
     expenses = '0', subscriptions = '0', subscriptionDay = 15, savings = '0',
     fixedIncome = '0', variableActual = '0',
     incomeHistory = [], expenseHistory = [], dow = [],
+    // Migration 016: card installment plans and active loans, projected into the forecast.
+    plans = [], loans = [],
     // The auth middleware reads the financial-cycle settings off the same row as the
     // existence check, so this is where a non-default cycle is injected. Omitted means
     // anchor 1 / salary day 1 — a cycle that is exactly the calendar month.
@@ -87,7 +89,9 @@ function mockPnL({
         .mockResolvedValueOnce([[{ total: variableActual }]])        // variable income actual
         .mockResolvedValueOnce([incomeHistory])                      // variable income per month
         .mockResolvedValueOnce([expenseHistory])                     // variable expenses per month
-        .mockResolvedValueOnce([dow]);                               // day-of-week shape
+        .mockResolvedValueOnce([dow])                                // day-of-week shape
+        .mockResolvedValueOnce([plans])                              // installment plans
+        .mockResolvedValueOnce([loans]);                             // active loans
 }
 
 // ── Response shape ────────────────────────────────────────────────────────────
@@ -616,5 +620,67 @@ describe('GET /api/pnl - the queried window is the user\'s financial cycle', () 
         expect(res.body.cycle_start).toBe('2026-02-10');
         expect(res.body.cycle_end).toBe('2026-03-09');  // inclusive, for labels
         expect(res.body.days_in_cycle).toBe(28);        // never assume 30
+    });
+});
+
+// ── Committed money ahead: installments and loans (migration 016) ───────────────
+//
+// Frozen at the 15th of MONTH_NOW. A plan whose last imported payment was on the 5th of
+// last month has its next payment on the 5th of this month (behind us — the import will
+// carry it) and the one after next month. One dated the 20th of last month has its next
+// payment on the 20th of THIS month — still ahead, so it must be in the forecast once.
+describe('GET /api/pnl - installments and loan payments ahead', () => {
+    beforeEach(freezeMidCycle);
+    afterEach(() => jest.useRealTimers());
+
+    const [y, m] = MONTH_NOW.split('-').map(Number);
+    const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+
+    it('counts an installment payment still ahead this cycle exactly once', async () => {
+        mockPnL({ fixedIncome: '10000', plans: [{ monthly_amount: '300', total_payments: 12, last_number: 3, last_payment_date: `${prev}-20` }] });
+        const res = await request(app).get('/api/pnl').set(authHeader());
+        expect(res.status).toBe(200);
+        expect(res.body.installments_ahead).toBe(300);
+        expect(res.body.commitments_ahead).toBe(300);
+
+        mockPnL({ fixedIncome: '10000' });
+        const base = await request(app).get('/api/pnl').set(authHeader());
+        expect(base.body.forecasted_net_pnl - res.body.forecasted_net_pnl).toBeCloseTo(300, 2);
+    });
+
+    it('a payment already behind today is not projected (the imported expense carries it)', async () => {
+        mockPnL({ plans: [{ monthly_amount: '300', total_payments: 12, last_number: 3, last_payment_date: `${prev}-05` }] });
+        const res = await request(app).get('/api/pnl').set(authHeader());
+        expect(res.body.installments_ahead).toBe(0);
+    });
+
+    it('a finished plan projects nothing', async () => {
+        mockPnL({ plans: [{ monthly_amount: '300', total_payments: 3, last_number: 3, last_payment_date: `${prev}-20` }] });
+        const res = await request(app).get('/api/pnl').set(authHeader());
+        expect(res.body.installments_ahead).toBe(0);
+    });
+
+    it('a loan payment later this cycle lowers the forecast and the daily allowance', async () => {
+        mockPnL({ fixedIncome: '10000', loans: [{ monthly_payment: '850', payment_day: 25, next_payment_date: null }] });
+        const res = await request(app).get('/api/pnl').set(authHeader());
+        expect(res.body.loan_payments_ahead).toBe(850);
+
+        mockPnL({ fixedIncome: '10000' });
+        const base = await request(app).get('/api/pnl').set(authHeader());
+        expect(base.body.forecasted_net_pnl - res.body.forecasted_net_pnl).toBeCloseTo(850, 2);
+        expect(res.body.safe_to_spend_headroom).toBeLessThan(base.body.safe_to_spend_headroom);
+    });
+
+    it('a loan payment already passed this cycle is not counted again', async () => {
+        mockPnL({ loans: [{ monthly_payment: '850', payment_day: 10, next_payment_date: null }] });
+        const res = await request(app).get('/api/pnl').set(authHeader());
+        expect(res.body.loan_payments_ahead).toBe(0);
+    });
+
+    it('current_net_pnl stays actuals-only', async () => {
+        mockPnL({ fixedIncome: '10000', expenses: '2000', loans: [{ monthly_payment: '850', payment_day: 25 }],
+            plans: [{ monthly_amount: '300', total_payments: 12, last_number: 3, last_payment_date: `${prev}-20` }] });
+        const res = await request(app).get('/api/pnl').set(authHeader());
+        expect(res.body.current_net_pnl).toBe(8000);
     });
 });
