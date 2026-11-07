@@ -198,6 +198,12 @@ const STAGE_TXN_QUERY =
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE status = VALUES(status), raw_json = VALUES(raw_json)`;
 
+const BALANCE_SNAPSHOT_QUERY =
+    `INSERT INTO account_balance_snapshots
+       (bank_connection_id, user_id, account_number, is_savings, snapshot_date, balance, currency)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE balance = VALUES(balance), is_savings = VALUES(is_savings), synced_at = NOW()`;
+
 /**
  * Pending transactions are deliberately left staged. A pending charge can still change
  * its amount or date when it settles (restaurant tips, foreign currency), and since the
@@ -395,6 +401,18 @@ async function syncConnection(connection) {
             );
             if (isNew) inserted++;
         }
+    }
+
+    // The balance the bank itself reports (cards report none). One snapshot per account
+    // per local day; a later sync the same day overwrites it with the fresher figure.
+    const today = bankDateOf(new Date());
+    for (const account of result.accounts) {
+        const balance = Number(account.balance);
+        if (account.balance == null || !Number.isFinite(balance)) continue;
+        await db.query(BALANCE_SNAPSHOT_QUERY, [
+            connection.id, connection.user_id, account.accountNumber, !!account.savingsAccount,
+            today, balance, account.currency || 'ILS',
+        ]);
     }
 
     await db.query(
@@ -821,6 +839,7 @@ exports.bankDateOf = bankDateOf;
 // Exported so the import-eligibility rules can be asserted without a live DB.
 exports.DRAIN_QUERY = DRAIN_QUERY;
 exports.STAGE_TXN_QUERY = STAGE_TXN_QUERY;
+exports.BALANCE_SNAPSHOT_QUERY = BALANCE_SNAPSHOT_QUERY;
 exports.DUE_CONNECTIONS_QUERY = DUE_CONNECTIONS_QUERY;
 exports.syncWindowStart = syncWindowStart;
 exports.lastDueSlot = lastDueSlot;
