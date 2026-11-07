@@ -3,6 +3,8 @@ const fx = require('../services/forecastMath');
 const cy = require('../services/cycle');
 const expenseController = require('./expenseController');
 const insightsController = require('./insightsController');
+const commitments = require('./commitmentsController');
+const loansController = require('./loansController');
 const { zonedParts } = require('../utils/zonedTime');
 
 // Read-only endpoints for an external AI agent (routes/agentRoutes.js, behind agentAuth).
@@ -14,6 +16,8 @@ const { zonedParts } = require('../utils/zonedTime');
 // PRIVACY RULE: the agent must never learn that bank connections exist. Nothing here may
 // read a bank_* table or emit a field that reveals one (e.g. expenses.source = 'bank_sync').
 // Every response is built from an explicit allowlist; tests/backend/agent.test.js enforces it.
+// Installments come from installment_plans and loans from loans — derived/manual tables,
+// not bank_* tables — and are re-shaped below so no provenance field (`source`) leaks.
 
 const money = fx.money;
 
@@ -45,13 +49,81 @@ function localDate(d) {
     return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
 }
 
+// Explicit allowlists for the commitments blocks.
+function agentInstallment(p) {
+    return {
+        merchant: p.merchant,
+        monthly_amount: p.monthly_amount,
+        total_amount: p.total_amount,
+        total_payments: p.total_payments,
+        payments_made: p.payments_made,
+        remaining_payments: p.remaining_payments,
+        remaining_amount: p.remaining_amount,
+        next_payment_date: p.next_payment_date,
+        end_date: p.end_date,
+    };
+}
+function agentLoan(l) {
+    return {
+        lender: l.lender,
+        loan_type: l.loan_type,
+        original_amount: l.original_amount,
+        outstanding_balance: l.outstanding_balance,
+        interest_rate: l.interest_rate,
+        monthly_payment: l.monthly_payment,
+        remaining_payments: l.remaining_payments,
+        next_payment_date: l.next_payment_date,
+        balance_updated_at: l.balance_updated_at,
+        // Loans are typed in by the user — the agent should treat balances as "as of".
+        entry: 'manual',
+    };
+}
+async function loadCommitments(userId) {
+    const [subs, plans, loans] = await Promise.all([
+        commitments.loadActiveSubscriptions(userId),
+        commitments.loadInstallmentPlans(userId),
+        loansController.loadLoans(userId),
+    ]);
+    const active = plans.filter(p => p.active);
+    const instSummary = commitments.summarizeInstallments(plans);
+    const loanSummary = loansController.summarizeLoans(loans);
+    const subsTotal = money(subs.reduce((s, x) => s + x.amount, 0));
+    return {
+        subscriptions: {
+            monthly_total: subsTotal,
+            items: subs.map(x => ({
+                name: x.name,
+                amount: x.amount,
+                day_of_month: x.day_of_month,
+                category: x.category,
+                auto_detected: x.auto_detected,
+                confirmed: x.confirmed,
+            })),
+        },
+        installments: {
+            active_count: instSummary.active_count,
+            monthly_commitment: instSummary.monthly_commitment,
+            remaining_total: instSummary.remaining_total,
+            items: active.map(agentInstallment),
+        },
+        loans: loans.map(agentLoan),
+        loans_summary: {
+            count: loanSummary.count,
+            total_outstanding: loanSummary.total_outstanding,
+            total_monthly_payment: loanSummary.total_monthly_payment,
+            next_payment: loanSummary.next_payment,
+        },
+        recurring_monthly_total: money(subsTotal + instSummary.monthly_commitment + loanSummary.total_monthly_payment),
+    };
+}
+
 async function buildSnapshot(req) {
     const settings = req.cycleSettings;
     const month = cy.currentCycleKey(settings);
     const cycle = cy.resolveCycle(month, settings);
     const user_id = req.user.user_id;
 
-    const [pnl, budgets, insights, [subRows], [recentRows]] = await Promise.all([
+    const [pnl, budgets, insights, [subRows], [recentRows], commit] = await Promise.all([
         run(expenseController.getPnL, req, { month }),
         run(expenseController.getBudgets, req, { month }),
         run(insightsController.getInsights, req, { month }),
@@ -70,6 +142,7 @@ async function buildSnapshot(req) {
              ORDER BY e.created_at DESC LIMIT 10`,
             [user_id, user_id, cycle.start, cycle.end]
         ),
+        loadCommitments(user_id),
     ]);
 
     const daysLeft = pnl.days_left || 0;
@@ -121,6 +194,9 @@ async function buildSnapshot(req) {
         spent_variable: pnl.variable_expenses,
         spent_forecast: pnl.projected_expenses,
         subscriptions_ahead: pnl.subscription_total,
+        // Committed money still to leave this cycle that is not spent yet (in net_forecast).
+        installments_ahead: pnl.installments_ahead,
+        loan_payments_ahead: pnl.loan_payments_ahead,
         savings_set_aside: pnl.savings_allocation,
 
         net_now: pnl.current_net_pnl,
@@ -138,6 +214,12 @@ async function buildSnapshot(req) {
 
         categories,
         upcoming_subscriptions: upcoming,
+        // Committed monthly outflow (Hebrew UI: הוצאות שוטפות) = subscriptions +
+        // active card installments + loan repayments.
+        recurring_monthly_total: commit.recurring_monthly_total,
+        subscriptions: commit.subscriptions,
+        installments: commit.installments,
+        loans_summary: commit.loans_summary,
         recent_expenses: recentRows.map(r => ({
             date: localDate(r.created_at),
             amount: money(Number(r.amount)),
@@ -153,6 +235,26 @@ exports.getSnapshot = async (req, res) => {
     } catch (err) {
         console.error('agent snapshot error:', err);
         res.status(500).json({ error: 'Failed to build snapshot' });
+    }
+};
+
+exports.getLoans = async (req, res) => {
+    try {
+        const c = await loadCommitments(req.user.user_id);
+        res.json({ currency: 'ILS', summary: c.loans_summary, loans: c.loans });
+    } catch (err) {
+        console.error('agent loans error:', err);
+        res.status(500).json({ error: 'Failed to load loans' });
+    }
+};
+
+exports.getInstallments = async (req, res) => {
+    try {
+        const c = await loadCommitments(req.user.user_id);
+        res.json({ currency: 'ILS', ...c.installments });
+    } catch (err) {
+        console.error('agent installments error:', err);
+        res.status(500).json({ error: 'Failed to load installments' });
     }
 };
 

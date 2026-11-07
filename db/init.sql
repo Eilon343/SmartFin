@@ -101,7 +101,14 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     last_charged_month VARCHAR(7),
     paused             BOOLEAN DEFAULT FALSE,
     active             BOOLEAN DEFAULT TRUE,
+    -- Auto-detection (migration 016): inserted by services/recurringDetector.js, approved
+    -- by the user via confirmed_at. A removed detection stays as active = FALSE so its
+    -- match_key keeps it from being detected again.
+    auto_detected      BOOLEAN NOT NULL DEFAULT FALSE,
+    confirmed_at       DATETIME NULL,
+    match_key          VARCHAR(190) NULL,
     created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_sub_match (user_id, match_key),
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     FOREIGN KEY (category_id) REFERENCES categories(category_id)
 );
@@ -190,6 +197,9 @@ CREATE TABLE IF NOT EXISTS bank_connections (
     last_attempt_at       TIMESTAMP NULL,
     last_sync_status      VARCHAR(50) NULL,
     last_sync_error       TEXT NULL,
+    -- Next scrape reaches back the full 3 months instead of the incremental window
+    -- (migration 016 — one-off backfill of installment payments the scraper used to drop).
+    full_resync_pending   BOOLEAN NOT NULL DEFAULT FALSE,
     created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     -- One connection per provider per user (migration 009). createConnection also checks,
     -- but two interleaved requests both pass that check and the duplicate connections then
@@ -239,6 +249,51 @@ CREATE TABLE IF NOT EXISTS agent_api_keys (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+-- Loans (manual entry) and card installment plans (derived from sync). See migrate_016.
+CREATE TABLE IF NOT EXISTS loans (
+    loan_id             INT PRIMARY KEY AUTO_INCREMENT,
+    user_id             BIGINT NOT NULL,
+    lender              VARCHAR(100) NOT NULL,
+    loan_type           ENUM('mortgage', 'loan', 'overdraft', 'other') NOT NULL DEFAULT 'loan',
+    original_amount     DECIMAL(12, 2) NULL,
+    outstanding_balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    interest_rate       DECIMAL(6, 3) NULL,
+    monthly_payment     DECIMAL(10, 2) NOT NULL DEFAULT 0,
+    remaining_payments  INT NULL,
+    payment_day         TINYINT NULL,
+    next_payment_date   DATE NULL,
+    match_key           VARCHAR(190) NULL,
+    notes               VARCHAR(255) NULL,
+    balance_updated_at  DATE NULL,
+    active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_loans_user (user_id, active),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+-- ── Installment plans (derived from card sync) ───────────────────────────────────
+-- Rebuilt from imported card rows after every drain (services/installments.js). Kept in
+-- its own table rather than derived on read so the agent API can report installments
+-- without touching a bank_* table — that is a hard rule for agentController.
+CREATE TABLE IF NOT EXISTS installment_plans (
+    plan_id             INT PRIMARY KEY AUTO_INCREMENT,
+    user_id             BIGINT NOT NULL,
+    plan_hash           CHAR(64) NOT NULL,
+    merchant            VARCHAR(255) NOT NULL,
+    monthly_amount      DECIMAL(10, 2) NOT NULL,
+    total_amount        DECIMAL(12, 2) NOT NULL,
+    total_payments      INT NOT NULL,
+    last_number         INT NOT NULL,
+    last_payment_date   DATE NOT NULL,
+    next_payment_date   DATE NULL,
+    end_date            DATE NOT NULL,
+    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_installment_plan (user_id, plan_hash),
+    INDEX idx_installment_user (user_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 -- Base categories (user_id NULL = shared across all users)
 -- is_fixed=TRUE for categories that recur as flat monthly costs (not run-rated in forecast)
 INSERT INTO categories (user_id, name, is_base, is_fixed)
@@ -249,6 +304,14 @@ SELECT NULL, name, TRUE, is_fixed FROM (
     SELECT 'Entertainment',     FALSE UNION ALL
     SELECT 'Shopping',          FALSE UNION ALL
     SELECT 'Utilities',         TRUE  UNION ALL
-    SELECT 'Savings',           TRUE
+    SELECT 'Savings',           TRUE  UNION ALL
+    -- Added in migration 016 for services/categoryRules.js.
+    SELECT 'Health',            FALSE UNION ALL
+    SELECT 'Insurance',         TRUE  UNION ALL
+    SELECT 'Loans',             TRUE  UNION ALL
+    SELECT 'Fees',              FALSE UNION ALL
+    SELECT 'Subscriptions',     TRUE  UNION ALL
+    SELECT 'Transfers',         FALSE UNION ALL
+    SELECT 'Personal Care',     FALSE
 ) AS base
 WHERE NOT EXISTS (SELECT 1 FROM categories c2 WHERE c2.user_id IS NULL AND c2.name = base.name);

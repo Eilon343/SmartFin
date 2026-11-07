@@ -7,6 +7,8 @@ const savingsController = require('../controllers/savingsController');
 const insightsController = require('../controllers/insightsController');
 const cleanupController = require('../controllers/cleanupController');
 const settingsController = require('../controllers/settingsController');
+const loansController = require('../controllers/loansController');
+const commitmentsController = require('../controllers/commitmentsController');
 
 // Auth routes moved to routes/authRoutes.js.
 
@@ -29,6 +31,16 @@ router.post('/subscriptions', auth, expenseController.addSubscription);
 router.put('/subscriptions/:id', auth, expenseController.updateSubscription);
 router.put('/subscriptions/:id/pause', auth, expenseController.togglePauseSubscription);
 router.delete('/subscriptions/:id', auth, expenseController.deleteSubscription);
+// Approves an auto-detected subscription (removing one is the ordinary DELETE above).
+router.put('/subscriptions/:id/confirm', auth, commitmentsController.confirmSubscription);
+
+// Loans (manual entry), card installment plans, and the committed-monthly aggregate.
+router.get('/loans', auth, loansController.getLoans);
+router.post('/loans', auth, loansController.addLoan);
+router.put('/loans/:id', auth, loansController.updateLoan);
+router.delete('/loans/:id', auth, loansController.deleteLoan);
+router.get('/installments', auth, commitmentsController.getInstallments);
+router.get('/recurring', auth, commitmentsController.getRecurring);
 router.get('/pnl', auth, expenseController.getPnL);
 router.get('/insights', auth, insightsController.getInsights);
 

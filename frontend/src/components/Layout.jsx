@@ -19,6 +19,7 @@ const NAV = [
   { id: 'subscriptions', nameKey: 'nav_subscriptions', icon: 'repeat',           path: '/subscriptions' },
   { id: 'savings',       nameKey: 'nav_savings',       icon: 'piggy-bank',       path: '/savings' },
   { id: 'income',        nameKey: 'nav_income',        icon: 'trending-up',      path: '/income' },
+  { id: 'loans',         nameKey: 'nav_loans',         icon: 'landmark',         path: '/loans' },
   { id: 'expenses',      nameKey: 'nav_expenses',      icon: 'receipt',          path: '/expenses' },
   { id: 'insights',      nameKey: 'nav_insights',      icon: 'sparkles',         path: '/insights' },
   { id: 'settings',      nameKey: 'nav_settings',      icon: 'settings',         path: '/settings' },

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import ProgressBar, { pct, tone } from '../components/ui/ProgressBar';
@@ -431,6 +432,52 @@ function SubscriptionsMini({ subs, onTogglePause }) {
         {subs.length === 0 && <div className="muted" style={{ fontSize: 13 }}>{t('dash_no_subs')}</div>}
       </div>
     </div>
+  );
+}
+
+/* -------- Recurring expenses (הוצאות שוטפות) -------- */
+// The committed monthly outflow at a glance: subscriptions (incl. auto-detected recurring
+// bank debits such as insurance and pension), active card installments, loan repayments.
+function RecurringCard({ recurring, aheadThisCycle }) {
+  const { t } = useI18n();
+  if (!recurring) return null;
+  const parts = [
+    { key: 'subs', icon: 'repeat', label: t('rec_subscriptions'), amount: recurring.subscriptions?.monthly_total || 0, count: recurring.subscriptions?.count || 0, to: '/subscriptions' },
+    { key: 'inst', icon: 'credit-card', label: t('rec_installments'), amount: recurring.installments?.monthly_commitment || 0, count: recurring.installments?.active_count || 0, to: '/subscriptions' },
+    { key: 'loans', icon: 'landmark', label: t('rec_loans'), amount: recurring.loans?.total_monthly_payment || 0, count: recurring.loans?.count || 0, to: '/loans' },
+  ];
+  return (
+    <section className="card card-pad-lg" style={{ marginBottom: 22 }}>
+      <div className="between" style={{ marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
+        <div className="stack">
+          <h3 className="h2">{t('rec_title')}</h3>
+          <span className="muted" style={{ fontSize: 12 }}>{t('rec_sub')}</span>
+        </div>
+        <div className="stack" style={{ alignItems: 'flex-end' }}>
+          <span className="big-num" style={{ fontSize: 28 }} dir="ltr">{fmt(recurring.total_monthly || 0, 0)}</span>
+          <span className="muted-2" style={{ fontSize: 11 }}>{t('dash_mo')}</span>
+        </div>
+      </div>
+      <div className="grid grid-3">
+        {parts.map(p => (
+          <Link key={p.key} to={p.to} className="card card-pad" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 9, background: 'var(--hover-bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Icon name={p.icon} size={16} />
+            </div>
+            <div className="stack" style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ fontWeight: 500, fontSize: 13 }}>{p.label}</span>
+              <span className="muted-2" style={{ fontSize: 11 }}>{p.count} {t('dash_active')}</span>
+            </div>
+            <span className="mono tnum" style={{ fontSize: 14 }} dir="ltr">{fmt(p.amount, 0)}</span>
+          </Link>
+        ))}
+      </div>
+      {aheadThisCycle > 0 && (
+        <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+          <Icon name="calendar-clock" size={12} /> {t('rec_ahead').replace('{amount}', fmt(aheadThisCycle, 0))}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -877,6 +924,7 @@ export default function Dashboard() {
   const [income, setIncome] = useState(null);
   const [subs, setSubs] = useState([]);
   const [goals, setGoals] = useState([]);
+  const [recurring, setRecurring] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [openBudget, setOpenBudget] = useState(null);
@@ -919,7 +967,8 @@ export default function Dashboard() {
       api.get(`/income/summary?month=${month}`, { signal }),
       api.get('/subscriptions', { signal }),
       api.get('/savings', { signal }),
-    ]).then(([p, prevP, b, e, inc, s, g]) => {
+      api.get('/recurring', { signal }),
+    ]).then(([p, prevP, b, e, inc, s, g, rec]) => {
       if (signal.aborted) return;
       // allSettled means a dead network produces seven silent rejections and a page of
       // zeros — indistinguishable from a month with nothing in it, which is how a phone
@@ -945,6 +994,7 @@ export default function Dashboard() {
       if (inc.status === 'fulfilled') setIncome(inc.value.data);
       if (s.status === 'fulfilled') setSubs(Array.isArray(s.value.data) ? s.value.data : []);
       if (g.status === 'fulfilled') setGoals(Array.isArray(g.value.data) ? g.value.data : []);
+      if (rec.status === 'fulfilled') setRecurring(rec.value.data);
     }).finally(() => { if (!signal.aborted) setLoading(false); });
   }, [month, settings]);
 
@@ -1142,6 +1192,8 @@ export default function Dashboard() {
           </div>
         </section>
       )}
+
+      <RecurringCard recurring={recurring} aheadThisCycle={pnl?.commitments_ahead || 0} />
 
       <section className="grid grid-3" style={{ marginBottom: 22 }}>
         <IncomeCard income={income} />
