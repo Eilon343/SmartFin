@@ -38,7 +38,10 @@ function isoDate(d) {
 }
 
 function shapeLoan(row, today) {
+    const remaining = row.remaining_payments == null ? null : Number(row.remaining_payments);
     return {
+        // remaining_payments reaching 0 (repayments applied automatically) means paid off.
+        finished: remaining === 0,
         loan_id: row.loan_id,
         lender: row.lender,
         loan_type: row.loan_type,
@@ -55,16 +58,18 @@ function shapeLoan(row, today) {
             ? String(row.balance_updated_at instanceof Date ? isoDate(row.balance_updated_at) : row.balance_updated_at).slice(0, 10)
             : null,
         source: 'manual',
+        // Repayments applied to this loan automatically (loan_payments), newest first.
+        payments: [],
     };
 }
 
 /** Totals for a list of shaped loans. Exported for the agent API and the dashboard. */
 function summarizeLoans(loans) {
-    const upcoming = loans.filter((l) => l.next_payment_date).sort((a, b) => a.next_payment_date.localeCompare(b.next_payment_date))[0];
+    const upcoming = loans.filter((l) => l.next_payment_date && !l.finished).sort((a, b) => a.next_payment_date.localeCompare(b.next_payment_date))[0];
     return {
         count: loans.length,
         total_outstanding: money(loans.reduce((s, l) => s + (l.outstanding_balance || 0), 0)),
-        total_monthly_payment: money(loans.reduce((s, l) => s + (l.monthly_payment || 0), 0)),
+        total_monthly_payment: money(loans.filter((l) => !l.finished).reduce((s, l) => s + (l.monthly_payment || 0), 0)),
         next_payment: upcoming
             ? { lender: upcoming.lender, date: upcoming.next_payment_date, amount: upcoming.monthly_payment }
             : null,
@@ -80,7 +85,27 @@ async function loadLoans(userId) {
         [userId]
     );
     const today = cy.todayISO();
-    return (rows || []).map((r) => shapeLoan(r, today));
+    const loans = (rows || []).map((r) => shapeLoan(r, today));
+    if (loans.length) {
+        const [payments] = await db.query(
+            `SELECT lp.loan_id, lp.paid_on, lp.amount, lp.principal, lp.balance_after
+             FROM loan_payments lp JOIN loans l ON l.loan_id = lp.loan_id
+             WHERE l.user_id = ? ORDER BY lp.paid_on DESC`,
+            [userId]
+        );
+        const byLoan = new Map(loans.map((l) => [l.loan_id, l]));
+        for (const p of payments || []) {
+            const loan = byLoan.get(p.loan_id);
+            if (!loan || loan.payments.length >= 12) continue;
+            loan.payments.push({
+                date: String(p.paid_on instanceof Date ? isoDate(p.paid_on) : p.paid_on).slice(0, 10),
+                amount: money(p.amount),
+                principal: money(p.principal),
+                balance_after: money(p.balance_after),
+            });
+        }
+    }
+    return loans;
 }
 
 /**
@@ -104,11 +129,13 @@ async function detectedRepayments(userId, loans) {
         groups.get(key).payments.push({ date: isoDate(new Date(r.created_at)), amount: Number(r.amount) });
     }
     return [...groups.values()]
-        .filter((g) => !linked.has(g.match_key))
         .map((g) => {
             const last = g.payments[g.payments.length - 1];
             const avg = g.payments.reduce((s, p) => s + p.amount, 0) / g.payments.length;
             return {
+                // Already linked to a loan: still listed (the form offers it for linking),
+                // but the "add as loan" suggestion hides it.
+                linked: linked.has(g.match_key),
                 match_key: g.match_key,
                 description: g.description,
                 payments_seen: g.payments.length,
@@ -123,8 +150,13 @@ async function detectedRepayments(userId, loans) {
 exports.getLoans = async (req, res) => {
     try {
         const loans = await loadLoans(req.user.user_id);
-        const detected = await detectedRepayments(req.user.user_id, loans);
-        res.json({ loans, summary: summarizeLoans(loans), detected_repayments: detected });
+        const payees = await detectedRepayments(req.user.user_id, loans);
+        res.json({
+            loans,
+            summary: summarizeLoans(loans),
+            detected_repayments: payees.filter((p) => !p.linked),
+            repayment_payees: payees.map(({ match_key, description }) => ({ match_key, description })),
+        });
     } catch (err) {
         console.error('getLoans error:', err);
         res.status(500).json({ error: 'Failed to fetch loans' });

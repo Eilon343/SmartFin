@@ -488,7 +488,8 @@ exports.getPnL = async (req, res) => {
             // Active loans with a known payment day.
             db.query(
                 `SELECT monthly_payment, payment_day, next_payment_date FROM loans
-                 WHERE user_id = ? AND active = TRUE AND monthly_payment > 0`,
+                 WHERE user_id = ? AND active = TRUE AND monthly_payment > 0
+                   AND (remaining_payments IS NULL OR remaining_payments > 0)`,
                 [user_id]
             ),
         ]);

@@ -74,6 +74,9 @@ function agentLoan(l) {
         remaining_payments: l.remaining_payments,
         next_payment_date: l.next_payment_date,
         balance_updated_at: l.balance_updated_at,
+        finished: l.finished,
+        // Imported repayments lower the balance automatically; this is that history.
+        recent_payments: l.payments.slice(0, 6).map(p => ({ date: p.date, amount: p.amount, balance_after: p.balance_after })),
         // Loans are typed in by the user — the agent should treat balances as "as of".
         entry: 'manual',
     };
