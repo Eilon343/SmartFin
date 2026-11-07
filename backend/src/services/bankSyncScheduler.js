@@ -403,10 +403,12 @@ async function syncConnection(connection) {
         }
     }
 
-    // The balance the bank itself reports (cards report none). One snapshot per account
-    // per local day; a later sync the same day overwrites it with the fresher figure.
+    // The balance the bank itself reports. One snapshot per account per local day; a later
+    // sync the same day overwrites it with the fresher figure. Cards are skipped: Max does
+    // report a balance (the amount owed, negative), which is debt, not money in the bank.
     const today = bankDateOf(new Date());
-    for (const account of result.accounts) {
+    const accountsWithBalance = bankCompanies[connection.company_id]?.kind === 'card' ? [] : result.accounts;
+    for (const account of accountsWithBalance) {
         const balance = Number(account.balance);
         if (account.balance == null || !Number.isFinite(balance)) continue;
         await db.query(BALANCE_SNAPSHOT_QUERY, [
