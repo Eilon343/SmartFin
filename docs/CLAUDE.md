@@ -70,7 +70,7 @@ Period options come from `lib/cycle.js`; the four near-identical `getRecentMonth
 - **Only `status='completed'` rows are imported.** A pending charge can change amount/date on settlement, which makes it a different hash — importing the pending version would double-count.
 - **Dates**: the scraper reports Israel-local midnight as UTC (`…T21:00:00.000Z`), so always use `bankDateOf()`, never `toISOString().slice(0,10)`. Truncating in UTC dated every transaction one day early.
 - **Counting new rows**: compare against known hashes, never `affectedRows` — mysql2 uses `CLIENT_FOUND_ROWS`, so a matched duplicate also reports 1.
-- **Card settlements**: a bank row like `2624 - ישראכרט בע"מ` duplicates that card's own purchases, so it is skipped — but ONLY when the card is actually connected, otherwise the money vanishes. `reconcileSettlements()` retires settlements already imported before the card was added.
+- **Card settlements**: a bank row like `2624 - ישראכרט בע"מ` duplicates that card's own purchases, so it is skipped — but ONLY when the card is actually connected, otherwise the money vanishes. `reconcileSettlements()` retires settlements already imported before the card was added. The same rule covers per-swipe bank twins: a Leumi debit card is issued by MAX, so every purchase also posts to Leumi as `לאומי דביט` (and the fee as `דמי כרטיס דביט`).
 - **'error' connections retry hourly** (paced by `last_attempt_at`); `invalid_credentials` never auto-retries — Israeli banks lock after ~3 bad logins.
 
 ### The financial cycle — what "this month" means (migration 012)
