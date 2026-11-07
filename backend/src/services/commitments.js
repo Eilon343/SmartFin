@@ -14,6 +14,7 @@ const bankCompanies = require('../config/bankCompanies');
 const { buildPlans } = require('./installments');
 const { detectRecurring } = require('./recurringDetector');
 const { ruleCategoryOf } = require('./categoryRules');
+const { matchRepayments, applyPayment } = require('./loanPayments');
 const { zonedParts } = require('../utils/zonedTime');
 
 const CARD_COMPANIES = Object.entries(bankCompanies).filter(([, c]) => c.kind === 'card').map(([id]) => id);
@@ -190,6 +191,67 @@ async function repairUncategorized() {
     return fixed;
 }
 
+/**
+ * Lowers each linked loan's balance (and remaining payments) by every repayment imported
+ * since the balance was last entered. Each expense is applied once: loan_payments.expense_id
+ * is UNIQUE and the row is written in the same transaction as the balance change.
+ */
+async function applyLoanPayments(userId) {
+    const [loanRows] = await db.query(
+        `SELECT loan_id, match_key, monthly_payment, outstanding_balance, remaining_payments,
+                interest_rate, balance_updated_at
+         FROM loans WHERE user_id = ? AND active = TRUE AND match_key IS NOT NULL`,
+        [userId]
+    );
+    if (!loanRows || loanRows.length === 0) return 0;
+    const loans = loanRows.map((l) => ({ ...l, balance_updated_at: l.balance_updated_at ? isoOf(l.balance_updated_at) : null }));
+    const since = loans.map((l) => l.balance_updated_at).filter(Boolean).sort()[0] || '2000-01-01';
+
+    const [expRows] = await db.query(
+        `SELECT e.expense_id, e.description, e.amount, e.created_at FROM expenses e
+         LEFT JOIN loan_payments lp ON lp.expense_id = e.expense_id
+         WHERE e.user_id = ? AND e.amount > 0 AND e.is_virtual = FALSE
+           AND e.created_at > ? AND lp.expense_id IS NULL
+         ORDER BY e.created_at`,
+        [userId, since]
+    );
+    const matches = matchRepayments(
+        loans,
+        (expRows || []).map((e) => ({ ...e, date: isoOf(e.created_at) }))
+    );
+
+    const state = new Map(loans.map((l) => [l.loan_id, l]));
+    let applied = 0;
+    for (const m of matches) {
+        const loan = state.get(m.loan_id);
+        const next = applyPayment(loan, m.amount);
+        const conn = await db.getConnection();
+        try {
+            await conn.beginTransaction();
+            await conn.query(
+                `INSERT INTO loan_payments (loan_id, expense_id, paid_on, amount, principal, balance_after)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [m.loan_id, m.expense_id, m.date, m.amount, next.principal, next.outstanding_balance]
+            );
+            await conn.query(
+                'UPDATE loans SET outstanding_balance = ?, remaining_payments = ? WHERE loan_id = ? AND user_id = ?',
+                [next.outstanding_balance, next.remaining_payments, m.loan_id, userId]
+            );
+            await conn.commit();
+            state.set(m.loan_id, { ...loan, ...next });
+            applied++;
+        } catch (err) {
+            await conn.rollback();
+            // ER_DUP_ENTRY: already applied by a concurrent pass — exactly the guarantee.
+            if (err.code !== 'ER_DUP_ENTRY') console.error(`applyLoanPayments: expense ${m.expense_id} —`, err.message);
+        } finally {
+            conn.release();
+        }
+    }
+    if (applied) console.log(`applyLoanPayments: ${applied} repayment(s) applied to loans for user ${userId}`);
+    return applied;
+}
+
 /** Refreshes everything derived for one user. Never throws — derived data must not break sync. */
 async function refreshUser(userId) {
     try {
@@ -201,6 +263,11 @@ async function refreshUser(userId) {
         await syncDetectedSubscriptions(userId);
     } catch (err) {
         console.error(`syncDetectedSubscriptions(${userId}) failed:`, err.message);
+    }
+    try {
+        await applyLoanPayments(userId);
+    } catch (err) {
+        console.error(`applyLoanPayments(${userId}) failed:`, err.message);
     }
 }
 
@@ -229,6 +296,7 @@ module.exports = {
     syncDetectedSubscriptions,
     repairLoanDisbursements,
     repairUncategorized,
+    applyLoanPayments,
     refreshUser,
     refreshAll,
 };

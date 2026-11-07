@@ -26,7 +26,7 @@ const toNum = (v) => (v === '' || v == null ? null : Number(v));
 
 export default function Loans() {
   const { t } = useI18n();
-  const [data, setData] = useState({ loans: [], summary: null, detected_repayments: [] });
+  const [data, setData] = useState({ loans: [], summary: null, detected_repayments: [], repayment_payees: [] });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -119,7 +119,7 @@ export default function Loans() {
     }
   }
 
-  const { loans, summary, detected_repayments: detected } = data;
+  const { loans, summary, detected_repayments: detected, repayment_payees: payees = [] } = data;
 
   if (loading) return (
     <div className="view-enter">
@@ -220,7 +220,7 @@ export default function Loans() {
                 <div className="stack" style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontWeight: 500, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lender}</span>
                   <span className="muted-2" style={{ fontSize: 11 }}>
-                    {t(`loan_type_${l.loan_type}`)}
+                    {l.finished ? `${t('loan_finished')} · ` : ''}{t(`loan_type_${l.loan_type}`)}
                     {l.monthly_payment ? ` · ${fmt(l.monthly_payment)}/${t('loan_per_month')}` : ''}
                     {l.next_payment_date ? ` · ${t('loan_next')} ${l.next_payment_date}` : ''}
                   </span>
@@ -261,6 +261,23 @@ export default function Loans() {
               ))}
             </dl>
             {detail.notes && <p className="muted" style={{ fontSize: 12.5, marginBottom: 16 }}>{detail.notes}</p>}
+            <div style={{ marginBottom: 18 }}>
+              <span className="meta-label">{t('loan_auto_payments')}</span>
+              {!detail.match_key ? (
+                <p className="muted-2" style={{ fontSize: 12, marginTop: 6 }}>{t('loan_not_linked')}</p>
+              ) : detail.payments.length === 0 ? (
+                <p className="muted-2" style={{ fontSize: 12, marginTop: 6 }}>{t('loan_no_payments_yet')}</p>
+              ) : (
+                <div style={{ marginTop: 6 }}>
+                  {detail.payments.map(p => (
+                    <div key={p.date + p.amount} className="between" style={{ fontSize: 12.5, padding: '4px 0' }}>
+                      <span className="muted">{p.date}</span>
+                      <span className="mono tnum" dir="ltr">−{fmt(p.principal, 2)} → {fmt(p.balance_after, 2)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
               <button className="btn danger" onClick={() => setDeleteTarget(detail)}>{t('common_delete')}</button>
               <button className="btn primary" onClick={() => openEdit(detail)}>
@@ -291,6 +308,15 @@ export default function Loans() {
               {field('interest_rate', t('loan_rate'), { type: 'number', step: '0.001', min: '0', max: '100' })}
               {field('remaining_payments', t('loan_remaining'), { type: 'number', step: '1', min: '0' })}
               {field('payment_day', t('loan_payment_day'), { type: 'number', step: '1', min: '1', max: '28', placeholder: '1–28' })}
+            </div>
+            <div className="field">
+              <label htmlFor="loan-link">{t('loan_link')}</label>
+              <select id="loan-link" className="select" value={form.match_key} onChange={e => setForm(f => ({ ...f, match_key: e.target.value }))}>
+                <option value="">{t('loan_link_none')}</option>
+                {[...new Map([...payees, ...(form.match_key ? [{ match_key: form.match_key, description: form.match_key }] : [])].map(p => [p.match_key, p])).values()]
+                  .map(p => <option key={p.match_key} value={p.match_key}>{p.description}</option>)}
+              </select>
+              <span className="muted-2" style={{ fontSize: 11 }}>{t('loan_link_hint')}</span>
             </div>
             {field('notes', t('loan_notes'))}
             {error && <div style={{ color: 'var(--rose)', fontSize: 12 }}>{error}</div>}

@@ -294,6 +294,21 @@ CREATE TABLE IF NOT EXISTS installment_plans (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+-- Applied loan repayments (migration 017).
+CREATE TABLE IF NOT EXISTS loan_payments (
+    id            INT PRIMARY KEY AUTO_INCREMENT,
+    loan_id       INT NOT NULL,
+    expense_id    INT NOT NULL,
+    paid_on       DATE NOT NULL,
+    amount        DECIMAL(10, 2) NOT NULL,
+    principal     DECIMAL(10, 2) NOT NULL,
+    balance_after DECIMAL(12, 2) NOT NULL,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_loan_payment_expense (expense_id),
+    INDEX idx_loan_payments_loan (loan_id, paid_on),
+    FOREIGN KEY (loan_id) REFERENCES loans(loan_id) ON DELETE CASCADE
+);
+
 -- Base categories (user_id NULL = shared across all users)
 -- is_fixed=TRUE for categories that recur as flat monthly costs (not run-rated in forecast)
 INSERT INTO categories (user_id, name, is_base, is_fixed)
