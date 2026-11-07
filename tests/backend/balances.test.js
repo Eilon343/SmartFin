@@ -28,6 +28,19 @@ describe('shapeBalances', () => {
         expect(out.savings_total).toBe(5000);
     });
 
+    test('a card balance (Max reports the amount owed) is never added to the bank balance', () => {
+        const out = shapeBalances([
+            snap('2026-11-07', 1500, { bank_connection_id: 3, company_id: 'otsarHahayal', account_number: '6453' }),
+            snap('2026-11-07', -4378, { bank_connection_id: 4, company_id: 'max', account_number: '6924' }),
+        ]);
+        expect(out.current_total).toBe(1500);
+        expect(out.accounts.map(a => a.account)).toEqual(['6453']);
+    });
+
+    test('only card snapshots → null total, so the card stays hidden', () => {
+        expect(shapeBalances([snap('2026-11-07', -4378, { company_id: 'max' })]).current_total).toBeNull();
+    });
+
     test('no snapshots yet → null total, so the card stays hidden', () => {
         expect(shapeBalances([])).toMatchObject({ current_total: null, accounts: [] });
     });

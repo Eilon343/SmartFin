@@ -156,6 +156,10 @@ const money = (n) => Math.round(Number(n) * 100) / 100;
 function shapeBalances(rows) {
     const byAccount = new Map();
     for (const r of rows) {
+        // Cards do report a balance — Max's is the amount owed, as a negative number — and
+        // adding it to the current account showed bank + card debt as "your bank balance".
+        // Filtered here, not only at sync time, so snapshots already stored stay out too.
+        if (bankCompanies[r.company_id]?.kind === 'card') continue;
         const key = `${r.bank_connection_id}|${r.account_number}`;
         if (!byAccount.has(key)) byAccount.set(key, []);
         byAccount.get(key).push(r);
