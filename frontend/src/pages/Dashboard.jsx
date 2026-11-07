@@ -435,6 +435,47 @@ function SubscriptionsMini({ subs, onTogglePause }) {
   );
 }
 
+/* -------- Account balance (real, from the bank) -------- */
+// What the bank itself reported on the latest sync — not a SmartFin calculation.
+function BalanceCard({ balances }) {
+  const { lang, t } = useI18n();
+  if (!balances || balances.current_total == null) return null;
+  const current = balances.accounts.filter(a => !a.is_savings);
+  const change = current.reduce((s, a) => s + (a.change ?? 0), 0);
+  const hasChange = current.some(a => a.change != null);
+  const asOf = balances.as_of
+    ? new Date(balances.as_of).toLocaleString(lang === 'he' ? 'he-IL' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : null;
+  const prevDate = current.find(a => a.previous)?.previous?.date;
+  return (
+    <section className="card card-pad-lg" style={{ marginBottom: 22 }}>
+      <div className="between" style={{ gap: 12, flexWrap: 'wrap' }}>
+        <div className="stack">
+          <span className="meta-label">{t('bal_title')}</span>
+          <span className="big-num" style={{ fontSize: 34, marginTop: 6 }} dir="ltr">{fmt(balances.current_total, 0)}</span>
+          <span className="muted-2" style={{ fontSize: 11.5 }}>
+            {current.map(a => `${a.bank}${a.account ? ` ··${a.account}` : ''}`).join(' · ')}{asOf ? ` · ${t('bal_as_of')} ${asOf}` : ''}
+          </span>
+        </div>
+        <div className="stack" style={{ alignItems: 'flex-end', gap: 6 }}>
+          {hasChange && (
+            <span className={`chip ${change >= 0 ? 'up' : 'down'}`}>
+              <Icon name={change >= 0 ? 'trending-up' : 'trending-down'} size={11} />
+              <span dir="ltr">{change >= 0 ? '+' : '−'}{fmt(Math.abs(change), 0)}</span>
+              {prevDate ? ` ${t('bal_since')} ${prevDate}` : ''}
+            </span>
+          )}
+          {balances.savings_total > 0 && (
+            <span className="muted" style={{ fontSize: 12 }}>
+              {t('bal_savings')}: <span className="mono" dir="ltr">{fmt(balances.savings_total, 0)}</span>
+            </span>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* -------- Recurring expenses (הוצאות שוטפות) -------- */
 // The committed monthly outflow at a glance: subscriptions (incl. auto-detected recurring
 // bank debits such as insurance and pension), active card installments, loan repayments.
@@ -925,6 +966,7 @@ export default function Dashboard() {
   const [subs, setSubs] = useState([]);
   const [goals, setGoals] = useState([]);
   const [recurring, setRecurring] = useState(null);
+  const [balances, setBalances] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [openBudget, setOpenBudget] = useState(null);
@@ -968,7 +1010,8 @@ export default function Dashboard() {
       api.get('/subscriptions', { signal }),
       api.get('/savings', { signal }),
       api.get('/recurring', { signal }),
-    ]).then(([p, prevP, b, e, inc, s, g, rec]) => {
+      api.get('/bank-connections/balances', { signal }),
+    ]).then(([p, prevP, b, e, inc, s, g, rec, bal]) => {
       if (signal.aborted) return;
       // allSettled means a dead network produces seven silent rejections and a page of
       // zeros — indistinguishable from a month with nothing in it, which is how a phone
@@ -995,6 +1038,7 @@ export default function Dashboard() {
       if (s.status === 'fulfilled') setSubs(Array.isArray(s.value.data) ? s.value.data : []);
       if (g.status === 'fulfilled') setGoals(Array.isArray(g.value.data) ? g.value.data : []);
       if (rec.status === 'fulfilled') setRecurring(rec.value.data);
+      if (bal.status === 'fulfilled') setBalances(bal.value.data);
     }).finally(() => { if (!signal.aborted) setLoading(false); });
   }, [month, settings]);
 
@@ -1193,6 +1237,7 @@ export default function Dashboard() {
         </section>
       )}
 
+      <BalanceCard balances={balances} />
       <RecurringCard recurring={recurring} aheadThisCycle={pnl?.commitments_ahead || 0} />
 
       <section className="grid grid-3" style={{ marginBottom: 22 }}>

@@ -27,7 +27,7 @@ available to SmartFin without changing the scrape.
 | Issuer category | ❌ | ✅ Max category name | ✅ `branchCodeDesc` |
 | Standing orders as such | ❌ — just ordinary debits | ❌ | `trnTypeCode` 9 → mapped to `normal`, not exposed |
 | Loans (balance, rate, remaining) | ❌ | ❌ | ❌ |
-| Account balance | ✅ `account.balance` (not used) | ❌ | ❌ |
+| Account balance | ✅ `account.balance` — stored per sync (`account_balance_snapshots`, migration 018), shown on the Dashboard | ❌ | ❌ |
 
 ## Consequences in the app
 
@@ -35,6 +35,8 @@ available to SmartFin without changing the scrape.
   with `true` the library drops payments 2..N of every plan (`filterOldTransactions`), so only
   the first payment of any installment purchase was ever imported. Migration 016 arms a
   one-off 3-month re-scrape per card connection to backfill the missing payments.
+- **Account balance**: the bank's own figure, stored once per account per day on every sync
+  and shown on the Dashboard with the change since the previous day it was seen.
 - **Loans**: **manual entry** (Loans tab). Repayment debits (`פרעון הלוואה`) are imported as
   expenses and offered as a starting point; loan disbursements (`העמדת הלואה`) are no longer
   booked as income.

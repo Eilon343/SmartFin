@@ -5,6 +5,8 @@ const bankConnectionController = require('../controllers/bankConnectionControlle
 
 router.get('/bank-connections/companies', auth, bankConnectionController.listCompanies);
 router.get('/bank-connections', auth, bankConnectionController.listConnections);
+// The real account balance reported by the bank on the latest sync.
+router.get('/bank-connections/balances', auth, bankConnectionController.getBalances);
 router.post('/bank-connections', auth, bankConnectionController.createConnection);
 router.post('/bank-connections/:id/sync', auth, bankConnectionController.triggerSync);
 router.delete('/bank-connections/:id', auth, bankConnectionController.deleteConnection);
