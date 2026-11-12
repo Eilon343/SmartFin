@@ -153,6 +153,13 @@ cycle. Card sync imports completed charges carrying a future settlement date, wh
 the unclamped window; against time already elapsed they would count as overspending money
 that has not left the account yet.
 
+"Expected income" in both salary rules is the full figure — fixed income plus the user's
+decayed variable average — not `total_income_projected`. The projection is a forecast of what
+is still to come, `received + average × share remaining`, so it shrinks as the cycle runs.
+Bank sync imports a salary as variable income, which makes it exactly that shrinking term for
+a synced user: measured against it, a missing salary went quiet late in the cycle, and the
+alert quoted a prorated amount instead of the salary.
+
 Alerts are only produced for users holding a live `agent_api_keys` row. This API is the sole
 delivery channel, so for anyone else an alert is a row no one can read.
 

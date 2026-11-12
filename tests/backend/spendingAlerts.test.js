@@ -19,6 +19,10 @@ const BASE_PNL = {
     days_left: 18,
     total_income_actual: 12000,
     total_income_projected: 12000,
+    // A synced user: bank sync imports the salary as variable income, so the full
+    // expectation is the variable average, with nothing fixed beside it.
+    fixed_income: 0,
+    variable_income_avg: 12000,
     total_expenses: 4000,
     fixed_expenses: 0,
     variable_expenses: 4000,
@@ -227,7 +231,10 @@ describe('rules that used to misfire', () => {
     });
 
     it('never claims a missing salary for someone who tracks no income', () => {
-        const c = ctx({ pnl: { total_income_actual: 0, total_income_projected: 0, forecasted_net_pnl: 100 } });
+        const c = ctx({ pnl: {
+            total_income_actual: 0, total_income_projected: 0,
+            fixed_income: 0, variable_income_avg: 0, forecasted_net_pnl: 100,
+        } });
         expect(rules(c)).not.toContain('salary_missing');
     });
 
@@ -367,5 +374,45 @@ describe('who the tick runs for', () => {
         expect(userSql).toMatch(/JOIN\s+agent_api_keys/);
         expect(userSql).toMatch(/revoked_at IS NULL/);
         expect(userSql).toMatch(/SELECT DISTINCT/);
+    });
+});
+
+describe('the salary rules measure against the full expected salary', () => {
+    // total_income_projected is received + average * share-of-cycle-remaining, a forecast of
+    // what is still to come. For a synced user it is all variable income, so it shrinks
+    // toward zero as the cycle runs out -- the opposite of what a "has it arrived" test needs.
+
+    it('quotes the whole salary, not a figure prorated by how far the cycle has run', () => {
+        // Seen in production: ₪15,242 reported on day 12 for a salary averaging ~₪25,400.
+        const c = ctx({ pnl: {
+            total_income_actual: 0,
+            total_income_projected: 15242,
+            variable_income_avg: 25400,
+            forecasted_net_pnl: 100,
+        } });
+        expect(find(c, 'salary_missing').payload.income_expected).toBe(25400);
+    });
+
+    it('does not let a late-cycle refund pass for the salary', () => {
+        // Near the cycle's end the projection has decayed to the refund plus a sliver, so
+        // the refund alone cleared half of it and the missing salary went quiet.
+        const c = ctx({ pnl: {
+            total_income_actual: 600,
+            total_income_projected: 1100,
+            variable_income_avg: 25000,
+            forecasted_net_pnl: 100,
+        } });
+        expect(rules(c)).not.toContain('salary_arrived');
+        expect(rules(c)).toContain('salary_missing');
+    });
+
+    it('counts fixed income toward the expectation for a user who enters it by hand', () => {
+        const c = ctx({ pnl: {
+            total_income_actual: 9000,
+            fixed_income: 9000,
+            variable_income_avg: 0,
+        } });
+        expect(rules(c)).toContain('salary_arrived');
+        expect(rules(c)).not.toContain('salary_missing');
     });
 });

@@ -82,6 +82,21 @@ function variableBudget(pnl) {
     return num(pnl.projected_expenses) - num(pnl.fixed_expenses) - num(pnl.subscription_total);
 }
 
+/**
+ * What this cycle's income is expected to be IN FULL: fixed income plus the user's own
+ * decayed average of variable income.
+ *
+ * Not total_income_projected. That is `received + historicalMean * remainingShare`, a
+ * forecast of what is still to come, so it shrinks as the cycle elapses. Bank sync imports
+ * a salary as variable income, so for a synced user it is exactly that shrinking term.
+ * Measured against it, the salary rules got looser the longer a salary was missing -- late
+ * in a cycle a stray refund could pass for "arrived" -- and salary_missing quoted a prorated
+ * figure: ₪15,242 on day 12 for a salary averaging over ₪25,000.
+ */
+function expectedIncome(pnl) {
+    return num(pnl.fixed_income) + num(pnl.variable_income_avg);
+}
+
 /** Runs an Express handler and resolves with what it would have sent. */
 function run(handler, req, query = {}) {
     return new Promise((resolve, reject) => {
@@ -201,7 +216,7 @@ const RULES = [
     //    thing the user cannot notice by looking at a balance that simply did not change.
     function salaryMissing(ctx) {
         const { pnl, cycle, settings } = ctx;
-        const expected = num(pnl.total_income_projected);
+        const expected = expectedIncome(pnl);
         // Someone who does not track income has no salary to miss; without this the rule
         // would fire every cycle, forever, for every such user.
         if (expected <= 0) return null;
@@ -216,7 +231,7 @@ const RULES = [
             payload: {
                 expected_on: due,
                 days_late: Math.round((new Date(ctx.today) - new Date(due)) / 864e5),
-                income_expected: fx.money(num(pnl.total_income_projected)),
+                income_expected: fx.money(expectedIncome(pnl)),
             },
         };
     },
@@ -242,7 +257,7 @@ const RULES = [
 
     // 4. Salary landed: the one moment in the cycle where a single decision shapes the rest.
     function salaryArrived(ctx) {
-        const expected = num(ctx.pnl.total_income_projected);
+        const expected = expectedIncome(ctx.pnl);
         const received = num(ctx.pnl.total_income_actual);
         if (expected <= 0 || received < expected * SALARY_ARRIVED_SHARE) return null;
         return {
@@ -282,7 +297,7 @@ const RULES = [
                 // API, so a payload must not carry a to-date figure and a whole-cycle one
                 // side by side under names that both read as "spent".
                 spent: fx.money(num(toDate.total_expenses)),
-                income_expected: fx.money(num(pnl.total_income_projected)),
+                income_expected: fx.money(expectedIncome(pnl)),
                 // The decision is made on everyday money only; these two are what it used.
                 everyday_spent: fx.money(spentToDate),
                 everyday_budget: fx.money(budget),
