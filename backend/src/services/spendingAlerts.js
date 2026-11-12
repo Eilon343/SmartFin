@@ -51,7 +51,32 @@ const SURPLUS_MIN_ILS = 300;
 const SYNC_STALE_HOURS = 48;
 const DUPLICATE_WINDOW_DAYS = 3;
 
+// Income this far below what the cycle expects is not the salary: a refund must not
+// consume the once-per-cycle slot and leave the real arrival unannounced.
+const SALARY_ARRIVED_SHARE = 0.5;
+// Before this day a forecast is mostly prior, and calling a cycle doomed on day one is the
+// fastest way to lose the user's trust in the forecast.
+const FORECAST_MIN_CYCLE_DAY = 3;
+// Below this, a repeated charge is far more likely to be a daily habit at a fixed price
+// (the same coffee, the same bus fare) than a double charge.
+const DUPLICATE_MIN_ILS = 50;
+
 const SEVERITY = { critical: 0, high: 1, normal: 2 };
+
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+/**
+ * What the cycle expects to be spent on everyday things, once the committed money is out.
+ *
+ * Pace and burst must both measure against THIS, not against total spending: rent and the
+ * subscriptions land in one lump early in the cycle, so a total-based pace reads "40% of the
+ * month gone, 60% of the money gone" for anyone whose rent clears on day one — which is
+ * almost everyone — and a total-based daily rate is inflated by that same lump, so a real
+ * burst of everyday spending hides underneath it.
+ */
+function variableBudget(pnl) {
+    return num(pnl.projected_expenses) - num(pnl.fixed_expenses) - num(pnl.subscription_total);
+}
 
 /** Runs an Express handler and resolves with what it would have sent. */
 function run(handler, req, query = {}) {
@@ -121,8 +146,6 @@ async function buildContext(user, now) {
     return { user, req, settings, cycleKey, cycle, today, now, pnl, recent: recent || [], sync: sync || {} };
 }
 
-const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-
 /**
  * Each rule returns an alert or null. They are listed in the order a human would want to
  * hear them, and every one carries the numbers behind its own verdict so the agent phrases
@@ -136,8 +159,11 @@ const RULES = [
         if (connections === 0) return null;
         const failing = num(ctx.sync.failing);
         const lastOk = ctx.sync.last_ok ? new Date(ctx.sync.last_ok) : null;
-        const hoursSince = lastOk ? (ctx.now - lastOk) / 36e5 : Infinity;
-        if (failing === 0 && hoursSince < SYNC_STALE_HOURS) return null;
+        // Never synced is NEW, not stale. A first sync that fails flips status to 'error',
+        // which the failing check already catches; treating "no success yet" as stale would
+        // fire on every freshly added connection before it has had a chance to run.
+        const hoursSince = lastOk ? (ctx.now - lastOk) / 36e5 : null;
+        if (failing === 0 && (hoursSince === null || hoursSince < SYNC_STALE_HOURS)) return null;
         return {
             rule: 'data_stale',
             severity: 'critical',
@@ -145,7 +171,7 @@ const RULES = [
             payload: {
                 healthy: false,
                 last_successful_sync: lastOk ? localDate(lastOk) : null,
-                hours_since_last_sync: Number.isFinite(hoursSince) ? Math.floor(hoursSince) : null,
+                hours_since_last_sync: hoursSince === null ? null : Math.floor(hoursSince),
             },
         };
     },
@@ -154,7 +180,12 @@ const RULES = [
     //    thing the user cannot notice by looking at a balance that simply did not change.
     function salaryMissing(ctx) {
         const { pnl, cycle, settings } = ctx;
-        if (num(pnl.total_income_actual) > 0) return null;
+        const expected = num(pnl.total_income_projected);
+        // Someone who does not track income has no salary to miss; without this the rule
+        // would fire every cycle, forever, for every such user.
+        if (expected <= 0) return null;
+        // A partial payment still counts as arrived. Only a near-empty cycle is "missing".
+        if (num(pnl.total_income_actual) >= expected * SALARY_ARRIVED_SHARE) return null;
         const due = cy.chargeDateInCycle(cycle, settings.salaryDay);
         if (ctx.today < cy.addDays(due, SALARY_GRACE_DAYS)) return null;
         return {
@@ -173,6 +204,7 @@ const RULES = [
     function negativeForecast(ctx) {
         const net = num(ctx.pnl.forecasted_net_pnl);
         if (net >= 0) return null;
+        if (num(ctx.pnl.cycle_day) < FORECAST_MIN_CYCLE_DAY) return null;
         const daysLeft = num(ctx.pnl.days_left);
         return {
             rule: 'negative_forecast',
@@ -189,8 +221,9 @@ const RULES = [
 
     // 4. Salary landed: the one moment in the cycle where a single decision shapes the rest.
     function salaryArrived(ctx) {
+        const expected = num(ctx.pnl.total_income_projected);
         const received = num(ctx.pnl.total_income_actual);
-        if (received <= 0) return null;
+        if (expected <= 0 || received < expected * SALARY_ARRIVED_SHARE) return null;
         return {
             rule: 'salary_arrived',
             severity: 'normal',
@@ -211,10 +244,10 @@ const RULES = [
         const cycleDay = num(pnl.cycle_day);
         const daysInCycle = num(pnl.days_in_cycle);
         if (cycleDay < PACE_MIN_CYCLE_DAY || daysInCycle <= 0) return null;
-        const income = num(pnl.total_income_projected);
-        if (income <= 0) return null;
+        const budget = variableBudget(pnl);
+        if (budget <= 0) return null;
         const elapsedShare = cycleDay / daysInCycle;
-        const spentShare = num(pnl.total_expenses) / income;
+        const spentShare = num(pnl.variable_expenses) / budget;
         if (spentShare <= elapsedShare * PACE_FACTOR) return null;
         return {
             rule: 'pace_ahead',
@@ -222,7 +255,10 @@ const RULES = [
             dedupe_key: ctx.cycleKey,
             payload: {
                 spent: fx.money(num(pnl.total_expenses)),
-                income_expected: fx.money(income),
+                income_expected: fx.money(num(pnl.total_income_projected)),
+                // The decision is made on everyday money only; these two are what it used.
+                everyday_spent: fx.money(num(pnl.variable_expenses)),
+                everyday_budget: fx.money(budget),
                 spent_pct: Math.round(spentShare * 100),
                 cycle_elapsed_pct: Math.round(elapsedShare * 100),
                 days_left: num(pnl.days_left),
@@ -235,7 +271,7 @@ const RULES = [
         const { pnl } = ctx;
         const daysInCycle = num(pnl.days_in_cycle);
         if (daysInCycle <= 0) return null;
-        const expectedDaily = num(pnl.projected_expenses) / daysInCycle;
+        const expectedDaily = variableBudget(pnl) / daysInCycle;
         if (expectedDaily <= 0) return null;
         const since = cy.addDays(ctx.today, -BURST_WINDOW_DAYS);
         const rows = ctx.recent.filter((r) => !r.is_fixed && localDate(r.created_at) > since);
@@ -261,6 +297,7 @@ const RULES = [
     function duplicateCharge(ctx) {
         const seen = new Map();
         for (const row of [...ctx.recent].reverse()) {
+            if (num(row.amount) < DUPLICATE_MIN_ILS) continue;
             const key = `${num(row.amount).toFixed(2)}|${(row.description || '').trim().toLowerCase()}`;
             const prev = seen.get(key);
             const day = localDate(row.created_at);

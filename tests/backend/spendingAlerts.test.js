@@ -20,6 +20,8 @@ const BASE_PNL = {
     total_income_actual: 12000,
     total_income_projected: 12000,
     total_expenses: 4000,
+    fixed_expenses: 0,
+    variable_expenses: 4000,
     projected_expenses: 10000,
     subscription_total: 600,
     savings_allocation: 0,
@@ -108,17 +110,17 @@ describe('negative_forecast', () => {
 
 describe('pace_ahead', () => {
     it('fires when spending outruns the elapsed share of the cycle', () => {
-        // Day 12 of 30 is 40% elapsed; ₪7,200 of ₪12,000 is 60% spent.
-        expect(rules(ctx({ pnl: { total_expenses: 7200 } }))).toContain('pace_ahead');
+        // Day 12 of 30 is 40% elapsed; ₪7,200 of a ₪9,400 everyday budget is 77%.
+        expect(rules(ctx({ pnl: { total_expenses: 7200, variable_expenses: 7200 } }))).toContain('pace_ahead');
     });
 
     it('tolerates spending that is only slightly ahead', () => {
-        // 44% spent against 40% elapsed is inside the 1.15 factor.
-        expect(rules(ctx({ pnl: { total_expenses: 5280 } }))).not.toContain('pace_ahead');
+        // 46% spent against 40% elapsed is inside the 1.15 factor.
+        expect(rules(ctx({ pnl: { total_expenses: 4300, variable_expenses: 4300 } }))).not.toContain('pace_ahead');
     });
 
     it('stays quiet in the first days, when the elapsed share is unstable', () => {
-        const c = ctx({ pnl: { cycle_day: 3, total_expenses: 7200 } });
+        const c = ctx({ pnl: { cycle_day: 3, total_expenses: 7200, variable_expenses: 7200 } });
         expect(rules(c)).not.toContain('pace_ahead');
     });
 });
@@ -195,6 +197,48 @@ describe('unusual_expense', () => {
             expense_id: 40 + i, amount, description: `Buy ${i}`, created_at: '2026-11-12T08:00:00Z', is_fixed: 0,
         }));
         expect(rules(ctx({ recent: rows }))).not.toContain('unusual_expense');
+    });
+});
+
+describe('rules that used to misfire', () => {
+    it('does not call rent-heavy early spending a pace problem', () => {
+        // Day 7 of 30 with the rent already cleared. Measured on total spend this reads
+        // 37% spent against 23% elapsed and fired; everyday money is barely touched.
+        const c = ctx({ pnl: {
+            cycle_day: 7, days_left: 23,
+            total_expenses: 4500, fixed_expenses: 4000, variable_expenses: 500,
+        } });
+        expect(rules(c)).not.toContain('pace_ahead');
+    });
+
+    it('does not call a brand new connection stale before its first sync', () => {
+        expect(rules(ctx({ sync: { connections: 1, failing: 0, last_ok: null } })))
+            .not.toContain('data_stale');
+    });
+
+    it('does not let a small refund pass for the salary', () => {
+        // ₪200 against ₪12,000 expected. It must not consume the once-per-cycle slot.
+        const c = ctx({ pnl: { total_income_actual: 200 } });
+        expect(rules(c)).not.toContain('salary_arrived');
+        expect(rules(c)).toContain('salary_missing');
+    });
+
+    it('never claims a missing salary for someone who tracks no income', () => {
+        const c = ctx({ pnl: { total_income_actual: 0, total_income_projected: 0, forecasted_net_pnl: 100 } });
+        expect(rules(c)).not.toContain('salary_missing');
+    });
+
+    it('does not call a cycle doomed on its first days', () => {
+        const c = ctx({ pnl: { cycle_day: 2, forecasted_net_pnl: -900 } });
+        expect(rules(c)).not.toContain('negative_forecast');
+    });
+
+    it('does not call a daily habit at a fixed price a duplicate', () => {
+        const rows = [
+            { expense_id: 60, amount: 18, description: 'Coffee', created_at: '2026-11-12T08:00:00Z', is_fixed: 0 },
+            { expense_id: 61, amount: 18, description: 'Coffee', created_at: '2026-11-11T08:00:00Z', is_fixed: 0 },
+        ];
+        expect(rules(ctx({ recent: rows }))).not.toContain('duplicate_charge');
     });
 });
 

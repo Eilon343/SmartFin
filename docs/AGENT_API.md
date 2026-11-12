@@ -104,13 +104,13 @@ lets alerting be stateful without giving the agent a write path.
 
 | Rule | Severity | Fires when | Cooldown |
 |---|---|---|---|
-| `data_stale` | critical | a sync failed, or nothing synced for 48h | daily |
-| `salary_missing` | critical | no income 2 days past the expected salary day | per cycle |
+| `data_stale` | critical | a sync failed, or a previously working sync went 48h without one | daily |
+| `salary_missing` | critical | under half the expected income, 2 days past the salary day | per cycle |
 | `negative_forecast` | critical | `net_forecast` below zero | per cycle |
-| `pace_ahead` | high | spending outruns the elapsed share of the cycle by 15% | per cycle |
-| `spending_burst` | high | 3 days cost 2.5× their normal rate | daily |
-| `duplicate_charge` | high | same amount and description within 3 days | per expense |
-| `salary_arrived` | normal | income landed for the cycle | per cycle |
+| `pace_ahead` | high | everyday spending outruns the elapsed share of the cycle by 15% | per cycle |
+| `spending_burst` | high | 3 days cost 2.5× their normal everyday rate | daily |
+| `duplicate_charge` | high | same amount and description within 3 days, ≥ ₪50 | per expense |
+| `salary_arrived` | normal | at least half the expected income landed | per cycle |
 | `unusual_expense` | normal | one charge ≥ 3× the median of the user's other recent charges (min ₪200) | per expense |
 
 `unusual_expense` and `duplicate_charge` carry `description`, `category` and the date, so
@@ -126,6 +126,10 @@ behind its own verdict, so the agent phrases the alert rather than recomputing i
 connections: the agent is not allowed to learn that bank links exist at all. The rules that
 need those tables (`data_stale`, `duplicate_charge`) are precisely why detection runs in the
 backend and not in the agent.
+
+`pace_ahead` and `spending_burst` both measure **everyday** money — projected spend less
+fixed costs and subscriptions. Measured on total spend instead, they fire for anyone whose
+rent clears early in the cycle, which is almost everyone.
 
 Thresholds live at the top of `backend/src/services/spendingAlerts.js`. They are deliberately
 conservative — a false positive teaches the user to ignore alerts, and an ignored channel is

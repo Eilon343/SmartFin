@@ -66,8 +66,10 @@ negative_forecast   המחזור צפוי להסתיים במינוס. אמור 
 salary_missing      המשכורת לא נכנסה. אמור כמה ימים עברו (days_late).
 salary_arrived      הכסף נכנס. תן את התוכנית: כמה מנויים צפויים
                     (subscriptions_ahead), כמה פנוי (headroom), וכמה ליום.
-pace_ahead          הוצאת spent_pct מההכנסה כשעברו רק cycle_elapsed_pct
-                    מהמחזור. אמור כמה ימים נשארו.
+pace_ahead          הוצאת spent_pct מתקציב ההוצאות היומיומיות כשעברו רק
+                    cycle_elapsed_pct מהמחזור. המספרים שמאחורי ההחלטה הם
+                    everyday_spent ו-everyday_budget (בלי שכר דירה ומנויים).
+                    אמור כמה ימים נשארו.
 spending_burst      times_normal פעמים מהרגיל ב-window_days הימים האחרונים.
 duplicate_charge    אותו חיוב פעמיים. תן סכום, תיאור ושני התאריכים.
                     נסח כשאלה — ייתכן שזו רכישה אמיתית כפולה.
