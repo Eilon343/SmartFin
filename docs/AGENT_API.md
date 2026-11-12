@@ -15,7 +15,7 @@ Other boundaries:
 - The agent key works **only** on `/api/agent/*`. The dashboard JWT is not accepted there,
   and the agent key is not accepted anywhere else.
 - Only nginx's `:8081` block is public (Tailscale Funnel on port 8443), and it serves
-  nothing but these two paths. Compose binds 8081 to 127.0.0.1. The dashboard on 443, all
+  nothing but these four read-only paths (snapshot, what-if, loans, installments). Compose binds 8081 to 127.0.0.1. The dashboard on 443, all
   other `/api` routes and the webhook stay private to the tailnet.
 - Funnel runs on **8443, never 443**: Funnel exposes a whole port, and 443 is the dashboard.
 - Rate limit: 30 requests per minute per key.
@@ -71,7 +71,24 @@ The current cycle (from the user's cycle anchor day, not the calendar month).
 | `budget_total`, `budget_spent`, `budget_remaining` | Totals over categories that have a budget |
 | `categories[]` | `category, is_fixed, spent, budget, remaining, pct_used, typical_cycle, daily_allowance` (budget fields null when no budget is set) |
 | `upcoming_subscriptions[]` | `name, amount, category, date` — still to be charged this cycle |
+| `installments_ahead`, `loan_payments_ahead` | Card installment payments / loan repayments still to leave this cycle (already inside `net_forecast`) |
+| `recurring_monthly_total` | Committed monthly outflow (UI: הוצאות שוטפות) = subscriptions + active installments + loan repayments |
+| `subscriptions` | `monthly_total`, `items[]`: `name, amount, day_of_month, category, auto_detected, confirmed` |
+| `installments` | `active_count, monthly_commitment, remaining_total`, `items[]`: `merchant, monthly_amount, total_amount, total_payments, payments_made, remaining_payments, remaining_amount, next_payment_date, end_date` |
+| `loans_summary` | `count, total_outstanding, total_monthly_payment, next_payment {lender, date, amount}` |
 | `recent_expenses[]` | Last 10: `date, amount, description, category` |
+
+### `GET /api/agent/loans`
+
+`summary` (as `loans_summary` above) and `loans[]`: `lender, loan_type (mortgage|loan|overdraft|other),
+original_amount, outstanding_balance, interest_rate, monthly_payment, remaining_payments,
+next_payment_date, balance_updated_at, entry`. Loans are **manual entry** (`entry: "manual"`):
+the bank scraper does not report loan details, so balances are as of `balance_updated_at`.
+
+### `GET /api/agent/installments`
+
+Active card installment plans: `active_count, monthly_commitment, remaining_total, items[]`
+(fields as in the snapshot). Derived from the card feeds after every sync.
 
 ### `GET /api/agent/what-if?amount=300&category=Shopping`
 

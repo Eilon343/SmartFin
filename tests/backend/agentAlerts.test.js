@@ -62,10 +62,43 @@ describe('GET /api/agent/alerts', () => {
         expect(res.body.alerts[0].detected_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
-    it('scopes the read to the calling user', async () => {
+    it('scopes the read to the user the key belongs to', async () => {
+        // The identity comes from the key row, never from the request: one agent key reaches
+        // exactly one user's alerts, so two people using the same agent cannot see each
+        // other's money.
+        let readParams;
+        db.query.mockImplementation(async (sql, params = []) => {
+            if (sql.includes('FROM agent_api_keys k')) {
+                return params[0] === hashKey(KEY)
+                    ? [[{ key_id: 1, user_id: 42, cycle_anchor_day: 1, salary_day: 10 }]]
+                    : [[]];
+            }
+            if (sql.startsWith('UPDATE agent_api_keys')) return [{ affectedRows: 1 }];
+            if (sql.includes('FROM alert_log')) {
+                expect(sql).toMatch(/user_id = \?/);
+                readParams = params;
+                return [alertRows];
+            }
+            return [[]];
+        });
+
         await request(app).get('/api/agent/alerts').set(auth);
-        const read = sqlSeen.find((s) => s.includes('FROM alert_log'));
-        expect(read).toMatch(/user_id = \?/);
+        expect(readParams[0]).toBe(42);
+    });
+
+    it('ignores a user_id pushed in by the caller', async () => {
+        let readParams;
+        db.query.mockImplementation(async (sql, params = []) => {
+            if (sql.includes('FROM agent_api_keys k')) {
+                return [[{ key_id: 1, user_id: 42, cycle_anchor_day: 1, salary_day: 10 }]];
+            }
+            if (sql.startsWith('UPDATE agent_api_keys')) return [{ affectedRows: 1 }];
+            if (sql.includes('FROM alert_log')) { readParams = params; return [[]]; }
+            return [[]];
+        });
+
+        await request(app).get('/api/agent/alerts?user_id=7').set(auth);
+        expect(readParams[0]).toBe(42);
     });
 
     it('narrows to what fired after `since`', async () => {

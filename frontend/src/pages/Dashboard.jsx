@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import ProgressBar, { pct, tone } from '../components/ui/ProgressBar';
@@ -431,6 +432,93 @@ function SubscriptionsMini({ subs, onTogglePause }) {
         {subs.length === 0 && <div className="muted" style={{ fontSize: 13 }}>{t('dash_no_subs')}</div>}
       </div>
     </div>
+  );
+}
+
+/* -------- Account balance (real, from the bank) -------- */
+// What the bank itself reported on the latest sync — not a SmartFin calculation.
+function BalanceCard({ balances }) {
+  const { lang, t } = useI18n();
+  if (!balances || balances.current_total == null) return null;
+  const current = balances.accounts.filter(a => !a.is_savings);
+  const change = current.reduce((s, a) => s + (a.change ?? 0), 0);
+  const hasChange = current.some(a => a.change != null);
+  const asOf = balances.as_of
+    ? new Date(balances.as_of).toLocaleString(lang === 'he' ? 'he-IL' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : null;
+  const prevDate = current.find(a => a.previous)?.previous?.date;
+  return (
+    <section className="card card-pad-lg" style={{ marginBottom: 22 }}>
+      <div className="between" style={{ gap: 12, flexWrap: 'wrap' }}>
+        <div className="stack">
+          <span className="meta-label">{t('bal_title')}</span>
+          <span className="big-num" style={{ fontSize: 34, marginTop: 6 }} dir="ltr">{fmt(balances.current_total, 0)}</span>
+          <span className="muted-2" style={{ fontSize: 11.5 }}>
+            {current.map(a => `${a.bank}${a.account ? ` ··${a.account}` : ''}`).join(' · ')}{asOf ? ` · ${t('bal_as_of')} ${asOf}` : ''}
+          </span>
+        </div>
+        <div className="stack" style={{ alignItems: 'flex-end', gap: 6 }}>
+          {hasChange && (
+            <span className={`chip ${change >= 0 ? 'up' : 'down'}`}>
+              <Icon name={change >= 0 ? 'trending-up' : 'trending-down'} size={11} />
+              <span dir="ltr">{change >= 0 ? '+' : '−'}{fmt(Math.abs(change), 0)}</span>
+              {prevDate ? ` ${t('bal_since')} ${prevDate}` : ''}
+            </span>
+          )}
+          {balances.savings_total > 0 && (
+            <span className="muted" style={{ fontSize: 12 }}>
+              {t('bal_savings')}: <span className="mono" dir="ltr">{fmt(balances.savings_total, 0)}</span>
+            </span>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* -------- Recurring expenses (הוצאות שוטפות) -------- */
+// The committed monthly outflow at a glance: subscriptions (incl. auto-detected recurring
+// bank debits such as insurance and pension), active card installments, loan repayments.
+function RecurringCard({ recurring, aheadThisCycle }) {
+  const { t } = useI18n();
+  if (!recurring) return null;
+  const parts = [
+    { key: 'subs', icon: 'repeat', label: t('rec_subscriptions'), amount: recurring.subscriptions?.monthly_total || 0, count: recurring.subscriptions?.count || 0, to: '/subscriptions' },
+    { key: 'inst', icon: 'credit-card', label: t('rec_installments'), amount: recurring.installments?.monthly_commitment || 0, count: recurring.installments?.active_count || 0, to: '/subscriptions' },
+    { key: 'loans', icon: 'landmark', label: t('rec_loans'), amount: recurring.loans?.total_monthly_payment || 0, count: recurring.loans?.count || 0, to: '/loans' },
+  ];
+  return (
+    <section className="card card-pad-lg" style={{ marginBottom: 22 }}>
+      <div className="between" style={{ marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
+        <div className="stack">
+          <h3 className="h2">{t('rec_title')}</h3>
+          <span className="muted" style={{ fontSize: 12 }}>{t('rec_sub')}</span>
+        </div>
+        <div className="stack" style={{ alignItems: 'flex-end' }}>
+          <span className="big-num" style={{ fontSize: 28 }} dir="ltr">{fmt(recurring.total_monthly || 0, 0)}</span>
+          <span className="muted-2" style={{ fontSize: 11 }}>{t('dash_mo')}</span>
+        </div>
+      </div>
+      <div className="grid grid-3">
+        {parts.map(p => (
+          <Link key={p.key} to={p.to} className="card card-pad" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 9, background: 'var(--hover-bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Icon name={p.icon} size={16} />
+            </div>
+            <div className="stack" style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ fontWeight: 500, fontSize: 13 }}>{p.label}</span>
+              <span className="muted-2" style={{ fontSize: 11 }}>{p.count} {t('dash_active')}</span>
+            </div>
+            <span className="mono tnum" style={{ fontSize: 14 }} dir="ltr">{fmt(p.amount, 0)}</span>
+          </Link>
+        ))}
+      </div>
+      {aheadThisCycle > 0 && (
+        <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+          <Icon name="calendar-clock" size={12} /> {t('rec_ahead').replace('{amount}', fmt(aheadThisCycle, 0))}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -877,6 +965,8 @@ export default function Dashboard() {
   const [income, setIncome] = useState(null);
   const [subs, setSubs] = useState([]);
   const [goals, setGoals] = useState([]);
+  const [recurring, setRecurring] = useState(null);
+  const [balances, setBalances] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [openBudget, setOpenBudget] = useState(null);
@@ -919,7 +1009,9 @@ export default function Dashboard() {
       api.get(`/income/summary?month=${month}`, { signal }),
       api.get('/subscriptions', { signal }),
       api.get('/savings', { signal }),
-    ]).then(([p, prevP, b, e, inc, s, g]) => {
+      api.get('/recurring', { signal }),
+      api.get('/bank-connections/balances', { signal }),
+    ]).then(([p, prevP, b, e, inc, s, g, rec, bal]) => {
       if (signal.aborted) return;
       // allSettled means a dead network produces seven silent rejections and a page of
       // zeros — indistinguishable from a month with nothing in it, which is how a phone
@@ -945,6 +1037,8 @@ export default function Dashboard() {
       if (inc.status === 'fulfilled') setIncome(inc.value.data);
       if (s.status === 'fulfilled') setSubs(Array.isArray(s.value.data) ? s.value.data : []);
       if (g.status === 'fulfilled') setGoals(Array.isArray(g.value.data) ? g.value.data : []);
+      if (rec.status === 'fulfilled') setRecurring(rec.value.data);
+      if (bal.status === 'fulfilled') setBalances(bal.value.data);
     }).finally(() => { if (!signal.aborted) setLoading(false); });
   }, [month, settings]);
 
@@ -1142,6 +1236,9 @@ export default function Dashboard() {
           </div>
         </section>
       )}
+
+      <BalanceCard balances={balances} />
+      <RecurringCard recurring={recurring} aheadThisCycle={pnl?.commitments_ahead || 0} />
 
       <section className="grid grid-3" style={{ marginBottom: 22 }}>
         <IncomeCard income={income} />

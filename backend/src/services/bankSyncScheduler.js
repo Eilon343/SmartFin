@@ -5,6 +5,8 @@ const { sendPush } = require('../utils/push');
 const { zonedParts, instantAtLocalHour } = require('../utils/zonedTime');
 const bankCompanies = require('../config/bankCompanies');
 const { scrapeAccount, SCRAPER_ERROR_TYPES } = require('./bankScraperService');
+const { ruleCategoryOf, geminiHintOf } = require('./categoryRules');
+const commitments = require('./commitments');
 
 // A current account shows one lump settlement per card per month ("2624 - ישראכרט בע\"מ"),
 // while the card connection shows the individual purchases behind it. Importing both would
@@ -12,10 +14,18 @@ const { scrapeAccount, SCRAPER_ERROR_TYPES } = require('./bankScraperService');
 // connected, otherwise the money would vanish from the books entirely.
 const CARD_SETTLEMENT_PATTERNS = [
     { companyId: 'isracard', pattern: /ישראכרט|isracard/i },
-    { companyId: 'max', pattern: /מקס איט|max it|לאומי קארד/i },
+    // A Leumi debit card is issued by MAX, and each swipe posts to the Leumi account on its
+    // own ("לאומי דביט", plus the monthly "דמי כרטיס דביט") as well as to the MAX feed with
+    // the real merchant. Per purchase rather than a monthly lump, but the same duplicate.
+    { companyId: 'max', pattern: /מקס איט|max it|לאומי קארד|לאומי דביט|דמי כרטיס דביט/i },
     // "כאל" must stand alone — it is a substring of ordinary words like מיכאל,
     // and a false match here silently deletes a real transaction.
-    { companyId: 'visaCal', pattern: /ויזה כאל|כ\.א\.ל|(?<![א-ת])כאל(?![א-ת])|כרטיסי אשראי לישראל/i },
+    // Leumi shows the monthly Cal debit as "כרטיסי אשראי-י" (Cal's legal name, כרטיסי
+    // אשראי לישראל, cut short by the bank's direct-debit label). It was not matched, so on
+    // a real Leumi + Cal account every Cal purchase was counted twice — once per swipe
+    // from the card feed and again as the ~₪2,000 lump on the 10th. Anchored to the whole
+    // description so an unrelated row that merely mentions credit cards is not skipped.
+    { companyId: 'visaCal', pattern: /ויזה כאל|כ\.א\.ל|(?<![א-ת])כאל(?![א-ת])|כרטיסי אשראי לישראל|^\s*כרטיסי אשראי(-י)?\s*$/i },
     { companyId: 'amex', pattern: /אמריקן אקספרס|american express|amex/i },
 ];
 
@@ -33,6 +43,18 @@ const REFUND_PATTERNS = [
     /זיכוי מביט/,   // Bit transfer credited to the account
     /החזר זיכוי/,   // a transfer that bounced and was credited back
 ];
+
+/**
+ * Money a bank lends you is not income. Booked as income, a ₪41,000 car loan made one
+ * month look like a windfall and — through the decayed income average — inflated every
+ * income forecast after it. It becomes a negative expense in Loans instead, offsetting
+ * whatever it paid for; the repayments that follow are ordinary Loans expenses.
+ */
+const LOAN_DISBURSEMENT_PATTERN = /העמדת הלו?ואה|העמדת אשראי/;
+
+function isLoanDisbursement(description) {
+    return LOAN_DISBURSEMENT_PATTERN.test(description || '');
+}
 
 function isRefund(description) {
     return REFUND_PATTERNS.some((p) => p.test(description || ''));
@@ -70,6 +92,10 @@ function classifyRow(row, connectedCardIssuers = new Set()) {
 
     if (amount < 0) {
         return { action: 'expense', amount: Math.abs(amount), reason: 'bank_debit' };
+    }
+
+    if (isLoanDisbursement(row.description)) {
+        return { action: 'expense', amount: -amount, reason: 'loan_disbursement' };
     }
 
     // Money in that reverses spending rather than earning it.
@@ -172,6 +198,12 @@ const STAGE_TXN_QUERY =
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE status = VALUES(status), raw_json = VALUES(raw_json)`;
 
+const BALANCE_SNAPSHOT_QUERY =
+    `INSERT INTO account_balance_snapshots
+       (bank_connection_id, user_id, account_number, is_savings, snapshot_date, balance, currency)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE balance = VALUES(balance), is_savings = VALUES(is_savings), synced_at = NOW()`;
+
 /**
  * Pending transactions are deliberately left staged. A pending charge can still change
  * its amount or date when it settles (restaurant tips, foreign currency), and since the
@@ -232,7 +264,9 @@ const DUE_CONNECTIONS_QUERY =
  * of three months and silently skip the entire backfill.
  */
 function syncWindowStart(connection, now = Date.now()) {
-    if (!connection.last_sync_at) return new Date(now - FIRST_SYNC_LOOKBACK_MS);
+    // full_resync_pending: a one-off full re-scrape (migration 016 arms it on card
+    // connections so installment payments the old scrape options dropped get backfilled).
+    if (!connection.last_sync_at || connection.full_resync_pending) return new Date(now - FIRST_SYNC_LOOKBACK_MS);
     return new Date(new Date(connection.last_sync_at).getTime() - INCREMENTAL_OVERLAP_MS);
 }
 
@@ -369,8 +403,22 @@ async function syncConnection(connection) {
         }
     }
 
+    // The balance the bank itself reports. One snapshot per account per local day; a later
+    // sync the same day overwrites it with the fresher figure. Cards are skipped: Max does
+    // report a balance (the amount owed, negative), which is debt, not money in the bank.
+    const today = bankDateOf(new Date());
+    const accountsWithBalance = bankCompanies[connection.company_id]?.kind === 'card' ? [] : result.accounts;
+    for (const account of accountsWithBalance) {
+        const balance = Number(account.balance);
+        if (account.balance == null || !Number.isFinite(balance)) continue;
+        await db.query(BALANCE_SNAPSHOT_QUERY, [
+            connection.id, connection.user_id, account.accountNumber, !!account.savingsAccount,
+            today, balance, account.currency || 'ILS',
+        ]);
+    }
+
     await db.query(
-        "UPDATE bank_connections SET status='active', last_sync_at=NOW(), last_sync_status='ok', last_sync_error=NULL WHERE id=?",
+        "UPDATE bank_connections SET status='active', last_sync_at=NOW(), last_sync_status='ok', last_sync_error=NULL, full_resync_pending=FALSE WHERE id=?",
         [connection.id]
     );
     console.log(
@@ -405,10 +453,14 @@ async function reconcileSettlements(userId, cardCompanyId) {
     const entry = CARD_SETTLEMENT_PATTERNS.find((p) => p.companyId === cardCompanyId);
     if (!entry) return;
 
+    // Income too: a refund on a Leumi debit card posts to the bank as a "לאומי דביט"
+    // CREDIT while the card feed already books it as a negative expense, so the bank copy
+    // landed in income as phantom earnings.
     const [rows] = await db.query(
-        `SELECT t.id, t.expense_id, t.description FROM bank_transactions_raw t
+        `SELECT t.id, t.expense_id, t.income_id, t.description FROM bank_transactions_raw t
          JOIN bank_connections c ON c.id = t.bank_connection_id
-         WHERE t.user_id = ? AND t.import_status = 'imported' AND t.expense_id IS NOT NULL
+         WHERE t.user_id = ? AND t.import_status = 'imported'
+           AND (t.expense_id IS NOT NULL OR t.income_id IS NOT NULL)
            AND c.company_id <> ?`,
         [userId, cardCompanyId]
     );
@@ -416,9 +468,14 @@ async function reconcileSettlements(userId, cardCompanyId) {
     if (targets.length === 0) return;
 
     for (const row of targets) {
-        // Unlink before deleting — bank_transactions_raw.expense_id is a FK.
-        await db.query("UPDATE bank_transactions_raw SET import_status='skipped', expense_id=NULL WHERE id=?", [row.id]);
-        await db.query('DELETE FROM expenses WHERE expense_id = ? AND source = ?', [row.expense_id, 'bank_sync']);
+        // Unlink before deleting — bank_transactions_raw.expense_id/income_id are FKs.
+        await db.query("UPDATE bank_transactions_raw SET import_status='skipped', expense_id=NULL, income_id=NULL WHERE id=?", [row.id]);
+        if (row.expense_id) {
+            await db.query('DELETE FROM expenses WHERE expense_id = ? AND source = ?', [row.expense_id, 'bank_sync']);
+        }
+        if (row.income_id) {
+            await db.query("DELETE FROM income WHERE income_id = ? AND source = 'Bank Sync'", [row.income_id]);
+        }
     }
     console.log(
         `Reconciled ${targets.length} ${cardCompanyId} settlement expense(s) for user ${userId} ` +
@@ -618,10 +675,23 @@ async function runCategorizationDrain() {
         const expenseRows = liveRows.filter((r) => decisions.get(r.id).action === 'expense');
         const incomeRows = liveRows.filter((r) => decisions.get(r.id).action === 'income');
 
-        // One Gemini call per user, not per transaction. Reimbursements are excluded —
-        // "credit from Bit" has no category, and a guess would land in the wrong budget.
-        const categorizable = expenseRows.filter((r) => decisions.get(r.id).reason !== 'reimbursement');
+        // Deterministic rules first (services/categoryRules.js): loan repayments, fees,
+        // insurance and the like are not a judgement call, and Gemini got them wrong.
+        // Reimbursements are excluded — "credit from Bit" has no category, and a guess
+        // would land in the wrong budget.
         const categoryByRowId = new Map();
+        for (const r of expenseRows) {
+            const reason = decisions.get(r.id).reason;
+            if (reason === 'loan_disbursement') categoryByRowId.set(r.id, 'Loans');
+            else if (reason !== 'reimbursement') {
+                const ruled = ruleCategoryOf(r.description, r.memo);
+                if (ruled) categoryByRowId.set(r.id, ruled);
+            }
+        }
+        // One Gemini call per user, not per transaction, for what no rule claimed.
+        const categorizable = expenseRows.filter(
+            (r) => decisions.get(r.id).reason !== 'reimbursement' && !categoryByRowId.has(r.id)
+        );
         const userIds = [...new Set(categorizable.map((r) => r.user_id))];
         for (const userId of userIds) {
             const userRows = categorizable.filter((r) => r.user_id === userId);
@@ -629,8 +699,10 @@ async function runCategorizationDrain() {
                 'SELECT name FROM categories WHERE user_id IS NULL OR user_id = ? ORDER BY is_base DESC, name',
                 [userId]
             );
+            // The issuer's own category (Max / Visa Cal label every purchase) rides along
+            // as a hint — it was in raw_json all along and never reached the categorizer.
             const names = await callGeminiForCategories(
-                userRows.map((r) => r.description || ''),
+                userRows.map((r) => geminiHintOf(r)),
                 categories.map((c) => c.name)
             );
             userRows.forEach((r, i) => categoryByRowId.set(r.id, names[i]));
@@ -671,6 +743,13 @@ async function runCategorizationDrain() {
                 }
             }
         }
+        // Installment plans and detected subscriptions are derived from what was just
+        // imported; refresh them in the same tick so a payment that moved from "projected"
+        // to "imported" is never counted as both.
+        for (const userId of importedBy.keys()) {
+            await commitments.refreshUser(userId);
+        }
+
         console.log(
             `Categorization drain: ${imported} imported ` +
             `(${expenseRows.length} expense, ${incomeRows.length} income), ` +
@@ -755,12 +834,14 @@ async function runCategorizationDrain() {
 exports.classifyRow = classifyRow;
 exports.settlementIssuerOf = settlementIssuerOf;
 exports.isRefund = isRefund;
+exports.isLoanDisbursement = isLoanDisbursement;
 exports.hashTxn = hashTxn;
 exports.txnDateOf = txnDateOf;
 exports.bankDateOf = bankDateOf;
 // Exported so the import-eligibility rules can be asserted without a live DB.
 exports.DRAIN_QUERY = DRAIN_QUERY;
 exports.STAGE_TXN_QUERY = STAGE_TXN_QUERY;
+exports.BALANCE_SNAPSHOT_QUERY = BALANCE_SNAPSHOT_QUERY;
 exports.DUE_CONNECTIONS_QUERY = DUE_CONNECTIONS_QUERY;
 exports.syncWindowStart = syncWindowStart;
 exports.lastDueSlot = lastDueSlot;
@@ -785,6 +866,9 @@ exports.start = () => {
         `Bank sync scheduled for ${SYNC_HOURS_LOCAL.map((h) => `${String(h).padStart(2, '0')}:00`).join(' and ')} ` +
         `${BANK_TIMEZONE} — next due slot passed at ${lastDueSlot().toISOString()}`
     );
+    // Derived tables (installment plans, detected subscriptions) and one-off repairs,
+    // so a deploy shows them without waiting for the next scrape.
+    commitments.refreshAll().catch((err) => console.error('commitments.refreshAll:', err));
     loop(runSyncCycle, SYNC_INTERVAL_MS, 'runSyncCycle');
     loop(runCategorizationDrain, DRAIN_INTERVAL_MS, 'runCategorizationDrain');
 };

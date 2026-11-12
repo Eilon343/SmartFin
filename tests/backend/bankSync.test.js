@@ -62,6 +62,27 @@ describe('classifyRow — no double counting', () => {
     });
 });
 
+// A Leumi debit card is issued by MAX. Every swipe posts to the Leumi account on its
+// own as "לאומי דביט" AND to the MAX feed with the real merchant — per purchase, not
+// as a monthly lump. Seen in production: every one of ~45 debit rows had a same-amount
+// MAX twin 0–7 days earlier, including the monthly card fee.
+describe('classifyRow — Leumi debit card swipes', () => {
+    const leumi = (description, charged_amount) => ({ company_id: 'leumi', charged_amount, description });
+
+    test.each([
+        ['לאומי דביט', -311.9],
+        ['דמי כרטיס דביט', -7],
+    ])('%s is skipped when MAX is connected', (description, amount) => {
+        expect(classifyRow(leumi(description, amount), new Set(['max']))).toEqual({
+            action: 'skip', amount: 0, reason: 'settlement_of_max',
+        });
+    });
+
+    test('is IMPORTED when MAX is not connected, so the spending never vanishes', () => {
+        expect(classifyRow(leumi('לאומי דביט', -98.1), new Set(['isracard'])).action).toBe('expense');
+    });
+});
+
 describe('reimbursements are not income', () => {
     // You pay ₪200 for a shared meal, friends send ₪50 each via Bit. That money
     // reverses spending — booking it as income inflates earnings and, via
@@ -111,6 +132,8 @@ describe('settlementIssuerOf', () => {
     test.each([
         ['2624 - ישראכרט בע"מ', 'isracard'],
         ['מקס איט פיננסים', 'max'],
+        ['לאומי דביט', 'max'],
+        ['דמי כרטיס דביט', 'max'],
         ['ויזה כאל', 'visaCal'],
         ['אמריקן אקספרס', 'amex'],
     ])('%s → %s', (description, expected) => {

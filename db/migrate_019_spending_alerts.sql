@@ -1,4 +1,4 @@
--- Migration 016: the proactive alerts the agent has already been told about.
+-- Migration 019: the proactive alerts the agent has already been told about.
 --
 -- backend/src/services/spendingAlerts.js evaluates the rules on a timer and writes what
 -- fired here. GET /api/agent/alerts then only READS this table, which is what keeps the

@@ -45,10 +45,14 @@ export default function Subscriptions() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
+  const [installments, setInstallments] = useState({ plans: [], summary: null });
 
   const reload = useCallback(() => {
     setLoading(true);
     api.get('/subscriptions').then(r => setSubs(r.data)).finally(() => setLoading(false));
+    // Card installment plans live beside subscriptions: both are money already committed
+    // for the months ahead. A failure here must not blank the subscriptions list.
+    api.get('/installments').then(r => setInstallments(r.data)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -118,6 +122,17 @@ export default function Subscriptions() {
       reload();
     } catch (err) {
       setError(t('sub_err_pause'));
+    }
+  }
+
+  // Approves an auto-detected subscription; removing one is the normal delete, which keeps
+  // a tombstone server-side so it is not detected again.
+  async function handleConfirm(s) {
+    try {
+      await api.put(`/subscriptions/${s.subscription_id}/confirm`);
+      reload();
+    } catch {
+      setError(t('sub_err_confirm'));
     }
   }
 
@@ -261,6 +276,11 @@ export default function Subscriptions() {
                   <div className="row" style={{ gap: 8, minWidth: 0 }}>
                     <span style={{ fontWeight: 500, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
                     {!!s.paused && <span className="chip" style={{ fontSize: 11, padding: '2px 6px', background: 'var(--hover-bg)' }}>{t('sub_paused')}</span>}
+                    {s.auto_detected && (
+                      <span className="chip idg" style={{ fontSize: 11, padding: '2px 6px', flexShrink: 0 }} title={t('sub_auto_hint')}>
+                        <Icon name="sparkles" size={10} /> {s.needs_review ? t('sub_auto_review') : t('sub_auto')}
+                      </span>
+                    )}
                   </div>
                   <span className="muted-2" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {lang === 'he' ? `חודשי · הבא ב-${s.day_of_month}` : `Monthly · next on the ${ordinal(s.day_of_month)}`}
@@ -270,6 +290,17 @@ export default function Subscriptions() {
                 <span className="mono tnum" style={{ fontSize: 13, opacity: s.paused ? 0.6 : 1 }} dir="ltr">
                   {fmt(s.amount, s.amount % 1 ? 2 : 0)}
                 </span>
+                {s.needs_review && (
+                  <button
+                    className="btn ghost icon"
+                    style={{ width: 40, height: 40, color: 'var(--emerald)' }}
+                    onClick={() => handleConfirm(s)}
+                    title={t('sub_approve')}
+                    aria-label={t('sub_approve')}
+                  >
+                    <Icon name="check" size={16} />
+                  </button>
+                )}
                 <button
                   className="btn ghost icon"
                   style={{ width: 40, height: 40, color: 'var(--text-1)' }}
@@ -297,6 +328,54 @@ export default function Subscriptions() {
                 >
                   <Icon name="trash-2" size={13} />
                 </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Card installment plans */}
+      <div className="card" style={{ overflow: 'hidden', marginTop: 20 }}>
+        <div className="between" style={{ padding: '18px 22px', gap: 12, flexWrap: 'wrap' }}>
+          <div className="stack" style={{ gap: 2 }}>
+            <h3 className="h2">{t('inst_title')}</h3>
+            <span className="muted-2" style={{ fontSize: 12 }}>{t('inst_sub')}</span>
+          </div>
+          {installments.summary && (
+            <div className="stack" style={{ alignItems: 'flex-end', gap: 2 }}>
+              <span className="meta-label">{t('inst_monthly')}</span>
+              <span className="mono tnum" style={{ fontSize: 18, fontWeight: 600 }} dir="ltr">
+                {fmt(installments.summary.monthly_commitment || 0)}
+              </span>
+            </div>
+          )}
+        </div>
+        {(installments.plans || []).filter(p => p.active).length === 0 ? (
+          <div style={{ padding: '0 22px 22px', color: 'var(--text-3)', fontSize: 13 }}>
+            {t('inst_none')}
+          </div>
+        ) : (
+          <div style={{ padding: '0 22px 14px' }}>
+            {installments.plans.filter(p => p.active).map(p => (
+              <div key={p.plan_id} className="sub-row">
+                <div style={{
+                  width: 36, height: 36, borderRadius: 9, background: 'var(--hover-bg-2)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <Icon name="credit-card" size={16} />
+                </div>
+                <div className="stack" style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: 500, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.merchant}</span>
+                  <span className="muted-2" style={{ fontSize: 11 }}>
+                    {t('inst_progress').replace('{made}', p.payments_made).replace('{total}', p.total_payments)}
+                    {' · '}{t('inst_remaining').replace('{n}', p.remaining_payments)}
+                    {p.end_date ? ` · ${t('inst_ends')} ${p.end_date}` : ''}
+                  </span>
+                </div>
+                <div className="stack" style={{ alignItems: 'flex-end' }}>
+                  <span className="mono tnum" style={{ fontSize: 13 }} dir="ltr">{fmt(p.monthly_amount, p.monthly_amount % 1 ? 2 : 0)}</span>
+                  <span className="muted-2 mono" style={{ fontSize: 11 }} dir="ltr">{fmt(p.remaining_amount)} {t('inst_left')}</span>
+                </div>
               </div>
             ))}
           </div>
