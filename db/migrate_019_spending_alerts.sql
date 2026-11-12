@@ -22,7 +22,7 @@
 
 CREATE TABLE IF NOT EXISTS alert_log (
     alert_id   BIGINT       AUTO_INCREMENT PRIMARY KEY,
-    user_id    INT          NOT NULL,
+    user_id    BIGINT       NOT NULL,
     rule       VARCHAR(40)  NOT NULL,
     severity   VARCHAR(10)  NOT NULL,
     dedupe_key VARCHAR(60)  NOT NULL,
