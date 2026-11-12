@@ -22,5 +22,7 @@ const agentLimiter = rateLimit({
 router.use(agentLimiter);
 router.get('/snapshot', agentAuth, agentController.getSnapshot);
 router.get('/what-if', agentAuth, agentController.whatIf);
+// Proactive alerts, written by services/spendingAlerts.js on a timer. Still read-only.
+router.get('/alerts', agentAuth, agentController.getAlerts);
 
 module.exports = router;

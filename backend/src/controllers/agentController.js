@@ -245,3 +245,60 @@ exports.whatIf = async (req, res) => {
         res.status(500).json({ error: 'Failed to run what-if' });
     }
 };
+
+/**
+ * The proactive alerts the agent has not acted on yet.
+ *
+ * Read-only, like everything else here: services/spendingAlerts.js evaluates the rules on a
+ * timer and writes them, and this only reads the log. That is what lets alerting be
+ * stateful without giving the agent a write path.
+ *
+ * `since` (ISO timestamp, optional) returns only what fired after it, so a polling agent
+ * can tell a new alert from one it already raised with the user. Without it, the whole of
+ * the current cycle comes back.
+ *
+ * PRIVACY: `data_stale` reports only whether syncing is healthy and when it last succeeded.
+ * It must never gain a bank name, an account identifier, or a count of connections — the
+ * agent is not allowed to learn that bank links exist at all.
+ */
+exports.getAlerts = async (req, res) => {
+    try {
+        const settings = cy.normalizeSettings(req.cycleSettings);
+        const cycleKey = cy.currentCycleKey(settings);
+
+        let since = null;
+        if (req.query.since !== undefined) {
+            since = new Date(req.query.since);
+            if (Number.isNaN(since.getTime())) {
+                return res.status(400).json({ error: 'since must be an ISO 8601 timestamp' });
+            }
+        }
+
+        const params = [req.user.user_id, cycleKey];
+        let sql = `SELECT rule, severity, payload, sent_at
+                   FROM alert_log WHERE user_id = ? AND cycle_key = ?`;
+        if (since) {
+            sql += ' AND sent_at > ?';
+            params.push(since);
+        }
+        sql += ' ORDER BY sent_at DESC LIMIT 50';
+
+        const [rows] = await db.query(sql, params);
+
+        res.json({
+            currency: 'ILS',
+            generated_at: new Date().toISOString(),
+            cycle_key: cycleKey,
+            alerts: (rows || []).map((r) => ({
+                rule: r.rule,
+                severity: r.severity,
+                detected_at: new Date(r.sent_at).toISOString(),
+                // mysql2 hands back parsed JSON on some versions and a string on others.
+                data: typeof r.payload === 'string' ? JSON.parse(r.payload || '{}') : (r.payload || {}),
+            })),
+        });
+    } catch (err) {
+        console.error('Agent alerts error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
