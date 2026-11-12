@@ -394,16 +394,22 @@ exports.getPnL = async (req, res) => {
     // One window end for every expense query: the clamp is a shorter window, not a
     // different query, which is what collapsed the old MTD/full SQL pairs into one each.
     //
-    // ...and it never reaches past today. Card sync imports a transaction on its own date,
-    // and an installment plan's later payments carry dates that are genuinely in the future
-    // (see the backfill note in services/bankSyncScheduler.js). Running the window to the
-    // cycle's end counted that money as already spent: it inflated total_expenses, entered
-    // current_net_pnl -- which is actuals only -- and seeded the forecast's spentToDate. It
-    // was also counted a SECOND time, as commitments_ahead, which derives the same payments
-    // from installment_plans. Committed money belongs there and only there.
+    // ...and the actuals half of it never reaches past today. An expense row may carry a
+    // future date: card sync imports each installment payment dated to the month it belongs
+    // to, and the scraper returns some of those ahead of time. That money is real and
+    // committed, but it has not been spent, so it must not sit in total_expenses,
+    // current_net_pnl (actuals only) or the projection's spentToDate.
+    //
+    // It must not vanish either. installments.installmentsAhead projects only the payments
+    // AFTER a plan's last imported one, so an imported future payment is in no projection:
+    // it exists only as this row. The same query therefore also sums the rows from today to
+    // the cycle's end (`ahead`), and that sum joins commitments_ahead. Every payment is still
+    // counted exactly once -- as an actual once its date has passed, as a commitment before.
     const tomorrow = cy.addDays(cy.todayISO(), 1);
     const requestedEnd = isMTD ? cy.addDays(cycle.start, asOfDay) : cycle.end;
     const windowEnd = requestedEnd < tomorrow ? requestedEnd : tomorrow;
+    // How far the query reads. Under the MTD clamp, nothing past the clamp is wanted at all.
+    const queryEnd = isMTD ? windowEnd : cycle.end;
 
     try {
         const lookback = fx.pastMonths(month, fx.LOOKBACK_MONTHS);
@@ -418,14 +424,18 @@ exports.getPnL = async (req, res) => {
         // Expenses have a real `created_at` timestamp, so we clamp them via SQL rather than pro-rating.
         // Split into fixed vs variable buckets via categories.is_fixed for smart forecasting.
         // NULL category_id (uncategorized) treated as variable.
+        // One query, two sums, so the positional query order every getPnL test mocks against
+        // is unchanged: `total` is actuals up to windowEnd, `ahead` the dated rows after it.
         const expensesSql =
-            `SELECT COALESCE(c.is_fixed, FALSE) AS is_fixed, COALESCE(SUM(e.amount), 0) AS total
+            `SELECT COALESCE(c.is_fixed, FALSE) AS is_fixed,
+                    COALESCE(SUM(CASE WHEN e.created_at < ? THEN e.amount END), 0) AS total,
+                    COALESCE(SUM(CASE WHEN e.created_at >= ? THEN e.amount END), 0) AS ahead
              FROM expenses e LEFT JOIN categories c ON e.category_id = c.category_id
              WHERE e.user_id = ? AND e.created_at >= ? AND e.created_at < ? AND e.is_virtual = FALSE
              GROUP BY COALESCE(c.is_fixed, FALSE)`;
 
         const [[expRows], [subRows], [savRows], [fixedRows], [varActualRows], [varPastRows], [expPastRows], [dowRows], [planRows], [loanRows]] = await Promise.all([
-            db.query(expensesSql, [user_id, cycle.start, windowEnd]),
+            db.query(expensesSql, [windowEnd, windowEnd, user_id, cycle.start, queryEnd]),
             // Subscriptions that have NOT been charged yet in this cycle. Once the billing
             // day passes, the real charge is already in `expenses` — imported by bank/card
             // sync — so counting the subscription too would subtract it twice.
@@ -505,10 +515,12 @@ exports.getPnL = async (req, res) => {
         ]);
 
         // Bucket expenses by fixed/variable. Row may be missing if no rows in that bucket.
-        let fixed_sum = 0, variable_sum = 0;
+        let fixed_sum = 0, variable_sum = 0, scheduled_ahead = 0;
         for (const r of expRows) {
             if (Number(r.is_fixed) === 1) fixed_sum = Number(r.total);
             else variable_sum = Number(r.total);
+            // Fixed or variable alike: a dated charge still to come is a commitment either way.
+            scheduled_ahead += Number(r.ahead) || 0;
         }
         const total_expenses = fixed_sum + variable_sum;
         // Subscriptions still ahead of us, resolved to real dates inside this cycle. A
@@ -542,7 +554,7 @@ exports.getPnL = async (req, res) => {
             })
             .filter(l => l && l.date > todayISO)
             .reduce((sum, l) => sum + l.amount, 0);
-        const commitments_ahead = subscription_total + installments_ahead + loan_payments_ahead;
+        const commitments_ahead = subscription_total + installments_ahead + loan_payments_ahead + scheduled_ahead;
         const savings_allocation = Number(savRows[0].total);
         const fixed_income = Number(fixedRows[0].total) * proRate;
         const variable_actual = Number(varActualRows[0].total) * proRate;
@@ -677,6 +689,8 @@ exports.getPnL = async (req, res) => {
             projected_expenses: Math.round(projected_expenses * 100) / 100,
             subscription_total: Math.round(subscription_total * 100) / 100,
             installments_ahead: Math.round(installments_ahead * 100) / 100,
+            // Expense rows already imported with a date still ahead in this cycle.
+            scheduled_ahead: Math.round(scheduled_ahead * 100) / 100,
             loan_payments_ahead: Math.round(loan_payments_ahead * 100) / 100,
             commitments_ahead: Math.round(commitments_ahead * 100) / 100,
             savings_allocation: Math.round(savings_allocation * 100) / 100,

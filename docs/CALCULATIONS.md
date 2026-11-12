@@ -197,29 +197,33 @@ Under MTD, `projected_expenses = total_expenses` (no run-rate) and `forecasted_n
 
 ### The actuals window stops at today
 
-Whatever `as_of_day` asks for, the expense and savings-transfer window is capped at
-tomorrow, so it never reaches into the future half of a live cycle.
+The expense query reads the whole cycle but splits it at tomorrow: rows dated up to today
+are **actuals** (`total_expenses`, `current_net_pnl`, the projection's `spentToDate`); rows
+dated later in the cycle are **`scheduled_ahead`**, which joins `commitments_ahead`. One
+query returns both sums, so the positional query order every getPnL test mocks is unchanged.
 
-An expense row may legitimately carry a future date. Card sync writes each transaction on
-its own date, and an installment plan's later payments are scheduled months out — the
-backfill in `bankSyncScheduler.js` imports them deliberately. Run to `cycle.end`, the window
-counted that money as already spent: it inflated `total_expenses`, entered `current_net_pnl`
-(documented as actuals only), and became the `spentToDate` seed of the variable projection,
-so the forecast compounded it.
+An expense row may legitimately carry a future date. Card sync imports each installment
+payment dated to the month it belongs to, and the scraper returns some of them before that
+month arrives. Counted as actuals, that money read as already spent: it inflated
+`total_expenses` and `current_net_pnl` (actuals only) and seeded the variable projection,
+which compounded it.
 
-It was also counted **twice**. `commitments_ahead` derives the same payments from
-`installment_plans` for the remainder of the cycle, so a future installment was both an
-actual and a commitment. Committed money belongs in `commitments_ahead` and nowhere else.
+It must not be dropped either. `installmentsAhead` projects only the payments **after** a
+plan's last imported one — the module's own counted-once rule — so an imported future
+payment appears in no projection; this row is its only record. A first version of this fix
+capped the window and stopped there, which removed those payments from the forecast
+entirely. The split keeps every payment counted exactly once: as a commitment until its
+date, as an actual after it.
 
-A past cycle is unaffected — every date in it is behind us, so the cap never binds. A future
-cycle now reports ₪0 actuals, which is what it has.
+A past cycle is unaffected: every date in it is behind us, so the split is its end and
+`scheduled_ahead` is 0. Under the MTD clamp the read stops at the clamp, so it is 0 there
+too.
 
-Linear pro-rating of income is deliberately **accrual, not cash**. The mathematical review
-called for a step-function/liquidity view instead; that was rejected, because the clamp exists
-for exactly one job — comparing May 1–8 with April 1–8. Under a cash view a salary landing on
-the 10th makes both windows read ₪0 and the comparison becomes payday-timing noise. The real
-question behind that objection ("what do I actually have right now?") is answered by
-`safe_to_spend_per_day` below, not by changing this clamp.
+**Budgets deliberately differ.** `getBudgets` still reads to the cycle's end, so a dated
+future payment counts against its category budget now. That is the useful behaviour for an
+envelope — the money is committed, and a budget that ignored it would let the category be
+overspent with no warning until the charge lands. So a category's `spent` can exceed its
+share of `total_expenses` by exactly its part of `scheduled_ahead`.
 
 ### Day-of-week seasonality
 

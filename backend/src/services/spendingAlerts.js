@@ -140,17 +140,6 @@ async function buildContext(user, now) {
     // number the user cannot find in the app.
     const pnl = await run(expenseController.getPnL, req, { month: cycleKey });
 
-    // The same P&L clamped to days 1..today (`as_of_day`, the dashboard's own MTD window).
-    // getPnL's unclamped expense window runs to the END of the cycle, so a charge dated
-    // later in the cycle -- bank sync imports pending and scheduled charges, which really
-    // do arrive dated ahead -- is already inside `variable_expenses`. Comparing that against
-    // the share of the cycle that has elapsed counts money not yet spent as overspending.
-    // Income and subscriptions are pro-rated under the clamp, so only expense actuals may be
-    // read from here; everything about income still comes from `pnl` above.
-    const pnlToDate = await run(expenseController.getPnL, req, {
-        month: cycleKey,
-        as_of_day: num(pnl.cycle_day) || 1,
-    });
 
     // One window wide enough for the burst, duplicate and unusual-charge rules together.
     const lookbackDays = Math.max(BURST_WINDOW_DAYS, DUPLICATE_WINDOW_DAYS, 7);
@@ -162,10 +151,10 @@ async function buildContext(user, now) {
          WHERE e.user_id = ? AND e.is_virtual = FALSE
                AND e.created_at >= ? AND e.created_at < ?
          ORDER BY e.created_at DESC`,
-        // The upper bound is not cosmetic. A real (non-virtual) expense may carry a future
-        // date -- a scheduled charge the user entered ahead of time -- and without it the
-        // burst, duplicate and unusual-charge rules would all treat money not yet spent as
-        // "just spent", and the agent would tell the user about a charge that never happened.
+        // The upper bound is not cosmetic. An imported installment payment is dated to the
+        // month it belongs to, and the scraper returns some of them ahead of time. Without
+        // the bound the burst, duplicate and unusual-charge rules all treated money not yet
+        // spent as "just spent", and the agent reported a charge that had not happened.
         [user.user_id, cy.addDays(today, -lookbackDays), cy.addDays(today, 1)]
     );
 
@@ -179,7 +168,7 @@ async function buildContext(user, now) {
         [user.user_id]
     );
 
-    return { user, req, settings, cycleKey, cycle, today, now, pnl, pnlToDate, recent: recent || [], sync: sync || {} };
+    return { user, req, settings, cycleKey, cycle, today, now, pnl, recent: recent || [], sync: sync || {} };
 }
 
 /**
@@ -283,9 +272,10 @@ const RULES = [
         const budget = variableBudget(pnl);
         if (budget <= 0) return null;
         const elapsedShare = cycleDay / daysInCycle;
-        // Spent SO FAR, against time elapsed so far. Both sides must stop at today.
-        const toDate = ctx.pnlToDate || pnl;
-        const spentToDate = num(toDate.variable_expenses);
+        // Spent SO FAR, against time elapsed so far. Both sides must stop at today, which
+        // getPnL's actuals now do on their own: its expense window ends at today and moves
+        // dated future charges into commitments_ahead.
+        const spentToDate = num(pnl.variable_expenses);
         const spentShare = spentToDate / budget;
         if (spentShare <= elapsedShare * PACE_FACTOR) return null;
         return {
@@ -293,10 +283,9 @@ const RULES = [
             severity: 'high',
             dedupe_key: ctx.cycleKey,
             payload: {
-                // Also clamped. The agent is told every number it quotes must come from the
-                // API, so a payload must not carry a to-date figure and a whole-cycle one
-                // side by side under names that both read as "spent".
-                spent: fx.money(num(toDate.total_expenses)),
+                // To date, like everyday_spent. The agent is told every number it quotes comes
+                // from the API, so two figures that both read as "spent" must count one period.
+                spent: fx.money(num(pnl.total_expenses)),
                 income_expected: fx.money(expectedIncome(pnl)),
                 // The decision is made on everyday money only; these two are what it used.
                 everyday_spent: fx.money(spentToDate),

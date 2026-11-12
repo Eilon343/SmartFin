@@ -43,9 +43,6 @@ function ctx(over = {}) {
         today: '2026-11-12',
         now: NOW,
         pnl: { ...BASE_PNL, ...(over.pnl || {}) },
-        // The cycle-to-date clamp. Unless a test sets it, spending to date is all the
-        // spending there is, which is the case for any cycle with no future-dated charges.
-        pnlToDate: { ...BASE_PNL, ...(over.pnl || {}), ...(over.pnlToDate || {}) },
         recent: over.recent || [],
         sync: over.sync !== undefined ? over.sync : { connections: 1, failing: 0, last_ok: NOW },
     };
@@ -316,40 +313,6 @@ describe('the lookback window', () => {
         // Lower bound, then an upper bound that is tomorrow: today's charges count, later ones do not.
         expect(expenseParams[2]).toBe('2026-11-13');
         expect(new Date(expenseParams[2]) > new Date(expenseParams[1])).toBe(true);
-    });
-});
-
-describe('pace measured against elapsed spending only', () => {
-    it('does not call a future-dated charge overspending', () => {
-        // Bank sync imports pending and scheduled charges dated later in the cycle, and
-        // getPnL's unclamped window runs to the cycle's end, so they land in
-        // variable_expenses. Day 12 of 30: 6,000 of a 9,400 budget reads as 64% spent
-        // against 40% elapsed and fired, while only 3,000 has actually left the account.
-        const c = ctx({
-            pnl: { variable_expenses: 6000 },
-            pnlToDate: { variable_expenses: 3000 },
-        });
-        expect(rules(c)).not.toContain('pace_ahead');
-    });
-
-    it('still fires, and quotes the clamped figure, once real spending runs ahead', () => {
-        const c = ctx({
-            pnl: { variable_expenses: 8000 },
-            pnlToDate: { variable_expenses: 7000 },
-        });
-        const hit = find(c, 'pace_ahead');
-        expect(hit.payload.everyday_spent).toBe(7000);
-    });
-
-    it('reports every spend figure to date, never one of each', () => {
-        // The agent is instructed that each number it quotes comes from the API. A payload
-        // holding a to-date figure beside a whole-cycle one, both named for spending, makes
-        // the choice between them the model's.
-        const c = ctx({
-            pnl: { variable_expenses: 8000, total_expenses: 12000 },
-            pnlToDate: { variable_expenses: 7000, total_expenses: 11000 },
-        });
-        expect(find(c, 'pace_ahead').payload.spent).toBe(11000);
     });
 });
 

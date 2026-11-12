@@ -99,6 +99,8 @@ describe('GET /api/agent/snapshot', () => {
         expect(b.recurring_monthly_total).toBe(0);
         expect(b).toHaveProperty('installments_ahead');
         expect(b).toHaveProperty('loan_payments_ahead');
+        // Part of net_forecast, so it must be visible or the forecast cannot be reconciled.
+        expect(b).toHaveProperty('scheduled_ahead');
     });
 
     test('returns flat cycle figures and per-category budget state', async () => {

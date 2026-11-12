@@ -67,7 +67,7 @@ function history(months, perMonth, anchor = MONTH_NOW) {
 // once a cycle straddles two calendar months. `subscriptionDay` is the billing day of the
 // single row emitted; tests that care whether it is still ahead say so explicitly.
 function mockPnL({
-    expenses = '0', subscriptions = '0', subscriptionDay = 15, savings = '0',
+    expenses = '0', expensesAhead = '0', subscriptions = '0', subscriptionDay = 15, savings = '0',
     fixedIncome = '0', variableActual = '0',
     incomeHistory = [], expenseHistory = [], dow = [],
     // Migration 016: card installment plans and active loans, projected into the forecast.
@@ -82,7 +82,7 @@ function mockPnL({
         : [];
     db.query
         .mockResolvedValueOnce([[{ user_id: TEST_USER.user_id, ...settings }]])   // auth
-        .mockResolvedValueOnce([[{ total: expenses }]])              // expenses this cycle
+        .mockResolvedValueOnce([[{ total: expenses, ahead: expensesAhead }]]) // expenses: to date, dated ahead
         .mockResolvedValueOnce([subRows])                            // subscriptions
         .mockResolvedValueOnce([[{ total: savings }]])               // savings allocations
         .mockResolvedValueOnce([[{ total: fixedIncome }]])           // fixed income
@@ -579,7 +579,8 @@ describe('GET /api/pnl - the queried window is the user\'s financial cycle', () 
 
         const params = paramsOf(/GROUP BY COALESCE\(c\.is_fixed/);
         // Half-open: the 9 Oct spend is inside, the 10 Oct spend opens the next cycle.
-        expect(params).toEqual([TEST_USER.user_id, '2026-09-10', '2026-10-10']);
+        // The leading pair is the actuals/ahead split; a finished cycle splits at its end.
+        expect(params).toEqual(['2026-10-10', '2026-10-10', TEST_USER.user_id, '2026-09-10', '2026-10-10']);
     });
 
     it('reduces to the calendar month on the default anchor', async () => {
@@ -588,7 +589,7 @@ describe('GET /api/pnl - the queried window is the user\'s financial cycle', () 
         await request(app).get('/api/pnl?month=2026-09').set(authHeader());
 
         expect(paramsOf(/GROUP BY COALESCE\(c\.is_fixed/))
-            .toEqual([TEST_USER.user_id, '2026-09-01', '2026-10-01']);
+            .toEqual(['2026-10-01', '2026-10-01', TEST_USER.user_id, '2026-09-01', '2026-10-01']);
     });
 
     it('clamps the MTD window to N days from the ANCHOR, not from the 1st', async () => {
@@ -598,7 +599,7 @@ describe('GET /api/pnl - the queried window is the user\'s financial cycle', () 
 
         // Days 1-8 of the cycle are 10-17 Sep, so the window ends at 18 Sep exclusive.
         expect(paramsOf(/GROUP BY COALESCE\(c\.is_fixed/))
-            .toEqual([TEST_USER.user_id, '2026-09-10', '2026-09-18']);
+            .toEqual(['2026-09-18', '2026-09-18', TEST_USER.user_id, '2026-09-10', '2026-09-18']);
     });
 
     it('reads the income row the salary_day says funds this cycle', async () => {
@@ -689,37 +690,50 @@ describe('the actuals window never reaches past today', () => {
     beforeEach(freezeMidCycle);
     afterEach(() => jest.useRealTimers());
 
-    it('stops at tomorrow rather than at the end of the cycle', async () => {
-        // Card sync writes an installment's later payments on their own future dates. Run
-        // to the cycle's end, the window counted that money as already spent -- and
-        // commitments_ahead derives the same payments from installment_plans, so it was
-        // counted twice over.
+    it('splits the cycle at tomorrow: actuals before, dated charges after', async () => {
         mockPnL({ expenses: '4000' });
         const res = await request(app).get('/api/pnl').set(authHeader());
         expect(res.status).toBe(200);
 
-        // Call 0 is auth; call 1 is the expense sum. Params: [user_id, start, end).
-        const [, start, end] = db.query.mock.calls[1][1];
+        // Call 0 is auth; call 1 the expense sums: [split, split, user_id, start, end).
+        const [split, split2, , start, end] = db.query.mock.calls[1][1];
         const d = MID_CYCLE;
         const pad = (n) => String(n).padStart(2, '0');
         const tomorrow = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate() + 1)}`;
 
-        expect(end).toBe(tomorrow);
-        expect(end > start).toBe(true);
-        // Mid-cycle, so the cycle genuinely runs past the window: this is a real clamp.
-        expect(end < res.body.cycle_end).toBe(true);
+        expect(split).toBe(tomorrow);
+        expect(split2).toBe(tomorrow);
+        expect(split > start).toBe(true);
+        // The read still runs to the cycle's end, so the dated charges are seen, not dropped.
+        expect(end > res.body.cycle_end).toBe(true);
     });
 
-    it('leaves a finished cycle alone, where nothing is in the future', async () => {
+    it('moves a dated future charge from actuals into commitments, counting it once', async () => {
+        // An imported installment payment dated later this cycle. installmentsAhead projects
+        // only payments AFTER a plan's last imported one, so this row is in no projection:
+        // leaving it out of actuals without adding it here would erase it from the forecast.
+        mockPnL({ expenses: '4000', expensesAhead: '0' });
+        const without = (await request(app).get('/api/pnl').set(authHeader())).body;
+        mockPnL({ expenses: '4000', expensesAhead: '500' });
+        const withAhead = (await request(app).get('/api/pnl').set(authHeader())).body;
+
+        expect(withAhead.scheduled_ahead).toBe(500);
+        expect(withAhead.total_expenses).toBe(without.total_expenses);
+        expect(withAhead.current_net_pnl).toBe(without.current_net_pnl);
+        expect(withAhead.commitments_ahead).toBeCloseTo(without.commitments_ahead + 500, 2);
+        expect(withAhead.forecasted_net_pnl).toBeCloseTo(without.forecasted_net_pnl - 500, 2);
+    });
+
+    it('leaves a finished cycle alone, where nothing is ahead', async () => {
         const [y, m] = MONTH_NOW.split('-').map(Number);
         const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
         mockPnL({ expenses: '4000' });
         const res = await request(app).get(`/api/pnl?month=${prev}`).set(authHeader());
         expect(res.status).toBe(200);
 
-        const [, , end] = db.query.mock.calls[1][1];
-        // The whole past cycle is behind us, so the window is its own end, not today.
-        // Exclusive, so it is the first day of the cycle that follows.
+        const [split, , , , end] = db.query.mock.calls[1][1];
+        // The whole past cycle is behind us: the split IS the end, so `ahead` is empty.
+        expect(split).toBe(end);
         expect(end.slice(0, 7)).toBe(MONTH_NOW);
     });
 });

@@ -72,6 +72,7 @@ The current cycle (from the user's cycle anchor day, not the calendar month).
 | `categories[]` | `category, is_fixed, spent, budget, remaining, pct_used, typical_cycle, daily_allowance` (budget fields null when no budget is set) |
 | `upcoming_subscriptions[]` | `name, amount, category, date` — still to be charged this cycle |
 | `installments_ahead`, `loan_payments_ahead` | Card installment payments / loan repayments still to leave this cycle (already inside `net_forecast`) |
+| `scheduled_ahead` | Charges already on record but dated later this cycle — mostly installment payments the card reported early. Inside `net_forecast`, not inside `spent` until their date |
 | `recurring_monthly_total` | Committed monthly outflow (UI: הוצאות שוטפות) = subscriptions + active installments + loan repayments |
 | `subscriptions` | `monthly_total`, `items[]`: `name, amount, day_of_month, category, auto_detected, confirmed` |
 | `installments` | `active_count, monthly_commitment, remaining_total`, `items[]`: `merchant, monthly_amount, total_amount, total_payments, payments_made, remaining_payments, remaining_amount, next_payment_date, end_date` |
@@ -148,10 +149,9 @@ backend and not in the agent.
 fixed costs and subscriptions. Measured on total spend instead, they fire for anyone whose
 rent clears early in the cycle, which is almost everyone.
 
-`pace_ahead` also reads spending **to date** (getPnL's `as_of_day` clamp), not the whole
-cycle. Card sync imports completed charges carrying a future settlement date, which sit in
-the unclamped window; against time already elapsed they would count as overspending money
-that has not left the account yet.
+`pace_ahead` reads spending **to date**. getPnL's actuals stop at today: card sync imports
+installment payments dated to the month they belong to, sometimes before that month arrives,
+and those rows count as commitments until their date rather than as money already spent.
 
 "Expected income" in both salary rules is the full figure — fixed income plus the user's
 decayed variable average — not `total_income_projected`. The projection is a forecast of what

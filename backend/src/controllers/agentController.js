@@ -200,6 +200,9 @@ async function buildSnapshot(req) {
         // Committed money still to leave this cycle that is not spent yet (in net_forecast).
         installments_ahead: pnl.installments_ahead,
         loan_payments_ahead: pnl.loan_payments_ahead,
+        // Charges already on record with a date still ahead in this cycle -- mostly
+        // installment payments the card reported early. Not in `spent` until their date.
+        scheduled_ahead: pnl.scheduled_ahead,
         savings_set_aside: pnl.savings_allocation,
 
         net_now: pnl.current_net_pnl,
