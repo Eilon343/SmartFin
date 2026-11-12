@@ -108,3 +108,46 @@ Notes for reading the numbers:
 - Fixed categories (rent, utilities) have `daily_allowance: null`.
 - `budget` includes any carry-over from previous cycles.
 - Dates are Israel local time.
+
+### `GET /api/agent/alerts`
+
+The proactive alerts the agent polls for, worst first. Optional `since` (ISO 8601) returns
+only what fired after it, so a polling agent can tell a new alert from one it has already
+raised with the user; without it, the current cycle comes back (max 50).
+
+Read-only like the rest of this API: `services/spendingAlerts.js` evaluates the rules on a
+30-minute tick and writes `alert_log`, and this endpoint only reads it. That split is what
+lets alerting be stateful without giving the agent a write path.
+
+| Rule | Severity | Fires when | Cooldown |
+|---|---|---|---|
+| `data_stale` | critical | a sync failed, or a previously working sync went 48h without one | daily |
+| `salary_missing` | critical | under half the expected income, 2 days past the salary day | per cycle |
+| `negative_forecast` | critical | `net_forecast` below zero | per cycle |
+| `pace_ahead` | high | everyday spending outruns the elapsed share of the cycle by 15% | per cycle |
+| `spending_burst` | high | 3 days cost 2.5× their normal everyday rate | daily |
+| `duplicate_charge` | high | same amount and description within 3 days, ≥ ₪50 | per expense |
+| `salary_arrived` | normal | at least half the expected income landed | per cycle |
+| `unusual_expense` | normal | one charge ≥ 3× the median of the user's other recent charges (min ₪200) | per expense |
+
+`unusual_expense` and `duplicate_charge` carry `description`, `category` and the date, so
+the alert names the charge rather than only its size. `description` is whatever the import
+supplied and can be empty.
+| `cycle_surplus` | normal | ≥ ₪300 forecast left with ≤ 4 days to act | per cycle |
+
+Each alert carries `rule`, `severity`, `detected_at` and a `data` block holding the numbers
+behind its own verdict, so the agent phrases the alert rather than recomputing it.
+
+**Privacy.** `data_stale` reports only `healthy`, `last_successful_sync` and
+`hours_since_last_sync`. It must never gain a bank name, an account identifier or a count of
+connections: the agent is not allowed to learn that bank links exist at all. The rules that
+need those tables (`data_stale`, `duplicate_charge`) are precisely why detection runs in the
+backend and not in the agent.
+
+`pace_ahead` and `spending_burst` both measure **everyday** money — projected spend less
+fixed costs and subscriptions. Measured on total spend instead, they fire for anyone whose
+rent clears early in the cycle, which is almost everyone.
+
+Thresholds live at the top of `backend/src/services/spendingAlerts.js`. They are deliberately
+conservative — a false positive teaches the user to ignore alerts, and an ignored channel is
+worth less than no channel.

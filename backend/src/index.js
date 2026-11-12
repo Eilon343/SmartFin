@@ -12,6 +12,7 @@ const agentRoutes = require('./routes/agentRoutes');
 const { startQueueProcessor } = require('./controllers/webhookController');
 const bankSyncScheduler = require('./services/bankSyncScheduler');
 const weeklyScore = require('./services/weeklyScore');
+const spendingAlerts = require('./services/spendingAlerts');
 const { purgeExpiredArchives } = require('./controllers/cleanupController');
 
 if (!process.env.JWT_SECRET) {
@@ -79,6 +80,7 @@ app.listen(PORT, () => {
     startQueueProcessor();
     bankSyncScheduler.start();
     weeklyScore.start();
+    spendingAlerts.start();
 
     // Drop duplicate-cleanup archives past their restore window. Daily is ample for a
     // 30-day window; the first run is deferred a minute so it never competes with boot.
