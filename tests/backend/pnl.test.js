@@ -684,3 +684,42 @@ describe('GET /api/pnl - installments and loan payments ahead', () => {
         expect(res.body.current_net_pnl).toBe(8000);
     });
 });
+
+describe('the actuals window never reaches past today', () => {
+    beforeEach(freezeMidCycle);
+    afterEach(() => jest.useRealTimers());
+
+    it('stops at tomorrow rather than at the end of the cycle', async () => {
+        // Card sync writes an installment's later payments on their own future dates. Run
+        // to the cycle's end, the window counted that money as already spent -- and
+        // commitments_ahead derives the same payments from installment_plans, so it was
+        // counted twice over.
+        mockPnL({ expenses: '4000' });
+        const res = await request(app).get('/api/pnl').set(authHeader());
+        expect(res.status).toBe(200);
+
+        // Call 0 is auth; call 1 is the expense sum. Params: [user_id, start, end).
+        const [, start, end] = db.query.mock.calls[1][1];
+        const d = MID_CYCLE;
+        const pad = (n) => String(n).padStart(2, '0');
+        const tomorrow = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate() + 1)}`;
+
+        expect(end).toBe(tomorrow);
+        expect(end > start).toBe(true);
+        // Mid-cycle, so the cycle genuinely runs past the window: this is a real clamp.
+        expect(end < res.body.cycle_end).toBe(true);
+    });
+
+    it('leaves a finished cycle alone, where nothing is in the future', async () => {
+        const [y, m] = MONTH_NOW.split('-').map(Number);
+        const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+        mockPnL({ expenses: '4000' });
+        const res = await request(app).get(`/api/pnl?month=${prev}`).set(authHeader());
+        expect(res.status).toBe(200);
+
+        const [, , end] = db.query.mock.calls[1][1];
+        // The whole past cycle is behind us, so the window is its own end, not today.
+        // Exclusive, so it is the first day of the cycle that follows.
+        expect(end.slice(0, 7)).toBe(MONTH_NOW);
+    });
+});

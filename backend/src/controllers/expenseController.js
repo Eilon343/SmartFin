@@ -393,7 +393,17 @@ exports.getPnL = async (req, res) => {
     const proRate = isMTD ? asOfDay / daysInCycle : 1;
     // One window end for every expense query: the clamp is a shorter window, not a
     // different query, which is what collapsed the old MTD/full SQL pairs into one each.
-    const windowEnd = isMTD ? cy.addDays(cycle.start, asOfDay) : cycle.end;
+    //
+    // ...and it never reaches past today. Card sync imports a transaction on its own date,
+    // and an installment plan's later payments carry dates that are genuinely in the future
+    // (see the backfill note in services/bankSyncScheduler.js). Running the window to the
+    // cycle's end counted that money as already spent: it inflated total_expenses, entered
+    // current_net_pnl -- which is actuals only -- and seeded the forecast's spentToDate. It
+    // was also counted a SECOND time, as commitments_ahead, which derives the same payments
+    // from installment_plans. Committed money belongs there and only there.
+    const tomorrow = cy.addDays(cy.todayISO(), 1);
+    const requestedEnd = isMTD ? cy.addDays(cycle.start, asOfDay) : cycle.end;
+    const windowEnd = requestedEnd < tomorrow ? requestedEnd : tomorrow;
 
     try {
         const lookback = fx.pastMonths(month, fx.LOOKBACK_MONTHS);

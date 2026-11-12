@@ -195,6 +195,25 @@ Two clamping mechanisms, because the tables differ:
 
 Under MTD, `projected_expenses = total_expenses` (no run-rate) and `forecasted_net_pnl = current_net_pnl − subscription_total`.
 
+### The actuals window stops at today
+
+Whatever `as_of_day` asks for, the expense and savings-transfer window is capped at
+tomorrow, so it never reaches into the future half of a live cycle.
+
+An expense row may legitimately carry a future date. Card sync writes each transaction on
+its own date, and an installment plan's later payments are scheduled months out — the
+backfill in `bankSyncScheduler.js` imports them deliberately. Run to `cycle.end`, the window
+counted that money as already spent: it inflated `total_expenses`, entered `current_net_pnl`
+(documented as actuals only), and became the `spentToDate` seed of the variable projection,
+so the forecast compounded it.
+
+It was also counted **twice**. `commitments_ahead` derives the same payments from
+`installment_plans` for the remainder of the cycle, so a future installment was both an
+actual and a commitment. Committed money belongs in `commitments_ahead` and nowhere else.
+
+A past cycle is unaffected — every date in it is behind us, so the cap never binds. A future
+cycle now reports ₪0 actuals, which is what it has.
+
 Linear pro-rating of income is deliberately **accrual, not cash**. The mathematical review
 called for a step-function/liquidity view instead; that was rejected, because the clamp exists
 for exactly one job — comparing May 1–8 with April 1–8. Under a cash view a salary landing on
