@@ -102,11 +102,15 @@ negative_forecast   המחזור צפוי להסתיים במינוס. אמור 
 salary_arrived      ההכנסה נכנסה. תן תוכנית: כמה מנויים צפויים
                     (subscriptions_ahead), כמה פנוי (headroom), וכמה ליום
                     (daily_allowance).
-pace_ahead          הוצאת spent_pct מתקציב ההוצאות היומיומיות כשעברו רק
-                    cycle_elapsed_pct מהמחזור. המספרים שמאחורי ההחלטה הם
-                    everyday_spent ו-everyday_budget — בלי שכר דירה ומנויים,
-                    כי אלה יורדים בבת אחת ומעוותים את התמונה.
-spending_burst      times_normal פעמים מהרגיל ב-window_days הימים האחרונים.
+pace_ahead          ההוצאות השוטפות רצות מהר מהרגיל של המשתמש: כבר יצא
+                    spent_pct ממה שהוא מוציא בדרך כלל במחזור שלם, כשעברו רק
+                    cycle_elapsed_pct מהמחזור. המספרים: everyday_spent מול
+                    usual_everyday (הממוצע שלו במחזורים קודמים), בלי שכר דירה
+                    ומנויים. נסח מול ההרגל שלו ("מהר מהרגיל שלך"), לא כחריגה
+                    מתקציב — אין כאן תקציב. אם יש גם negative_forecast, הוא
+                    החשוב יותר; אחד אותם להודעה אחת.
+spending_burst      times_normal פעמים מהקצב היומי הרגיל שלו ב-window_days
+                    הימים האחרונים.
 duplicate_charge    אותו סכום ותיאור פעמיים. תן amount, description ואת שני
                     התאריכים. נסח כשאלה — ייתכן שזו רכישה כפולה אמיתית.
 unusual_expense     חיוב גדול פי times_typical מהחיוב האופייני של המשתמש.

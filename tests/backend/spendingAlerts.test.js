@@ -23,6 +23,9 @@ const BASE_PNL = {
     // expectation is the variable average, with nothing fixed beside it.
     fixed_income: 0,
     variable_income_avg: 12000,
+    // Usual everyday spend per cycle, from past cycles, and how many there were.
+    variable_expense_avg: 9400,
+    history_months: 6,
     total_expenses: 4000,
     fixed_expenses: 0,
     variable_expenses: 4000,
@@ -114,7 +117,7 @@ describe('negative_forecast', () => {
 
 describe('pace_ahead', () => {
     it('fires when spending outruns the elapsed share of the cycle', () => {
-        // Day 12 of 30 is 40% elapsed; ₪7,200 of a ₪9,400 everyday budget is 77%.
+        // Day 12 of 30 is 40% elapsed; ₪7,200 of a usual ₪9,400 everyday cycle is 77%.
         expect(rules(ctx({ pnl: { total_expenses: 7200, variable_expenses: 7200 } }))).toContain('pace_ahead');
     });
 
@@ -127,6 +130,35 @@ describe('pace_ahead', () => {
         const c = ctx({ pnl: { cycle_day: 3, total_expenses: 7200, variable_expenses: 7200 } });
         expect(rules(c)).not.toContain('pace_ahead');
     });
+
+    it('catches double the usual pace in the second half of the cycle', () => {
+        // Measured against the cycle's PROJECTED spend, which is built from the spending it
+        // judges, this read 56% against a 57% threshold on day 15 and stayed silent; by day
+        // 20 even triple the usual pace did. The projection is inflated here on purpose:
+        // the rule must not read it at all.
+        const c = ctx({ pnl: {
+            cycle_day: 15, days_left: 15,
+            variable_expenses: 9400, total_expenses: 9400,
+            projected_expenses: 16000,
+        } });
+        const hit = find(c, 'pace_ahead');
+        expect(hit).toBeDefined();
+        expect(hit.payload.spent_pct).toBe(100);
+        expect(hit.payload.usual_everyday).toBe(9400);
+    });
+
+    it('lets ordinary week-to-week swing pass, and half again the usual pace fire', () => {
+        // Day 15 of 30, usual ₪9,400. A fifth over is 60% spent: inside 1.3x of 50% elapsed.
+        const at = (spent) => ctx({ pnl: { cycle_day: 15, days_left: 15, variable_expenses: spent, total_expenses: spent } });
+        expect(rules(at(9400 * 0.5 * 1.2))).not.toContain('pace_ahead');
+        expect(rules(at(9400 * 0.5 * 1.5))).toContain('pace_ahead');
+    });
+
+    it('judges nobody against a habit they do not have yet', () => {
+        const c = ctx({ pnl: { history_months: 1, total_expenses: 7200, variable_expenses: 7200 } });
+        expect(rules(c)).not.toContain('pace_ahead');
+        expect(rules(ctx({ pnl: { variable_expense_avg: 0, variable_expenses: 7200 } }))).not.toContain('pace_ahead');
+    });
 });
 
 describe('spending_burst', () => {
@@ -138,6 +170,15 @@ describe('spending_burst', () => {
 
     it('fires on a short run far above the normal rate', () => {
         expect(rules(ctx({ recent: burst }))).toContain('spending_burst');
+    });
+
+    it('measures against the usual daily rate, not one this cycle inflated', () => {
+        // ₪3,200 in three days against a usual ₪313 a day: 3.4x. A projection already
+        // swollen by a week of overspending must not raise the bar.
+        const c = ctx({ recent: burst, pnl: { projected_expenses: 30000 } });
+        const hit = find(c, 'spending_burst');
+        expect(hit).toBeDefined();
+        expect(hit.payload.times_normal).toBe(3.4);
     });
 
     it('ignores fixed charges, which land in one lump by nature', () => {

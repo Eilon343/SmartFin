@@ -125,8 +125,8 @@ lets alerting be stateful without giving the agent a write path.
 | `data_stale` | critical | a sync failed, or a previously working sync went 48h without one | daily |
 | `salary_missing` | critical | under half the expected income, 2 days past the salary day | per cycle |
 | `negative_forecast` | critical | `net_forecast` short by more than ₪100 | per cycle |
-| `pace_ahead` | high | everyday spending outruns the elapsed share of the cycle by 15% | per cycle |
-| `spending_burst` | high | 3 days cost 2.5× their normal everyday rate | daily |
+| `pace_ahead` | high | everyday spending runs 30% ahead of the user's usual pace (needs 2 cycles of history) | per cycle |
+| `spending_burst` | high | 3 days cost 2.5× the user's usual everyday daily rate (needs 2 cycles of history) | daily |
 | `duplicate_charge` | high | same amount and description within 3 days, ≥ ₪50 | per expense |
 | `salary_arrived` | normal | at least half the expected income landed | per cycle |
 | `unusual_expense` | normal | one charge ≥ 3× the median of the user's other recent charges (min ₪200) | per expense |
@@ -145,9 +145,13 @@ connections: the agent is not allowed to learn that bank links exist at all. The
 need those tables (`data_stale`, `duplicate_charge`) are precisely why detection runs in the
 backend and not in the agent.
 
-`pace_ahead` and `spending_burst` both measure **everyday** money — projected spend less
-fixed costs and subscriptions. Measured on total spend instead, they fire for anyone whose
-rent clears early in the cycle, which is almost everyone.
+`pace_ahead` and `spending_burst` both measure **everyday** (variable) money against the
+user's **usual** everyday spend — `variable_expense_avg`, the decayed mean of past cycles.
+Two other yardsticks were rejected. Total spend fires for anyone whose rent clears early in
+the cycle. The cycle's projected spend is built from the spending being judged, so it rose
+with it: on day 15, twice the usual pace stayed under the line, and by day 20 triple did.
+Whether the money will run out is `negative_forecast`'s question; these two are about
+behaviour against the user's own habit.
 
 `pace_ahead` reads spending **to date**. getPnL's actuals stop at today: card sync imports
 installment payments dated to the month they belong to, sometimes before that month arrives,

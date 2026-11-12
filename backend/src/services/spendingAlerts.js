@@ -30,9 +30,12 @@ const TICK_MS = 30 * 60 * 1000;
  * Thresholds. These are deliberately conservative: a false positive teaches the user to
  * ignore alerts, and an ignored channel is worth less than no channel at all.
  */
-// Spending may outrun the elapsed share of the cycle by this much before it is "ahead".
-// 1.0 would fire for anyone whose rent lands on day one, which is almost everyone.
-const PACE_FACTOR = 1.15;
+// Everyday spending may run this far ahead of the user's usual pace before it is "ahead".
+// Measured against the usual spend, 1.15 fired on a mere 20% over -- inside ordinary
+// week-to-week swing (one big grocery run moves a week by that much). It was set when the
+// yardstick was the cycle's own projection, which damped every reading toward the line and
+// made 1.15 behave like 1.5x-3x. 1.3: half again the usual pace fires, a fifth over does not.
+const PACE_FACTOR = 1.3;
 // Before this day of the cycle the elapsed share is too small to be a stable denominator.
 const PACE_MIN_CYCLE_DAY = 7;
 const BURST_WINDOW_DAYS = 3;
@@ -70,17 +73,26 @@ const SEVERITY = { critical: 0, high: 1, normal: 2 };
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 /**
- * What the cycle expects to be spent on everyday things, once the committed money is out.
+ * The user's usual everyday spend for a whole cycle: the decayed mean of past cycles'
+ * variable spending, which getPnL returns as variable_expense_avg.
  *
- * Pace and burst must both measure against THIS, not against total spending: rent and the
- * subscriptions land in one lump early in the cycle, so a total-based pace reads "40% of the
- * month gone, 60% of the money gone" for anyone whose rent clears on day one — which is
- * almost everyone — and a total-based daily rate is inflated by that same lump, so a real
- * burst of everyday spending hides underneath it.
+ * Pace and burst measure against THIS. Two yardsticks were tried and rejected:
+ *
+ *   - Total spending. Rent lands in one lump early in the cycle, so a total-based pace reads
+ *     "40% of the month gone, 60% of the money gone" for anyone whose rent clears on day one.
+ *   - The cycle's projected variable spend. The projection is built FROM this cycle's
+ *     spending (S + w*run-rate + (1-w)*habit), so the yardstick grew with the very thing it
+ *     measured: on day 15, spending at twice the usual pace read 56% against a 57%
+ *     threshold, and by day 20 even triple the pace stayed silent. It also subtracted the
+ *     subscriptions, which were never part of it.
+ *
+ * Past cycles only, so nothing the user spends now can move it.
  */
-function variableBudget(pnl) {
-    return num(pnl.projected_expenses) - num(pnl.fixed_expenses) - num(pnl.subscription_total);
+function usualEveryday(pnl) {
+    return num(pnl.variable_expense_avg);
 }
+// One odd cycle is not a habit. Below this much history "faster than usual" means nothing.
+const PACE_MIN_HISTORY_MONTHS = 2;
 
 /**
  * What this cycle's income is expected to be IN FULL: fixed income plus the user's own
@@ -262,21 +274,24 @@ const RULES = [
         };
     },
 
-    // 5. "It is mid-cycle and more than half the salary is gone." Compared against the
-    //    elapsed share rather than a flat half, so it works for any cycle length.
+    // 5. Everyday spending is running ahead of the user's own usual pace: more of a usual
+    //    cycle's spending already gone than the share of the cycle that has passed.
+    //    Whether the money will run out is negative_forecast's question; this one is about
+    //    behaviour, and it is the one that can still be acted on early.
     function paceAhead(ctx) {
         const { pnl } = ctx;
         const cycleDay = num(pnl.cycle_day);
         const daysInCycle = num(pnl.days_in_cycle);
         if (cycleDay < PACE_MIN_CYCLE_DAY || daysInCycle <= 0) return null;
-        const budget = variableBudget(pnl);
-        if (budget <= 0) return null;
+        if (num(pnl.history_months) < PACE_MIN_HISTORY_MONTHS) return null;
+        const usual = usualEveryday(pnl);
+        if (usual <= 0) return null;
         const elapsedShare = cycleDay / daysInCycle;
         // Spent SO FAR, against time elapsed so far. Both sides must stop at today, which
         // getPnL's actuals now do on their own: its expense window ends at today and moves
         // dated future charges into commitments_ahead.
         const spentToDate = num(pnl.variable_expenses);
-        const spentShare = spentToDate / budget;
+        const spentShare = spentToDate / usual;
         if (spentShare <= elapsedShare * PACE_FACTOR) return null;
         return {
             rule: 'pace_ahead',
@@ -289,7 +304,8 @@ const RULES = [
                 income_expected: fx.money(expectedIncome(pnl)),
                 // The decision is made on everyday money only; these two are what it used.
                 everyday_spent: fx.money(spentToDate),
-                everyday_budget: fx.money(budget),
+                usual_everyday: fx.money(usual),
+                // Share of a usual cycle's everyday spending already gone.
                 spent_pct: Math.round(spentShare * 100),
                 cycle_elapsed_pct: Math.round(elapsedShare * 100),
                 days_left: num(pnl.days_left),
@@ -302,7 +318,8 @@ const RULES = [
         const { pnl } = ctx;
         const daysInCycle = num(pnl.days_in_cycle);
         if (daysInCycle <= 0) return null;
-        const expectedDaily = variableBudget(pnl) / daysInCycle;
+        if (num(pnl.history_months) < PACE_MIN_HISTORY_MONTHS) return null;
+        const expectedDaily = usualEveryday(pnl) / daysInCycle;
         if (expectedDaily <= 0) return null;
         const since = cy.addDays(ctx.today, -BURST_WINDOW_DAYS);
         const rows = ctx.recent.filter((r) => !r.is_fixed && localDate(r.created_at) > since);

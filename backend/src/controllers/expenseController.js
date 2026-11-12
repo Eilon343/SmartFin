@@ -685,6 +685,11 @@ exports.getPnL = async (req, res) => {
             total_expenses: Math.round(total_expenses * 100) / 100,
             fixed_expenses: Math.round(fixed_sum * 100) / 100,
             variable_expenses: Math.round(variable_sum * 100) / 100,
+            // The user's usual everyday spend per cycle: the decayed mean of past cycles'
+            // variable spend, the same prior the projection blends toward. Unlike the
+            // projection it does not move with this cycle's spending, which is what makes it
+            // a fair yardstick for "faster than usual".
+            variable_expense_avg: Math.round(variable_expense_avg * 100) / 100,
             projected_variable_expenses: Math.round(projected_variable * 100) / 100,
             projected_expenses: Math.round(projected_expenses * 100) / 100,
             subscription_total: Math.round(subscription_total * 100) / 100,
