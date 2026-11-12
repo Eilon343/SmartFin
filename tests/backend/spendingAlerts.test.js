@@ -170,6 +170,24 @@ describe('unusual_expense', () => {
         ];
         const alert = find(ctx({ recent: rows }), 'unusual_expense');
         expect(alert.payload.amount).toBe(1500);
+        // What it was and when, so the alert stands on its own.
+        expect(alert.payload.description).toBe('Flight');
+        expect(alert.payload.date).toBe('2026-11-12');
+        // Median of the OTHER charges (40, 50, 60), not a mean dragged up by the 1500.
+        expect(alert.payload.your_typical_charge).toBe(50);
+        expect(alert.payload.times_typical).toBe(30);
+    });
+
+    it('still catches a large charge that would have hidden inside its own average', () => {
+        // Mean of all four is 420, so a x3 mean test would need 1260 and let 1200 through.
+        // The median of the other three is 60, so the charge is caught.
+        const rows = [
+            { expense_id: 51, amount: 1200, description: 'Laptop', created_at: '2026-11-12T08:00:00Z', is_fixed: 0 },
+            { expense_id: 52, amount: 40, description: 'Coffee', created_at: '2026-11-11T08:00:00Z', is_fixed: 0 },
+            { expense_id: 53, amount: 60, description: 'Lunch', created_at: '2026-11-10T08:00:00Z', is_fixed: 0 },
+            { expense_id: 54, amount: 380, description: 'Shoes', created_at: '2026-11-09T08:00:00Z', is_fixed: 0 },
+        ];
+        expect(rules(ctx({ recent: rows }))).toContain('unusual_expense');
     });
 
     it('does not fire for a user whose ordinary purchases are large', () => {

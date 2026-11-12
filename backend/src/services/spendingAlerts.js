@@ -283,28 +283,53 @@ const RULES = [
         return null;
     },
 
-    // 8. One charge far outside what this user normally spends. Measured against their own
-    //    recent average, so it never fires on someone whose ordinary purchases are large.
+    // 8. One charge far outside what this user normally spends, judged against their own
+    //    recent charges so it never fires on someone whose ordinary purchases are large.
+    //
+    //    The baseline is the MEDIAN of the other charges, not the mean of all of them. A
+    //    mean that includes the candidate is pulled up by it, so the bigger the charge the
+    //    harder it becomes to flag — the rule would hide exactly the case it exists for.
+    //    A median also survives one outlier in a quiet week, which a mean does not.
     function unusualExpense(ctx) {
         const variable = ctx.recent.filter((r) => !r.is_fixed);
-        if (variable.length < 3) return null;
-        const avg = variable.reduce((s, r) => s + num(r.amount), 0) / variable.length;
-        const threshold = Math.max(UNUSUAL_FLOOR_ILS, avg * UNUSUAL_FACTOR);
-        const yesterday = cy.addDays(ctx.today, -1);
-        const hit = variable.find((r) => num(r.amount) >= threshold && localDate(r.created_at) >= yesterday);
-        if (!hit) return null;
-        return {
-            rule: 'unusual_expense',
-            severity: 'normal',
-            dedupe_key: `expense:${hit.expense_id}`,
-            payload: {
-                amount: fx.money(num(hit.amount)),
-                description: hit.description,
-                category: hit.category || 'Uncategorized',
-                your_recent_average: fx.money(avg),
-                times_average: Math.round((num(hit.amount) / avg) * 10) / 10,
-            },
+        if (variable.length < 4) return null; // 3 others plus the candidate.
+
+        const median = (nums) => {
+            if (!nums.length) return 0;
+            const sorted = [...nums].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
         };
+
+        const yesterday = cy.addDays(ctx.today, -1);
+        // Largest first: if several qualify, the one worth raising is the biggest.
+        const candidates = variable
+            .filter((r) => localDate(r.created_at) >= yesterday)
+            .sort((a, b) => num(b.amount) - num(a.amount));
+
+        for (const hit of candidates) {
+            const others = variable.filter((r) => r.expense_id !== hit.expense_id).map((r) => num(r.amount));
+            if (others.length < 3) continue;
+            const typical = median(others);
+            const threshold = Math.max(UNUSUAL_FLOOR_ILS, typical * UNUSUAL_FACTOR);
+            if (num(hit.amount) < threshold) continue;
+            return {
+                rule: 'unusual_expense',
+                severity: 'normal',
+                dedupe_key: `expense:${hit.expense_id}`,
+                payload: {
+                    amount: fx.money(num(hit.amount)),
+                    description: hit.description,
+                    category: hit.category || 'Uncategorized',
+                    // The rule only looks at the last day, but a morning check still has to
+                    // be able to say "yesterday" rather than leaving the user to guess.
+                    date: localDate(hit.created_at),
+                    your_typical_charge: fx.money(typical),
+                    times_typical: typical > 0 ? Math.round((num(hit.amount) / typical) * 10) / 10 : null,
+                },
+            };
+        }
+        return null;
     },
 
     // 9. The only rule that is an opportunity rather than a warning. A system that only ever

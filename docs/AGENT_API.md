@@ -111,7 +111,11 @@ lets alerting be stateful without giving the agent a write path.
 | `spending_burst` | high | 3 days cost 2.5× their normal rate | daily |
 | `duplicate_charge` | high | same amount and description within 3 days | per expense |
 | `salary_arrived` | normal | income landed for the cycle | per cycle |
-| `unusual_expense` | normal | one charge ≥ 3× the user's recent average (min ₪200) | per expense |
+| `unusual_expense` | normal | one charge ≥ 3× the median of the user's other recent charges (min ₪200) | per expense |
+
+`unusual_expense` and `duplicate_charge` carry `description`, `category` and the date, so
+the alert names the charge rather than only its size. `description` is whatever the import
+supplied and can be empty.
 | `cycle_surplus` | normal | ≥ ₪300 forecast left with ≤ 4 days to act | per cycle |
 
 Each alert carries `rule`, `severity`, `detected_at` and a `data` block holding the numbers

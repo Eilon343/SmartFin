@@ -71,7 +71,10 @@ pace_ahead          הוצאת spent_pct מההכנסה כשעברו רק cycle_
 spending_burst      times_normal פעמים מהרגיל ב-window_days הימים האחרונים.
 duplicate_charge    אותו חיוב פעמיים. תן סכום, תיאור ושני התאריכים.
                     נסח כשאלה — ייתכן שזו רכישה אמיתית כפולה.
-unusual_expense     חיוב גדול פי times_average מהממוצע שלו. לידיעה בלבד.
+unusual_expense     חיוב גדול פי times_typical מהחיוב האופייני שלו. לידיעה.
+                    אמור תמיד על מה וכמה: description, amount, category
+                    ו-date. אם description ריק, אמור את הקטגוריה והתאריך
+                    ואל תמציא שם לעסק.
 cycle_surplus       נשאר עודף וכמעט נגמר המחזור. הצע להעביר לחיסכון.
 
 ═══════════════════════════════════════
