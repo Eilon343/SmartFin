@@ -333,6 +333,17 @@ describe('pace measured against elapsed spending only', () => {
         const hit = find(c, 'pace_ahead');
         expect(hit.payload.everyday_spent).toBe(7000);
     });
+
+    it('reports every spend figure to date, never one of each', () => {
+        // The agent is instructed that each number it quotes comes from the API. A payload
+        // holding a to-date figure beside a whole-cycle one, both named for spending, makes
+        // the choice between them the model's.
+        const c = ctx({
+            pnl: { variable_expenses: 8000, total_expenses: 12000 },
+            pnlToDate: { variable_expenses: 7000, total_expenses: 11000 },
+        });
+        expect(find(c, 'pace_ahead').payload.spent).toBe(11000);
+    });
 });
 
 describe('who the tick runs for', () => {

@@ -269,7 +269,8 @@ const RULES = [
         if (budget <= 0) return null;
         const elapsedShare = cycleDay / daysInCycle;
         // Spent SO FAR, against time elapsed so far. Both sides must stop at today.
-        const spentToDate = num((ctx.pnlToDate || pnl).variable_expenses);
+        const toDate = ctx.pnlToDate || pnl;
+        const spentToDate = num(toDate.variable_expenses);
         const spentShare = spentToDate / budget;
         if (spentShare <= elapsedShare * PACE_FACTOR) return null;
         return {
@@ -277,7 +278,10 @@ const RULES = [
             severity: 'high',
             dedupe_key: ctx.cycleKey,
             payload: {
-                spent: fx.money(num(pnl.total_expenses)),
+                // Also clamped. The agent is told every number it quotes must come from the
+                // API, so a payload must not carry a to-date figure and a whole-cycle one
+                // side by side under names that both read as "spent".
+                spent: fx.money(num(toDate.total_expenses)),
                 income_expected: fx.money(num(pnl.total_income_projected)),
                 // The decision is made on everyday money only; these two are what it used.
                 everyday_spent: fx.money(spentToDate),
