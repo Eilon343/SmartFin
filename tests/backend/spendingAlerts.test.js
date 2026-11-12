@@ -261,3 +261,50 @@ describe('ordering', () => {
         expect(severities).toEqual([...severities].sort((a, b) => a - b));
     });
 });
+
+describe('the forecast shortfall floor', () => {
+    it('stays silent on a shortfall inside the forecast\'s own error bars', () => {
+        // Seen in production on the first real tick: a ₪0.27 gap was written as "critical"
+        // with a "daily cut needed" of 2 agorot. The number was right; raising it was not.
+        const c = ctx({ pnl: { forecasted_net_pnl: -0.27 } });
+        expect(rules(c)).not.toContain('negative_forecast');
+    });
+
+    it('still fires once the shortfall is real', () => {
+        const c = ctx({ pnl: { forecasted_net_pnl: -1200 } });
+        expect(find(c, 'negative_forecast').payload.net_forecast).toBe(-1200);
+    });
+});
+
+describe('the lookback window', () => {
+    const db = require('./setup/dbMock');
+    const { buildContext } = require('../../backend/src/services/spendingAlerts');
+
+    it('never reaches past today, so a scheduled charge is not reported as spent', async () => {
+        // A non-virtual expense may carry a future date. Unbounded, the window pulled it in
+        // and the unusual-charge rule announced money the user had not yet spent.
+        // getPnL is the dashboard's own controller and has its own suite; here it only has
+        // to answer, so the lookback query underneath it is the thing being measured.
+        const expenseController = require('../../backend/src/controllers/expenseController');
+        jest.spyOn(expenseController, 'getPnL').mockImplementation(async (req, res) => res.json(BASE_PNL));
+
+        let expenseSql = null;
+        let expenseParams = null;
+        db.query.mockImplementation(async (sql, params = []) => {
+            if (sql.includes('FROM expenses e') && sql.includes('is_virtual')) {
+                expenseSql = sql;
+                expenseParams = params;
+                return [[]];
+            }
+            if (sql.includes('FROM bank_connections')) return [[{ connections: 0, failing: 0, last_ok: null }]];
+            return [[]];
+        });
+
+        await buildContext({ user_id: 1, cycle_anchor_day: 1, salary_day: 10 }, NOW);
+
+        expect(expenseSql).toMatch(/created_at\s*<\s*\?/);
+        // Lower bound, then an upper bound that is tomorrow: today's charges count, later ones do not.
+        expect(expenseParams[2]).toBe('2026-11-13');
+        expect(new Date(expenseParams[2]) > new Date(expenseParams[1])).toBe(true);
+    });
+});

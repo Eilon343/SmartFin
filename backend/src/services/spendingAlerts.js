@@ -57,6 +57,10 @@ const SALARY_ARRIVED_SHARE = 0.5;
 // Before this day a forecast is mostly prior, and calling a cycle doomed on day one is the
 // fastest way to lose the user's trust in the forecast.
 const FORECAST_MIN_CYCLE_DAY = 3;
+// A forecast is an estimate, not a measurement, so a shortfall smaller than this is inside
+// its own error bars. Calling a 27-agora gap "critical" spends the user's attention on noise
+// and teaches them that critical does not mean critical.
+const FORECAST_MIN_SHORTFALL_ILS = 100;
 // Below this, a repeated charge is far more likely to be a daily habit at a fixed price
 // (the same coffee, the same bus fare) than a double charge.
 const DUPLICATE_MIN_ILS = 50;
@@ -128,9 +132,14 @@ async function buildContext(user, now) {
                 COALESCE(c.is_fixed, FALSE) AS is_fixed, c.name AS category
          FROM expenses e
          LEFT JOIN categories c ON e.category_id = c.category_id
-         WHERE e.user_id = ? AND e.is_virtual = FALSE AND e.created_at >= ?
+         WHERE e.user_id = ? AND e.is_virtual = FALSE
+               AND e.created_at >= ? AND e.created_at < ?
          ORDER BY e.created_at DESC`,
-        [user.user_id, cy.addDays(today, -lookbackDays)]
+        // The upper bound is not cosmetic. A real (non-virtual) expense may carry a future
+        // date -- a scheduled charge the user entered ahead of time -- and without it the
+        // burst, duplicate and unusual-charge rules would all treat money not yet spent as
+        // "just spent", and the agent would tell the user about a charge that never happened.
+        [user.user_id, cy.addDays(today, -lookbackDays), cy.addDays(today, 1)]
     );
 
     // Aggregate only. Never a bank name, an account id, or a row count the user could map
@@ -203,7 +212,7 @@ const RULES = [
     // 3. The cycle is already committed past its income.
     function negativeForecast(ctx) {
         const net = num(ctx.pnl.forecasted_net_pnl);
-        if (net >= 0) return null;
+        if (net > -FORECAST_MIN_SHORTFALL_ILS) return null;
         if (num(ctx.pnl.cycle_day) < FORECAST_MIN_CYCLE_DAY) return null;
         const daysLeft = num(ctx.pnl.days_left);
         return {

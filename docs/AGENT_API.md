@@ -123,7 +123,7 @@ lets alerting be stateful without giving the agent a write path.
 |---|---|---|---|
 | `data_stale` | critical | a sync failed, or a previously working sync went 48h without one | daily |
 | `salary_missing` | critical | under half the expected income, 2 days past the salary day | per cycle |
-| `negative_forecast` | critical | `net_forecast` below zero | per cycle |
+| `negative_forecast` | critical | `net_forecast` short by more than ₪100 | per cycle |
 | `pace_ahead` | high | everyday spending outruns the elapsed share of the cycle by 15% | per cycle |
 | `spending_burst` | high | 3 days cost 2.5× their normal everyday rate | daily |
 | `duplicate_charge` | high | same amount and description within 3 days, ≥ ₪50 | per expense |
