@@ -125,6 +125,18 @@ async function buildContext(user, now) {
     // number the user cannot find in the app.
     const pnl = await run(expenseController.getPnL, req, { month: cycleKey });
 
+    // The same P&L clamped to days 1..today (`as_of_day`, the dashboard's own MTD window).
+    // getPnL's unclamped expense window runs to the END of the cycle, so a charge dated
+    // later in the cycle -- bank sync imports pending and scheduled charges, which really
+    // do arrive dated ahead -- is already inside `variable_expenses`. Comparing that against
+    // the share of the cycle that has elapsed counts money not yet spent as overspending.
+    // Income and subscriptions are pro-rated under the clamp, so only expense actuals may be
+    // read from here; everything about income still comes from `pnl` above.
+    const pnlToDate = await run(expenseController.getPnL, req, {
+        month: cycleKey,
+        as_of_day: num(pnl.cycle_day) || 1,
+    });
+
     // One window wide enough for the burst, duplicate and unusual-charge rules together.
     const lookbackDays = Math.max(BURST_WINDOW_DAYS, DUPLICATE_WINDOW_DAYS, 7);
     const [recent] = await db.query(
@@ -152,7 +164,7 @@ async function buildContext(user, now) {
         [user.user_id]
     );
 
-    return { user, req, settings, cycleKey, cycle, today, now, pnl, recent: recent || [], sync: sync || {} };
+    return { user, req, settings, cycleKey, cycle, today, now, pnl, pnlToDate, recent: recent || [], sync: sync || {} };
 }
 
 /**
@@ -256,7 +268,9 @@ const RULES = [
         const budget = variableBudget(pnl);
         if (budget <= 0) return null;
         const elapsedShare = cycleDay / daysInCycle;
-        const spentShare = num(pnl.variable_expenses) / budget;
+        // Spent SO FAR, against time elapsed so far. Both sides must stop at today.
+        const spentToDate = num((ctx.pnlToDate || pnl).variable_expenses);
+        const spentShare = spentToDate / budget;
         if (spentShare <= elapsedShare * PACE_FACTOR) return null;
         return {
             rule: 'pace_ahead',
@@ -266,7 +280,7 @@ const RULES = [
                 spent: fx.money(num(pnl.total_expenses)),
                 income_expected: fx.money(num(pnl.total_income_projected)),
                 // The decision is made on everyday money only; these two are what it used.
-                everyday_spent: fx.money(num(pnl.variable_expenses)),
+                everyday_spent: fx.money(spentToDate),
                 everyday_budget: fx.money(budget),
                 spent_pct: Math.round(spentShare * 100),
                 cycle_elapsed_pct: Math.round(elapsedShare * 100),
@@ -430,7 +444,16 @@ async function runSpendingAlerts(now = new Date()) {
     running = true;
     let written = 0;
     try {
-        const [users] = await db.query('SELECT user_id, cycle_anchor_day, salary_day FROM users');
+        // Only users who can actually receive an alert. The agent API is the single delivery
+        // channel -- there is no push, no mail, no bot -- so for a user with no live key an
+        // alert is a row nobody will ever read, and the rules still cost a full P&L each to
+        // reach it. A key issued later simply starts alerting from that tick; nothing is
+        // backfilled, and nothing about a cycle already in progress is lost.
+        const [users] = await db.query(
+            `SELECT DISTINCT u.user_id, u.cycle_anchor_day, u.salary_day
+             FROM users u
+             JOIN agent_api_keys k ON k.user_id = u.user_id AND k.revoked_at IS NULL`
+        );
         for (const user of users || []) {
             // One user's bad data must not cost everyone after them their alerts.
             try {

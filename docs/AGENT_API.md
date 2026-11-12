@@ -148,6 +148,14 @@ backend and not in the agent.
 fixed costs and subscriptions. Measured on total spend instead, they fire for anyone whose
 rent clears early in the cycle, which is almost everyone.
 
+`pace_ahead` also reads spending **to date** (getPnL's `as_of_day` clamp), not the whole
+cycle. Card sync imports completed charges carrying a future settlement date, which sit in
+the unclamped window; against time already elapsed they would count as overspending money
+that has not left the account yet.
+
+Alerts are only produced for users holding a live `agent_api_keys` row. This API is the sole
+delivery channel, so for anyone else an alert is a row no one can read.
+
 Thresholds live at the top of `backend/src/services/spendingAlerts.js`. They are deliberately
 conservative — a false positive teaches the user to ignore alerts, and an ignored channel is
 worth less than no channel.

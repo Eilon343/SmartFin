@@ -117,7 +117,7 @@ against `agent_api_keys` (SHA-256 only; keys made by `backend/scripts/createAgen
 controller calls getPnL/getBudgets/getInsights in-process so numbers match the dashboard.
 **Hard rule: the agent must never read or learn of bank data** — no `bank_*` table, no
 `SELECT *`, no `source` field. `tests/backend/agent.test.js` enforces it. nginx `:8081` serves
-only the four agent paths (snapshot, what-if, loans, installments), is bound to 127.0.0.1, and is the only thing Funnel reaches. See `docs/AGENT_API.md`.
+only the five agent paths (snapshot, what-if, loans, installments, alerts), is bound to 127.0.0.1, and is the only thing Funnel reaches. See `docs/AGENT_API.md`.
 
 ### Two separate Gemini parsers — keep aware of both
 - `bot/app/ai/ai_engine.py` — multi-intent (`log_expense` / `log_income` / `log_subscription` / `ERROR_UNSUPPORTED`), returns a JSON array.

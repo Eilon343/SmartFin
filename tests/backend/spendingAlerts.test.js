@@ -39,6 +39,9 @@ function ctx(over = {}) {
         today: '2026-11-12',
         now: NOW,
         pnl: { ...BASE_PNL, ...(over.pnl || {}) },
+        // The cycle-to-date clamp. Unless a test sets it, spending to date is all the
+        // spending there is, which is the case for any cycle with no future-dated charges.
+        pnlToDate: { ...BASE_PNL, ...(over.pnl || {}), ...(over.pnlToDate || {}) },
         recent: over.recent || [],
         sync: over.sync !== undefined ? over.sync : { connections: 1, failing: 0, last_ok: NOW },
     };
@@ -306,5 +309,52 @@ describe('the lookback window', () => {
         // Lower bound, then an upper bound that is tomorrow: today's charges count, later ones do not.
         expect(expenseParams[2]).toBe('2026-11-13');
         expect(new Date(expenseParams[2]) > new Date(expenseParams[1])).toBe(true);
+    });
+});
+
+describe('pace measured against elapsed spending only', () => {
+    it('does not call a future-dated charge overspending', () => {
+        // Bank sync imports pending and scheduled charges dated later in the cycle, and
+        // getPnL's unclamped window runs to the cycle's end, so they land in
+        // variable_expenses. Day 12 of 30: 6,000 of a 9,400 budget reads as 64% spent
+        // against 40% elapsed and fired, while only 3,000 has actually left the account.
+        const c = ctx({
+            pnl: { variable_expenses: 6000 },
+            pnlToDate: { variable_expenses: 3000 },
+        });
+        expect(rules(c)).not.toContain('pace_ahead');
+    });
+
+    it('still fires, and quotes the clamped figure, once real spending runs ahead', () => {
+        const c = ctx({
+            pnl: { variable_expenses: 8000 },
+            pnlToDate: { variable_expenses: 7000 },
+        });
+        const hit = find(c, 'pace_ahead');
+        expect(hit.payload.everyday_spent).toBe(7000);
+    });
+});
+
+describe('who the tick runs for', () => {
+    const db = require('./setup/dbMock');
+    const { runSpendingAlerts } = require('../../backend/src/services/spendingAlerts');
+
+    it('skips users with no live agent key, and counts a user with two keys once', async () => {
+        // The agent API is the only delivery channel, so an alert for a keyless user is a
+        // row nobody can read. Keys are issued per use, and a user may hold several.
+        let userSql = null;
+        db.query.mockImplementation(async (sql) => {
+            if (sql.includes('FROM users u') && sql.includes('agent_api_keys')) {
+                userSql = sql;
+                return [[]];
+            }
+            return [[]];
+        });
+
+        await runSpendingAlerts(NOW);
+
+        expect(userSql).toMatch(/JOIN\s+agent_api_keys/);
+        expect(userSql).toMatch(/revoked_at IS NULL/);
+        expect(userSql).toMatch(/SELECT DISTINCT/);
     });
 });
